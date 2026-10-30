@@ -1,0 +1,96 @@
+#!/usr/bin/env node
+// reflect.mjs — the Sawbuck feedback edge (M0).
+//
+// Run the check (packages/referee) on the latest commit; on an invalid or
+// regression result — deterministic ground truth — record a finding in the
+// memory (packages/logbook) on the touched source paths, and tick the results
+// record. Quiet by default; the dispatch surfaces catches on a cadence.
+//
+// Zero-dep, Node ESM. Orchestrates the engine CLIs behind a clean layer
+// boundary, never reaching into their source.
+//
+//   node reflect.mjs [--repo <path>] [--base <ref>] [--head <ref>]
+//   defaults: repo=cwd, base=HEAD~1, head=HEAD   (evaluates the latest commit)
+//
+// Engines resolve to the monorepo siblings by default; PW_BIN / LB_BIN override.
+
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+// Resolve each engine CLI: env override, then the installed package (published
+// install), then the monorepo sibling (dev checkout).
+const engineBin = (envVar, pkgSubpath, devPath) => {
+  if (process.env[envVar]) return process.env[envVar];
+  try { return require.resolve(pkgSubpath); } catch { return devPath; }
+};
+const PW = engineBin('PW_BIN', 'promptwheel/bin/promptwheel.mjs', join(HERE, '..', 'referee', 'bin', 'promptwheel.mjs'));
+const LB = engineBin('LB_BIN', '@promptwheel/logbook/bin/logbook.mjs', join(HERE, '..', 'logbook', 'bin', 'logbook.mjs'));
+
+const flag = (name, def) => { const i = process.argv.indexOf(name); return i > -1 ? process.argv[i + 1] : def; };
+const repo = flag('--repo', process.cwd());
+const base = flag('--base', 'HEAD~1');
+const head = flag('--head', 'HEAD');
+
+const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim();
+// backstop so the check can never hang a commit/turn; generous default, overridable.
+const CHECK_TIMEOUT = +(process.env.SAWBUCK_CHECK_TIMEOUT_MS) || 600000;
+const runNode = (file, a) => execFileSync(process.execPath, [file, ...a], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: CHECK_TIMEOUT, killSignal: 'SIGKILL' });
+
+// --- 1) the check: measure the commit, parse the structured result ----------
+// The check exits nonzero on fail/gamed/inconclusive, but still prints the JSON
+// report to stdout, so recover it from the thrown error too.
+function check() {
+  const parse = (out) => { const i = out.indexOf('{'); return i < 0 ? null : JSON.parse(out.slice(i)); };
+  try {
+    return parse(runNode(PW, ['run', '--base', base, '--head', head, '--json']));
+  } catch (e) {
+    return parse((e.stdout || '').toString());
+  }
+}
+
+const report = check();
+if (!report || !report.verdict) process.exit(0);          // couldn't measure → nothing to learn
+const verdict = report.verdict;                            // engine contract: 'gamed' | 'fail' | ...
+if (verdict !== 'gamed' && verdict !== 'fail') process.exit(0);   // only breakage is worth recording
+
+// map the engine verdict to Sawbuck's plain outcome words
+const kind = verdict === 'gamed' ? 'invalid' : 'regression';
+
+// --- 2) build the finding from the result ----------------------------------
+const sha = git('rev-parse', head);
+const changed = git('diff', '--name-only', base, head).split('\n').filter(Boolean);
+const testish = (f) => /(\.test\.|\.spec\.|__tests__|\/tests?\/|\.config\.|golden|fixture|snapshot)/i.test(f);
+const srcFiles = changed.filter((f) => !testish(f));
+const evidenceFile = srcFiles[0] || changed[0];
+if (!evidenceFile) process.exit(0);
+
+const gamedMetric = (report.metrics || []).find((m) => m.gamed === true);
+const reason = kind === 'invalid'
+  ? `sawbuck: a change here was invalid, ${gamedMetric?.gamingReason || 'a metric "improved" by weakening its test, not the source'}`
+  : `sawbuck: a change here regressed a guarded metric beyond noise`;
+
+// --- 3) record the finding in memory (unreviewed, machine-authored note) ----
+// M0 keeps it simple: a commit-attached digest note. M1 adds --span grounding
+// + true coupling (the fix diff → "change X ⇒ also Y").
+try {
+  runNode(LB, ['annotate', sha, reason.slice(0, 280), '--side', 'diff', '--evidence-file', evidenceFile, '--by', 'sawbuck']);
+} catch {
+  try { runNode(LB, ['annotate', sha, reason.slice(0, 280), '--by', 'sawbuck']); } catch { /* best-effort */ }
+}
+
+// --- 4) tick the results record (the visible proof-of-work) -----------------
+const recDir = join(repo, '.sawbuck');
+const recPath = join(recDir, 'results.json');
+let rec = { regressions: 0, invalid: 0, latest: null };
+try { if (existsSync(recPath)) rec = JSON.parse(readFileSync(recPath, 'utf8')); } catch {}
+if (kind === 'invalid') rec.invalid += 1; else rec.regressions += 1;
+rec.latest = { sha: sha.slice(0, 8), kind, file: evidenceFile, reason: reason.replace(/^sawbuck: /, '').slice(0, 140), at: new Date().toISOString() };
+try { mkdirSync(recDir, { recursive: true }); writeFileSync(recPath, JSON.stringify(rec, null, 2) + '\n'); } catch {}
+
+// --- 5) quiet by default (dispatch surfaces on cadence); one line to stderr -
+process.stderr.write(`sawbuck: ${kind} recorded on ${evidenceFile}\n`);

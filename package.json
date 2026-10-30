@@ -1,0 +1,31 @@
+{
+  "name": "sawbuck",
+  "version": "0.1.1",
+  "description": "A saddle for your repo: Sawbuck learns what actually breaks from the history and warns the agent before it repeats a regression.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sawbuck-ai/sawbuck.git"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "bin": {
+    "sawbuck": "sawbuck.mjs"
+  },
+  "dependencies": {
+    "promptwheel": "^0.4.4",
+    "@promptwheel/logbook": "^0.8.0"
+  },
+  "files": [
+    "sawbuck.mjs",
+    "reflect.mjs",
+    "dispatch.mjs",
+    "sawbuck-hook.mjs",
+    "rank.mjs",
+    "run.mjs",
+    "README.md",
+    "GLOSSARY.md"
+  ]
+}
