@@ -22,7 +22,7 @@ const L = rec.latest;
 // Attribute the latest catch to the agent that made it (the Claude hook passes 'claude').
 let head;
 if (L && L.kind === 'gamed') head = L.by ? `🐴 Sawbuck caught ${L.by} gaming a metric` : `🐴 Sawbuck caught a gamed change`;
-else if (L && L.kind === 'regression') head = L.by ? `🐴 Sawbuck flagged a regression from ${L.by}` : `🐴 Sawbuck flagged a regression`;
+else if (L && L.kind === 'regression') head = L.by ? `🐴 Sawbuck caught a regression from ${L.by}` : `🐴 Sawbuck caught a regression`;
 else head = `🐴 Sawbuck`;
 let line = head;
 if (L) {

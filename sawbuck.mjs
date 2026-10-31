@@ -124,7 +124,7 @@ switch (cmd) {
     if (rep.verdict === 'pass') out(`🐴 ✓ verified: your ${where} change earned it. ${m ? '"' + m.name + '"' : 'The metric'} held, and the source carried the win (it survives a source-only re-run).`);
     else if (rep.verdict === 'gamed') out('🐴 🚩 gamed: a win here came from editing the test, config, or grader, not the source. It does NOT survive a source-only re-run, so it does not count.');
     else if (rep.verdict === 'fail') out(`🐴 ✗ regression: a guarded metric got worse (${(rep.metrics || []).filter((x) => x.guard && !x.ok).map((x) => x.name).join(', ') || 'a guard'}).`);
-    else out('🐴 ≈ couldn\'t measure: the check ran but your metric is inert (it did not actually run in isolation). Point it at your real test command: `sawbuck init`, or set setup/linkDirs in promptwheel.config.json.');
+    else out('🐴 ≈ inconclusive: the check ran but could not measure your metric (it did not run in isolation). Point it at your real test command: `sawbuck init`, or set setup/linkDirs in promptwheel.config.json.');
     process.exit(code);
   }
   case 'log': {
@@ -206,10 +206,12 @@ switch (cmd) {
         // the last verdict from the activity feed (includes verified passes), so you see it working each turn
         let last = '';
         try { const L = readFileSync(join(repo, '.sawbuck', 'activity.jsonl'), 'utf8').trim().split('\n'); const e = JSON.parse(L[L.length - 1]); last = { verified: '✓', gamed: '🚩', regression: '✗', inconclusive: '≈' }[e.kind] || ''; } catch {}
-        // profile readout: watching (something to check, incl. zero-config via a test command) vs memory-only
+        // one state model, shared with the Reins band: watching (wired in) / ready (checkable, not wired yet) / memory (history only)
+        const active = existsSync(join(repo, '.sawbuck', 'state.json'));
         const armed = existsSync(join(repo, 'promptwheel.config.json')) || existsSync(join(repo, 'package.json'));
-        const seg = caught > 0 ? `🐴 sawbuck · ${caught} caught` : armed ? `🐴 sawbuck · watching` : `🐴 sawbuck · memory`;
-        process.stdout.write(last ? `${seg} · ${last}` : seg);
+        const mem = existsSync(join(repo, 'LOGBOOK.md')) || existsSync(join(repo, 'events.jsonl'));
+        const seg = caught > 0 ? `🐴 sawbuck · ${caught} caught` : active ? `🐴 sawbuck · watching` : armed ? `🐴 sawbuck · ready` : mem ? `🐴 sawbuck · memory` : '';
+        if (seg) process.stdout.write(last ? `${seg} · ${last}` : seg);
       }
     } catch {}
     break;
