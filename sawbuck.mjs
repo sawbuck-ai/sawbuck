@@ -63,6 +63,7 @@ Usage:
   sawbuck where             List every repo Sawbuck is attached to
   sawbuck statusline        One-line segment for your status line (🐴 watching | N caught)
   sawbuck status [repo]     Show the results receipt (what the check has caught)
+  sawbuck log [repo] [-n N] Recent activity, newest first: every check (verified / gamed / regression)
   sawbuck check [--base R --head R]
                             Run the check on a commit and record the outcome
   sawbuck rank [--base R --head R] [--file P ...]
@@ -96,6 +97,25 @@ switch (cmd) {
   case 'check': {
     try { execFileSync(process.execPath, [join(HERE, 'reflect.mjs'), ...rest], { stdio: 'inherit' }); }
     catch (e) { process.exit(e.status || 1); }
+    break;
+  }
+  case 'log': {
+    // the event feed: a running log of what the check did, so you can watch it work.
+    const repo = repoArg();
+    let lines = [];
+    try { lines = readFileSync(join(repo, '.sawbuck', 'activity.jsonl'), 'utf8').split('\n').filter(Boolean); } catch {}
+    if (!lines.length) { out('sawbuck: no activity recorded yet (the check logs here on each commit/turn).'); break; }
+    const ni = rest.indexOf('-n');
+    const n = ni > -1 ? (parseInt(rest[ni + 1], 10) || 20) : 20;
+    const icon = { verified: '✓', gamed: '🚩', regression: '✗', inconclusive: '≈' };
+    const recent = lines.slice(-n).reverse();
+    out(`sawbuck activity (last ${recent.length}):`);
+    for (const l of recent) {
+      try {
+        const e = JSON.parse(l);
+        out(`  ${(e.at || '').slice(0, 16).replace('T', ' ')}  ${icon[e.kind] || '·'} ${String(e.kind).padEnd(11)} ${e.file || ''}${e.reason ? '   ' + e.reason : ''}`);
+      } catch {}
+    }
     break;
   }
   case 'rank': {

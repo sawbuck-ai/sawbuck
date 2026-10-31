@@ -56,6 +56,7 @@ function check() {
 const report = check();
 if (!report || !report.verdict) process.exit(0);          // couldn't measure → nothing to learn
 const verdict = report.verdict;                            // engine contract: 'gamed' | 'fail' | ...
+appendActivity(verdict, report);   // the event feed logs EVERY measurable check, so you can watch it work (verified too, not only catches)
 if (verdict !== 'gamed' && verdict !== 'fail') process.exit(0);   // only breakage is worth recording
 
 // map the engine verdict to Sawbuck's plain outcome words
@@ -94,3 +95,31 @@ try { mkdirSync(recDir, { recursive: true }); writeFileSync(recPath, JSON.string
 
 // --- 5) quiet by default (dispatch surfaces on cadence); one line to stderr -
 process.stderr.write(`sawbuck: ${kind} recorded on ${evidenceFile}\n`);
+
+// --- the activity feed: one line per check so you can watch it work, verified
+// included, not only catches. Capped, lives in the git-excluded .sawbuck/, opt
+// out with SAWBUCK_NO_LOG=1. `sawbuck log` reads it.
+function appendActivity(v, rep) {
+  if (process.env.SAWBUCK_NO_LOG) return;
+  const map = { pass: 'verified', gamed: 'gamed', fail: 'regression', inconclusive: 'inconclusive' };
+  const k = map[v];
+  if (!k) return;
+  let sha = '', file = '';
+  try { sha = git('rev-parse', head).slice(0, 8); } catch {}
+  try { file = git('diff', '--name-only', base, head).split('\n').filter(Boolean)[0] || ''; } catch {}
+  const gm = (rep.metrics || []).find((m) => m.gamed === true);
+  const why = k === 'gamed' ? (gm?.gamingReason || 'the win came from editing the goalposts')
+    : k === 'regression' ? 'a guarded metric regressed beyond noise'
+    : k === 'verified' ? 'the source earned the green'
+    : 'could not certify a pass';
+  const ev = { at: new Date().toISOString(), kind: k, sha, file, reason: String(why).slice(0, 160) };
+  const dir = join(repo, '.sawbuck');
+  const p = join(dir, 'activity.jsonl');
+  try {
+    mkdirSync(dir, { recursive: true });
+    let lines = existsSync(p) ? readFileSync(p, 'utf8').split('\n').filter(Boolean) : [];
+    lines.push(JSON.stringify(ev));
+    if (lines.length > 200) lines = lines.slice(-200);
+    writeFileSync(p, lines.join('\n') + '\n');
+  } catch {}
+}

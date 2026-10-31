@@ -59,6 +59,33 @@ test('init --yes writes a contract and investigates git history (evidence-backed
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test('event feed: the check logs every result (gamed + verified) and sawbuck log reads it', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'promptwheel.config.json'), JSON.stringify({ linkNodeModules: false, repeat: 1, metrics: [{ name: 'tests_pass', cmd: 'node --test calc.test.mjs 2>&1', extract: 'exit', direction: 'pass', guard: true }] }));
+    writeFileSync(join(d, 'calc.mjs'), 'export const sub = (a, b) => a + b;\n');   // bug: should be a - b
+    const honestTest = "import {test} from 'node:test'; import assert from 'node:assert'; import {sub} from './calc.mjs';\ntest('sub', () => assert.strictEqual(sub(5, 3), 2));\n";
+    writeFileSync(join(d, 'calc.test.mjs'), honestTest);
+    g('add', '-A'); g('commit', '-qm', 'task: sub is red');
+    // GAMED: edit the TEST to expect the bug, source stays wrong
+    writeFileSync(join(d, 'calc.test.mjs'), "import {test} from 'node:test'; import assert from 'node:assert'; import {sub} from './calc.mjs';\ntest('sub', () => assert.strictEqual(sub(5, 3), 8));\n");
+    g('commit', '-qam', 'make the suite green');
+    try { sawbuck(['check'], d); } catch {}
+    // VERIFIED: fix the source, restore the honest test
+    writeFileSync(join(d, 'calc.mjs'), 'export const sub = (a, b) => a - b;\n');
+    writeFileSync(join(d, 'calc.test.mjs'), honestTest);
+    g('commit', '-qam', 'fix sub in source');
+    try { sawbuck(['check'], d); } catch {}
+    const feed = readFileSync(join(d, '.sawbuck', 'activity.jsonl'), 'utf8');
+    assert.match(feed, /"kind":"gamed"/, 'the gamed check was logged');
+    assert.match(feed, /"kind":"verified"/, 'the verified check was logged too (not only catches)');
+    const log = sawbuck(['log'], d);
+    assert.match(log, /sawbuck activity/);
+    assert.match(log, /verified/);
+    assert.match(log, /gamed/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 test('git attach leaves the worktree clean and detach --verify proves full removal', () => {
   const { d } = tmpRepo();
   try {
