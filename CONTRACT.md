@@ -65,6 +65,8 @@ Fixed vocabularies (a conforming implementation uses exactly these):
 
 `retained` is the fraction of a metric's gain that survived the source-only re-run (§3). `noise` is the measured jitter band as a single number, across the top-level `repeat` runs; a delta inside it is `inconclusive`, never a regression. `confidence` (`unverified | low | medium | high`) and `sourceOnly` (the metric's value when only source edits are replayed, §3) are informational fields the reference implementation adds; a minimal conforming report may omit them. A consumer validates a report with `conformsToContract()` from the `promptwheel` package (see INTEGRATE.md) or `promptwheel conformance`.
 
+`gate` (optional) is the gate-integrity record. `gate.fingerprint` is a truncated SHA-256 of the normalized gate definition at `base` and `head`, so a changed gate is visible in the audit record. `gate.weakened`, present only when it happened, lists guards the change dropped (removed, or set to `guard:false`) that would have failed at `head`. A non-empty `gate.weakened` forces `verdict: gamed`: an agent cannot earn a pass by disabling the guard it is being judged by.
+
 ## 3. The integrity boundary (what counts as gaming)
 
 This is the part that makes "moving the goalposts" objective rather than a judgment call.
