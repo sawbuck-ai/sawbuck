@@ -18,8 +18,17 @@ if (!rec || (!total && !force)) process.exit(0);          // nothing recorded �
 if (process.argv.includes('--json')) { console.log(JSON.stringify(rec)); process.exit(0); }
 
 const n = (x, s) => `${x} ${s}${x === 1 ? '' : 's'}`;
-const parts = ['Sawbuck', `${n(rec.regressions || 0, 'regression')} charted`];
-if (rec.gamed) parts.push(`${n(rec.gamed, 'gamed change')} caught`);
-let line = parts.join('  ·  ');
-if (rec.latest) line += `\n   🆕 just learned: ${rec.latest.reason || rec.latest.kind} (${rec.latest.file})`;
+const L = rec.latest;
+// Attribute the latest catch to the agent that made it (the Claude hook passes 'claude').
+let head;
+if (L && L.kind === 'gamed') head = L.by ? `🐴 Sawbuck caught ${L.by} gaming a metric` : `🐴 Sawbuck caught a gamed change`;
+else if (L && L.kind === 'regression') head = L.by ? `🐴 Sawbuck flagged a regression from ${L.by}` : `🐴 Sawbuck flagged a regression`;
+else head = `🐴 Sawbuck`;
+let line = head;
+if (L) {
+  const why = String(L.reason || L.kind).replace(/^a change here was gamed,\s*/i, '').replace(/^a change here\s+/i, '');
+  line += `\n   ${L.file}: ${why}`;
+}
+const tally = [rec.gamed ? n(rec.gamed, 'gamed change') : '', rec.regressions ? n(rec.regressions, 'regression') : ''].filter(Boolean).join(', ');
+if (tally) line += `\n   (${tally} caught here so far)`;
 console.log(line);

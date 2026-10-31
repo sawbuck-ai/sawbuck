@@ -39,6 +39,7 @@ const flag = (name, def) => { const i = process.argv.indexOf(name); return i > -
 const repo = flag('--repo', process.cwd());
 const base = flag('--base', 'HEAD~1');
 const head = flag('--head', 'HEAD');
+const by = flag('--by', '');   // the agent that authored the change (Claude-first: the Claude hook passes 'claude'); empty = unattributed (raw-git path)
 
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim();
 // backstop so the check can never hang a commit/turn; generous default, overridable.
@@ -94,7 +95,7 @@ const recPath = join(recDir, 'results.json');
 let rec = { regressions: 0, gamed: 0, latest: null };
 try { if (existsSync(recPath)) rec = JSON.parse(readFileSync(recPath, 'utf8')); } catch {}
 if (kind === 'gamed') rec.gamed += 1; else rec.regressions += 1;
-rec.latest = { sha: sha.slice(0, 8), kind, file: evidenceFile, reason: reason.replace(/^sawbuck: /, '').slice(0, 140), at: new Date().toISOString() };
+rec.latest = { sha: sha.slice(0, 8), kind, file: evidenceFile, reason: reason.replace(/^sawbuck: /, '').slice(0, 140), at: new Date().toISOString(), by: by || null };
 try { mkdirSync(recDir, { recursive: true }); writeFileSync(recPath, JSON.stringify(rec, null, 2) + '\n'); } catch {}
 
 // --- 5) quiet by default (dispatch surfaces on cadence); one line to stderr -
@@ -116,7 +117,7 @@ function appendActivity(v, rep) {
     : k === 'regression' ? 'a guarded metric regressed beyond noise'
     : k === 'verified' ? 'the source earned the green'
     : 'could not certify a pass';
-  const ev = { at: new Date().toISOString(), kind: k, sha, file, reason: String(why).slice(0, 160) };
+  const ev = { at: new Date().toISOString(), kind: k, sha, file, reason: String(why).slice(0, 160), by: by || null };
   const dir = join(repo, '.sawbuck');
   const p = join(dir, 'activity.jsonl');
   try {

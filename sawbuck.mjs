@@ -291,7 +291,7 @@ function wireClaude(repo, opts) {
   if (fileExisted) { try { cfg = JSON.parse(readFileSync(f, 'utf8')); } catch { die(`${f} exists but is not valid JSON; I will not overwrite it. Add the hooks by hand.`); } }
   if (JSON.stringify(cfg).includes('sawbuck.mjs')) { out(`sawbuck: already attached (${user ? 'user' : 'claude'}) in ${f}`); if (!user) warnNoConfig(repo); return; }
   const ctx = user ? `node ${JSON.stringify(SELF)} context` : `node ${JSON.stringify(SELF)} context ${JSON.stringify(repo)}`;
-  const chk = user ? `node ${JSON.stringify(SELF)} __hook` : `node ${JSON.stringify(SELF)} __hook --repo ${JSON.stringify(repo)}`;
+  const chk = user ? `node ${JSON.stringify(SELF)} __hook --by claude` : `node ${JSON.stringify(SELF)} __hook --repo ${JSON.stringify(repo)} --by claude`;
   if (dry) {
     out(dryText([
       `${fileExisted ? 'modify' : 'create'}  ${f}  (UserPromptSubmit + Stop hooks)`,

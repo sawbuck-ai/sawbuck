@@ -60,7 +60,7 @@ test('dispatch surfaces the recently-learned finding (not just the file)', () =>
   try {
     runReflect(dir, env);
     const out = execFileSync(process.execPath, [DISPATCH, '--repo', dir], { encoding: 'utf8' });
-    assert.match(out, /just learned/);
+    assert.match(out, /caught/);
     assert.match(out, /gamed/);
     assert.match(out, /app\.js/);
   } finally {

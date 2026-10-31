@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const repo = flag('--repo', process.cwd());
+const by = flag('--by', '');   // attribution from the harness wiring: the Claude hook passes 'claude', the raw-git hook passes nothing
 ensureExcluded(repo);   // keep the record out of git status under ANY attach mode (incl. --user)
 
 const git = (...a) => { try { return execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim(); } catch { return ''; } };
@@ -31,7 +32,7 @@ try { if (existsSync(stPath)) st = JSON.parse(readFileSync(stPath, 'utf8')); } c
 // 1) new commit(s) since last turn → run the check on them
 const head = git('rev-parse', 'HEAD');
 if (head && st.lastSha && head !== st.lastSha) {
-  node(join(HERE, 'reflect.mjs'), ['--repo', repo, '--base', st.lastSha, '--head', head]);
+  node(join(HERE, 'reflect.mjs'), ['--repo', repo, '--base', st.lastSha, '--head', head, ...(by ? ['--by', by] : [])]);
 }
 st.lastSha = head || st.lastSha;
 st.turns += 1;
