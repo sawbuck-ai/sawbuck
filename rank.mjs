@@ -14,7 +14,7 @@
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -90,6 +90,26 @@ const normMult = (p, kind) => {
   return Math.max(0.4, Math.min(1, REF / b));
 };
 
+// Still-live filter (lead #4). A suppression on a path that is now CLEAN of suppressions is churn,
+// not current risk (the study: AutoMapper carries 4 live `[Ignore]` vs ~158/repo across C# history).
+// logbook's own SUPPRESS_PAT, git-grepped at HEAD but SCOPED to just the touched paths so the
+// per-turn hook stays cheap, tells us which still carry one. Imported so the pattern never drifts;
+// degrades to "treat all as live" if logbook cannot be imported. --raw turns it off.
+let liveSet = null;
+if (!raw && paths.length) {
+  try {
+    const { SUPPRESS_PAT } = await import(pathToFileURL(LB).href);
+    if (SUPPRESS_PAT && SUPPRESS_PAT.source) {
+      let grep = '';
+      try { grep = execFileSync('git', ['-C', repo, 'grep', '-lP', SUPPRESS_PAT.source, 'HEAD', '--', ...paths], { encoding: 'utf8' }); }
+      catch (e) { grep = (e.stdout || '').toString(); } // git grep exits 1 when nothing matches
+      liveSet = new Set(grep.split('\n').filter(Boolean).map((l) => l.replace(/^HEAD:/, '')));
+    }
+  } catch { liveSet = null; } // logbook unavailable -> skip the filter, do not crash the read face
+}
+// a suppression on a still-silenced path keeps its weight; on a now-clean path it is near-zero.
+const stillLive = (p) => (liveSet === null || liveSet.has(p) ? 1 : 0.25);
+
 const DAY = 86400000;
 const ranked = paths.map((p) => {
   let score = 0; const hits = []; const fixDates = [];
@@ -103,7 +123,7 @@ const ranked = paths.map((p) => {
     else if (codeish(p) && ((e.suppressions && e.suppressions.length) || ((e.del_asserts || 0) > (e.add_asserts || 0) + 2) || e.downgrades > 0)) {
       const hasSupp = e.suppressions && e.suppressions.length;
       const tst = isTest(p);
-      const m = hasSupp ? normMult(p, tst ? 'skip' : 'code') : 1; // normalize suppressions by language; leave a pure assertion-drop at full weight
+      const m = hasSupp ? normMult(p, tst ? 'skip' : 'code') * stillLive(p) : 1; // normalize by language x still-live; leave a pure assertion-drop at full weight
       if (tst) { w = 2.5 * m; kind = 'test disabled / weakened'; }
       else { w = 2 * m; kind = 'suppression in source'; }
     }
