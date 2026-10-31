@@ -7,12 +7,18 @@ A saddle for your coding harness. You write the contract (what a real win looks 
 > Sawbuck is the reference implementation of the [Verified-Outcome Contract](CONTRACT.md): the open interface for a coding loop you can trust.
 
 ```sh
-npm i -g sawbuck         # also pulls the promptwheel + @promptwheel/logbook engines
-cd your-repo
-sawbuck attach           # wire it into the repo (a git post-commit hook)
-# or, once, for every project in Claude Code:
-sawbuck attach --user    # user-level hooks that profile-switch by cwd
+# 1 · try it (no install, no commitment): verify your latest change right now
+npx sawbuck check
+
+# 2 · watch it live: attach once to this repo (a project-scoped Claude Code hook)
+npm i -g sawbuck
+sawbuck attach --claude
 ```
+
+**Zero-config:** it auto-detects your test command, so there is nothing to write to start.
+On attach it tells you exactly what it can measure here (and how to fix it if it can't).
+`sawbuck init` is only for *customizing* what it measures (coverage, latency, a cost budget).
+In CI instead of a local hook? use the GitHub Action. For every project at once: `sawbuck attach --user`.
 
 On each change:
 

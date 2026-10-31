@@ -17,10 +17,26 @@ import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, unlinkSy
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { createRequire } from 'node:module';
 
 const SELF = fileURLToPath(import.meta.url);
 const HERE = dirname(SELF);
 const HOOK = join(HERE, 'sawbuck-hook.mjs');
+const require = createRequire(import.meta.url);
+// resolve the promptwheel engine bin: env override, installed package, then the dev sibling
+const PW = process.env.PW_BIN
+  || ['promptwheel/bin/promptwheel.mjs', 'promptwheel'].reduce((r, s) => { try { return r || require.resolve(s); } catch { return r; } }, '')
+  || join(HERE, '..', 'referee', 'bin', 'promptwheel.mjs');
+// run the engine and parse its JSON verdict (it prints JSON even when it exits nonzero)
+function gateReport(repo, a) {
+  let o = '', code = 0;
+  try { o = execFileSync(process.execPath, [PW, ...a, '--no-record', '--json'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: +(process.env.SAWBUCK_CHECK_TIMEOUT_MS) || 120000 }); }
+  catch (e) { o = (e.stdout || '').toString(); code = e.status || 0; }
+  let rep = null; try { rep = JSON.parse(o.slice(o.indexOf('{'))); } catch {}
+  return { rep, code };
+}
+// is the metric live (actually ran), or inert (never ran in isolation)?
+const metricLive = (m) => !!m && !m.inert && m.status !== 'unmeasurable' && m.before != null;
 const S_START = '# >>> sawbuck >>>';
 const S_END = '# <<< sawbuck <<<';
 const BLOCK_RE = new RegExp(`\\n?${S_START}[\\s\\S]*?${S_END}\\n?`, 'g');
@@ -64,8 +80,8 @@ Usage:
   sawbuck statusline        One-line segment for your status line (🐴 watching | N caught)
   sawbuck status [repo]     Show the results receipt (what the check has caught)
   sawbuck log [repo] [-n N] Recent activity, newest first: every check (verified / gamed / regression)
-  sawbuck check [--base R --head R]
-                            Run the check on a commit and record the outcome
+  sawbuck check [repo]      Try it: verify your latest change right now (working tree if dirty, else the
+                            last commit). Zero-config, no attach, no hook. The fastest way to see it work.
   sawbuck rank [--base R --head R] [--file P ...]
                             Show the relevant past findings for the paths a change touches
   sawbuck context [repo]    Ranked relevant history for your current working changes (the read face)
@@ -95,9 +111,21 @@ switch (cmd) {
     break;
   }
   case 'check': {
-    try { execFileSync(process.execPath, [join(HERE, 'reflect.mjs'), ...rest], { stdio: 'inherit' }); }
-    catch (e) { process.exit(e.status || 1); }
-    break;
+    // one-shot: gate your latest change right now (working tree if dirty, else the last commit),
+    // zero-config (the engine auto-detects your test command), and say plainly whether the win was
+    // earned. No attach, no hook, no record. The try-it-first on-ramp.
+    const repo = repoArg();
+    const g = (...a) => { try { return execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim(); } catch { return ''; } };
+    const dirty = g('status', '--porcelain').length > 0;
+    const where = dirty ? 'working' : 'last';
+    const { rep, code } = gateReport(repo, dirty ? ['run', '--working'] : ['run', '--base', 'HEAD~1', '--head', 'HEAD']);
+    if (!rep || !rep.verdict) { out('🐴 sawbuck: could not run the check here. Make sure this is a git repo with a commit, and a test command (or run `sawbuck init`).'); process.exit(2); }
+    const m = (rep.metrics || [])[0];
+    if (rep.verdict === 'pass') out(`🐴 ✓ verified: your ${where} change earned it. ${m ? '"' + m.name + '"' : 'The metric'} held, and the source carried the win (it survives a source-only re-run).`);
+    else if (rep.verdict === 'gamed') out('🐴 🚩 gamed: a win here came from editing the test, config, or grader, not the source. It does NOT survive a source-only re-run, so it does not count.');
+    else if (rep.verdict === 'fail') out(`🐴 ✗ regression: a guarded metric got worse (${(rep.metrics || []).filter((x) => x.guard && !x.ok).map((x) => x.name).join(', ') || 'a guard'}).`);
+    else out('🐴 ≈ couldn\'t measure: the check ran but your metric is inert (it did not actually run in isolation). Point it at your real test command: `sawbuck init`, or set setup/linkDirs in promptwheel.config.json.');
+    process.exit(code);
   }
   case 'log': {
     // the event feed: a running log of what the check did, so you can watch it work.
@@ -148,9 +176,10 @@ switch (cmd) {
   }
   case 'attach': {
     const repo = repoArg();
-    if (flags.has('--user')) { wireClaude(repo, { user: true }); break; }
-    if (flags.has('--claude')) { wireClaude(repo, { shared: flags.has('--shared') }); break; }
+    if (flags.has('--user')) { wireClaude(repo, { user: true }); if (!dry) verifyAttach(repo); break; }
+    if (flags.has('--claude')) { wireClaude(repo, { shared: flags.has('--shared') }); if (!dry) verifyAttach(repo); break; }
     wireGit(repo);
+    if (!dry) verifyAttach(repo);
     break;
   }
   case 'detach': {
@@ -174,14 +203,32 @@ switch (cmd) {
       if (existsSync(join(repo, '.git'))) {
         let caught = 0;
         try { const r = JSON.parse(readFileSync(join(repo, '.sawbuck', 'results.json'), 'utf8')); caught = (r.regressions || 0) + (r.gamed || 0); } catch {}
-        // profile readout: armed (a contract to check) vs memory-only (history live, no contract yet)
-        const armed = existsSync(join(repo, 'promptwheel.config.json'));
-        process.stdout.write(caught > 0 ? `🐴 sawbuck · ${caught} caught` : armed ? `🐴 sawbuck · watching` : `🐴 sawbuck · memory`);
+        // the last verdict from the activity feed (includes verified passes), so you see it working each turn
+        let last = '';
+        try { const L = readFileSync(join(repo, '.sawbuck', 'activity.jsonl'), 'utf8').trim().split('\n'); const e = JSON.parse(L[L.length - 1]); last = { verified: '✓', gamed: '🚩', regression: '✗', inconclusive: '≈' }[e.kind] || ''; } catch {}
+        // profile readout: watching (something to check, incl. zero-config via a test command) vs memory-only
+        const armed = existsSync(join(repo, 'promptwheel.config.json')) || existsSync(join(repo, 'package.json'));
+        const seg = caught > 0 ? `🐴 sawbuck · ${caught} caught` : armed ? `🐴 sawbuck · watching` : `🐴 sawbuck · memory`;
+        process.stdout.write(last ? `${seg} · ${last}` : seg);
       }
     } catch {}
     break;
   }
   default: die(`unknown command '${cmd}'\n\n${help}`);
+}
+
+// after attach, prove the check can actually measure something here (the inert-metric trap):
+// run the gate on the last commit and say what it can or cannot measure, so you never attach
+// into silent nothing. Best-effort and bounded; the wire already succeeded regardless.
+function verifyAttach(repo) {
+  const g = (...a) => { try { return execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim(); } catch { return ''; } };
+  if (!g('rev-parse', 'HEAD')) { out('   attached. Make a commit, then run `sawbuck check` to see it work.'); return; }
+  out('   verifying I can measure here (one-time)...');
+  const base = g('rev-parse', '--verify', 'HEAD~1') ? 'HEAD~1' : 'HEAD';
+  const { rep } = gateReport(repo, ['run', '--base', base, '--head', 'HEAD']);
+  const m = rep && (rep.metrics || [])[0];
+  if (metricLive(m)) out(`   ✓ I can measure "${m.name}" here. On each commit I'll verify a win survived a source-only re-run, and flag it if it did not.`);
+  else out('   ⚠ I could not measure anything here yet (your test command did not run in isolation). Point me at it: `sawbuck init`, or set setup/linkDirs in promptwheel.config.json. I stay quiet until then.');
 }
 
 // --- the attach receipt (out of the worktree, inside .git) ------------------
@@ -458,8 +505,7 @@ function detachAll(purge) {
 
 // --- shared helpers ---------------------------------------------------------
 function dryText(plan) { return ['sawbuck --dry-run: would leave this footprint (writing nothing):', ...plan.map((p) => '  ' + p), '  all of it reversible with `detach`.'].join('\n'); }
-function warnNoConfig(repo) {
-  if (!existsSync(join(repo, 'promptwheel.config.json'))) {
-    out(`note: no promptwheel.config.json in ${repo}, the check needs one to know what to measure. Run: sawbuck init`);
-  }
+function warnNoConfig() {
+  // superseded by verifyAttach, which runs after every attach and reports exactly what the check
+  // can measure (zero-config now auto-detects your test command, so a missing config is not an error).
 }

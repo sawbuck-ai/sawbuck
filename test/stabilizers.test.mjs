@@ -103,7 +103,7 @@ test('stabilizer: a hanging check is bounded by SAWBUCK_CHECK_TIMEOUT_MS', () =>
     g('add', '-A'); g('commit', '-qm', 'cfg');
     writeFileSync(join(d, 'a.js'), 'export const v = 2;\n'); g('add', '-A'); g('commit', '-qm', 'change');
     const t0 = Date.now();
-    sawbuck(['check', '--base', 'HEAD~1', '--head', 'HEAD'], d, { SAWBUCK_CHECK_TIMEOUT_MS: '2000', LOGBOOK_NO_CACHE: '1' });
+    try { sawbuck(['check', '--base', 'HEAD~1', '--head', 'HEAD'], d, { SAWBUCK_CHECK_TIMEOUT_MS: '2000', LOGBOOK_NO_CACHE: '1' }); } catch { /* the one-shot exits nonzero when the metric is killed */ }
     const dt = Date.now() - t0;
     assert.ok(dt < 4500, `check returned in ${dt}ms, the 2s timeout fired before the 5s sleep finished`);
   } finally { rmSync(d, { recursive: true, force: true }); }

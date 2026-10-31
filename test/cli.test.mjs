@@ -17,6 +17,9 @@ const CLI = join(HERE, '..', 'sawbuck.mjs');
 const TMP_HOME = mkdtempSync(join(tmpdir(), 'sawbuck-home-'));
 after(() => rmSync(TMP_HOME, { recursive: true, force: true }));
 const sawbuck = (args, cwd, env) => execFileSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...process.env, HOME: TMP_HOME, ...env } });
+// the recording engine (what the hook runs on each commit); `sawbuck check` is now the loud one-shot
+const REFLECT = join(HERE, '..', 'reflect.mjs');
+const reflect = (args, cwd, env) => { try { return execFileSync(process.execPath, [REFLECT, ...args], { cwd, encoding: 'utf8', env: { ...process.env, HOME: TMP_HOME, ...env } }); } catch (e) { return (e.stdout || '') + (e.stderr || ''); } };
 const porcelain = (d) => execFileSync('git', ['-C', d, 'status', '--porcelain'], { encoding: 'utf8' }).trim();
 
 function tmpRepo() {
@@ -70,12 +73,12 @@ test('event feed: the check logs every result (gamed + verified) and sawbuck log
     // GAMED: edit the TEST to expect the bug, source stays wrong
     writeFileSync(join(d, 'calc.test.mjs'), "import {test} from 'node:test'; import assert from 'node:assert'; import {sub} from './calc.mjs';\ntest('sub', () => assert.strictEqual(sub(5, 3), 8));\n");
     g('commit', '-qam', 'make the suite green');
-    try { sawbuck(['check'], d); } catch {}
+    reflect(['--repo', d], d);
     // VERIFIED: fix the source, restore the honest test
     writeFileSync(join(d, 'calc.mjs'), 'export const sub = (a, b) => a - b;\n');
     writeFileSync(join(d, 'calc.test.mjs'), honestTest);
     g('commit', '-qam', 'fix sub in source');
-    try { sawbuck(['check'], d); } catch {}
+    reflect(['--repo', d], d);
     const feed = readFileSync(join(d, '.sawbuck', 'activity.jsonl'), 'utf8');
     assert.match(feed, /"kind":"gamed"/, 'the gamed check was logged');
     assert.match(feed, /"kind":"verified"/, 'the verified check was logged too (not only catches)');
@@ -329,7 +332,7 @@ test('check (CLI) leaves an honest source fix uncharted (no false positive throu
     g('add', '-A'); g('commit', '-q', '-m', 'base (red)');
     writeFileSync(join(d, 'calc.mjs'), 'export const sub = (a, b) => a - b;\n');   // real fix, test untouched
     g('commit', '-q', '-am', 'fix sub in source');
-    sawbuck(['check', '--base', 'HEAD~1', '--head', 'HEAD'], d, { LOGBOOK_NO_CACHE: '1' });
+    reflect(['--repo', d, '--base', 'HEAD~1', '--head', 'HEAD'], d, { LOGBOOK_NO_CACHE: '1' });
     let r = {}; try { r = JSON.parse(readFileSync(join(d, '.sawbuck', 'results.json'), 'utf8')); } catch { /* no file = no catch */ }
     assert.equal((r.gamed || 0) + (r.regressions || 0), 0, 'a red->green fix earned in source is never charted as a catch');
   } finally { rmSync(d, { recursive: true, force: true }); }
