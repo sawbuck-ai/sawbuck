@@ -155,14 +155,19 @@ switch (cmd) {
     // the read face: ranked relevant history for what you're working on right now.
     const repo = repoArg();
     const g = (...a) => { try { return execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim(); } catch { return ''; } };
+    // Silent when there is nothing to say, so it is safe on every UserPromptSubmit (that
+    // hook's stdout is injected into context; "nothing notable" every turn would be noise).
+    // --speak forces a reply, for an explicit `sawbuck context` / the /sawbuck-context command.
+    const speak = flags.has('--speak');
     let changed = g('diff', '--name-only', 'HEAD').split('\n').filter(Boolean);
     if (!changed.length) changed = g('diff', '--name-only', 'HEAD~1', 'HEAD').split('\n').filter(Boolean);
-    if (!changed.length) break;   // silent: safe as an every-turn hook
+    if (!changed.length) { if (speak) out('🐴 sawbuck: nothing changed to look up (no working edits, and no previous commit to read).'); break; }
     const fileArgs = changed.flatMap((f) => ['--file', f]);
     let o = '';
     try { o = execFileSync(process.execPath, [join(HERE, 'rank.mjs'), '--repo', repo, ...fileArgs, '--top', '3'], { encoding: 'utf8' }); }
     catch (e) { o = (e.stdout || '').toString(); }
-    if (/relevant history/.test(o)) out(o);   // only speak when there is something
+    if (/relevant history/.test(o)) out(o);
+    else if (speak) out('🐴 sawbuck: no notable history for the files you are touching (a clean trail).');
     break;
   }
   case 'run': {
