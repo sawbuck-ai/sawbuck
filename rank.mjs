@@ -61,6 +61,35 @@ const codeish = (p) => /\.(m?[jt]sx?|cjs|py|go|rs|rb|java|kt|c|cc|cpp|h|hpp|php|
 // eslint-disable). The relevance lead: sharpen the signal, don't flatten it.
 const isTest = (p) => /(^|\/)(tests?|__tests__|specs?)\//i.test(p) || /[._-](test|spec)\.[a-z0-9]+$/i.test(p) || /(^|\/)test_[^/]+\.py$/i.test(p);
 
+// Per-language suppression normalization. The 100-repo study (STUDY-100.md) found a suppression's
+// raw count is an idiom artifact, not a risk level: a `# noqa` is background noise in Python (141
+// markers/repo) but a `t.Skip` is notable in Go. So a hit is discounted by how ubiquitous its
+// idiom is in the FILE's language. Discount-only [0.4, 1]: common idioms shrink, rare ones stay at
+// full base weight, and the ordering floor holds (revert 3 > test-skip 2.5 > suppression 2).
+// Reverts are idiom-independent and never normalized. --raw turns this off.
+const raw = process.argv.includes('--raw');
+const langOf = (p) => {
+  const e = (p.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
+  if (/^tsx?$/.test(e)) return 'ts';
+  if (/^(m?jsx?|cjs)$/.test(e)) return 'js';
+  if (['py', 'go', 'rs', 'php', 'phtml'].includes(e)) return e === 'phtml' ? 'php' : e;
+  if (['java', 'kt', 'kts', 'scala', 'groovy'].includes(e)) return 'java';
+  if (['cs', 'fs', 'vb'].includes(e)) return 'cs';
+  return 'other';
+};
+// baseline = markers/repo for that language+kind, from the study's per-language table.
+const BASELINE = {
+  py: { code: 141, skip: 4.6 }, ts: { code: 89, skip: 19.1 }, js: { code: 37, skip: 10.5 },
+  go: { code: 1.6, skip: 21.6 }, java: { code: 0.5, skip: 13.9 }, rs: { code: 0.3, skip: 4.1 },
+  cs: { code: 0.5, skip: 158 }, php: { code: 0.5, skip: 15 }, other: { code: 20, skip: 10 },
+};
+const REF = 15; // a hit at or below ~15 markers/repo for its language+kind keeps full weight
+const normMult = (p, kind) => {
+  if (raw) return 1;
+  const b = Math.max((BASELINE[langOf(p)] || BASELINE.other)[kind], 0.5);
+  return Math.max(0.4, Math.min(1, REF / b));
+};
+
 const DAY = 86400000;
 const ranked = paths.map((p) => {
   let score = 0; const hits = []; const fixDates = [];
@@ -72,8 +101,11 @@ const ranked = paths.map((p) => {
     // "weakened" only on a NET assertion drop (logbook's own rule: del > add + 2), 
     // a rewrite that removes some asserts but adds more is not a weakening.
     else if (codeish(p) && ((e.suppressions && e.suppressions.length) || ((e.del_asserts || 0) > (e.add_asserts || 0) + 2) || e.downgrades > 0)) {
-      if (isTest(p)) { w = 2.5; kind = 'test disabled / weakened'; }
-      else { w = 2; kind = 'suppression in source'; }
+      const hasSupp = e.suppressions && e.suppressions.length;
+      const tst = isTest(p);
+      const m = hasSupp ? normMult(p, tst ? 'skip' : 'code') : 1; // normalize suppressions by language; leave a pure assertion-drop at full weight
+      if (tst) { w = 2.5 * m; kind = 'test disabled / weakened'; }
+      else { w = 2 * m; kind = 'suppression in source'; }
     }
     else if (e.fix) { w = 1.2; kind = 'bugfix here'; }
     else continue;
