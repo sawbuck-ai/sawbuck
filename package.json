@@ -20,6 +20,7 @@
   },
   "files": [
     "sawbuck.mjs",
+    "init.mjs",
     "reflect.mjs",
     "dispatch.mjs",
     "sawbuck-hook.mjs",

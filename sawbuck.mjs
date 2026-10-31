@@ -46,6 +46,10 @@ try { version = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).ver
 const help = `sawbuck ${version}: a saddle for your repo
 
 Usage:
+  sawbuck init [--yes] [--wizard] [--no-investigate]
+                            Generate the contract (promptwheel.config.json): a stack starter, tuned and
+                            explained by what your git history shows actually breaks. Wizard in a terminal,
+                            non-interactive in a pipe/CI/agent (or with --yes).
   sawbuck attach [repo]     Wire Sawbuck into a repo (default: a git post-commit hook)
       --claude              instead wire project Claude Code hooks (writes .claude/settings.local.json)
       --shared              with --claude, write the tracked .claude/settings.json (team-shared, visible in git)
@@ -77,6 +81,11 @@ if (cmd === '--version' || cmd === '-v') { console.log(version); process.exit(0)
 if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') { out(help); process.exit(0); }
 
 switch (cmd) {
+  case 'init': {
+    try { execFileSync(process.execPath, [join(HERE, 'init.mjs'), ...rest], { stdio: 'inherit' }); }
+    catch (e) { process.exit(e.status || 1); }
+    break;
+  }
   case 'status': {
     let o = '';
     try { o = execFileSync(process.execPath, [join(HERE, 'dispatch.mjs'), '--repo', repoArg(), '--force'], { encoding: 'utf8' }); }
@@ -429,6 +438,6 @@ function detachAll(purge) {
 function dryText(plan) { return ['sawbuck --dry-run: would leave this footprint (writing nothing):', ...plan.map((p) => '  ' + p), '  all of it reversible with `detach`.'].join('\n'); }
 function warnNoConfig(repo) {
   if (!existsSync(join(repo, 'promptwheel.config.json'))) {
-    out(`note: no promptwheel.config.json in ${repo}, the check needs one to know what to measure (e.g. npx promptwheel init).`);
+    out(`note: no promptwheel.config.json in ${repo}, the check needs one to know what to measure. Run: sawbuck init`);
   }
 }

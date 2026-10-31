@@ -40,6 +40,25 @@ test('attach wires an idempotent git post-commit hook; detach is a true inverse'
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test('init --yes writes a contract and investigates git history (evidence-backed guards)', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'package.json'), '{"name":"x","type":"module","scripts":{"test":"node --test"}}');
+    g('add', '-A'); g('commit', '-qm', 'add package.json');
+    // a commit that adds a suppression, so the git-history investigation has something to find
+    writeFileSync(join(d, 'a.js'), 'export const v = 1; // eslint-disable-line\n');
+    g('commit', '-qam', 'quick fix with a suppression');
+    const o = sawbuck(['init', '--yes'], d);
+    const cfg = JSON.parse(readFileSync(join(d, 'promptwheel.config.json'), 'utf8'));
+    assert.ok(Array.isArray(cfg.metrics) && cfg.metrics.length > 0, 'contract has metrics');
+    assert.ok(cfg.metrics.some((m) => m.name === 'suppressions'), 'suppressions guard present');
+    assert.match(o, /investigated this repo/);
+    assert.match(o, /history: \d+ commits/);
+    assert.match(o, /<- \d+ suppression/, 'tied the suppressions guard to real history');
+    assert.throws(() => sawbuck(['init', '--yes'], d), 'refuses to clobber an existing contract without --force');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 test('git attach leaves the worktree clean and detach --verify proves full removal', () => {
   const { d } = tmpRepo();
   try {
