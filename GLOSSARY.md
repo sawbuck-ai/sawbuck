@@ -32,7 +32,9 @@ two vocabularies.
 | what Sawbuck leaves you | **verified history** | the findings you can trust |
 | a surfaced past outcome | **finding** | |
 | mounting Sawbuck to a repo | **attach** / **cinch** | `sawbuck attach <repo>` |
-| reading the repo's shape | **fit** | history + config |
+| reading the repo's shape | **fit** | history + config; a concept, not a command (it is what `attach` reads to decide what it can measure) |
+| code still silenced in HEAD now | **debt** (suppression debt) | disabled/weakened tests + lint/type suppressions still live; `sawbuck debt` ranks it by severity and file fragility |
+| the one-view accumulation | **inventory** | `sawbuck status`: what it has caught over time + the debt accruing now + whether it is armed here |
 
 ## The one humility rule
 

@@ -78,7 +78,8 @@ Usage:
   sawbuck doctor [repo]     Check attachments are healthy (hook still resolves to a live sawbuck); --all for every repo
   sawbuck where             List every repo Sawbuck is attached to
   sawbuck statusline        One-line segment for your status line (🐴 watching | N caught)
-  sawbuck status [repo]     Show the results receipt (what the check has caught)
+  sawbuck status [repo]     The inventory: everything it has accumulated here, in one view, caught
+                            over time + debt accruing now + whether it is armed. --json for the feed
   sawbuck log [repo] [-n N] Recent activity, newest first: every check (verified / gamed / regression)
   sawbuck check [repo]      Try it: verify your latest change right now (working tree if dirty, else the
                             last commit). Zero-config, no attach, no hook. The fastest way to see it work.
@@ -108,10 +109,10 @@ switch (cmd) {
     break;
   }
   case 'status': {
-    let o = '';
-    try { o = execFileSync(process.execPath, [join(HERE, 'dispatch.mjs'), '--repo', repoArg(), '--force'], { encoding: 'utf8' }); }
-    catch (e) { o = (e.stdout || '').toString(); }
-    out(o.trim() ? o : 'sawbuck: nothing recorded yet.');
+    // the inventory: one view unioning what the check has caught over time, what debt is accruing
+    // now, and whether it is armed here. The "show me everything" face.
+    try { execFileSync(process.execPath, [join(HERE, 'status.mjs'), '--repo', repoArg(), ...rest.filter((a) => a.startsWith('--'))], { stdio: 'inherit' }); }
+    catch (e) { process.exit(e.status || 1); }
     break;
   }
   case 'check': {

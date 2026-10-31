@@ -89,6 +89,34 @@ test('event feed: the check logs every result (gamed + verified) and sawbuck log
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test('status: the inventory unions outcomes, live debt, and the armed state', () => {
+  const { d, g } = tmpRepo();
+  try {
+    // an armed repo with a bare (undocumented) suppression committed into HEAD -> live debt
+    writeFileSync(join(d, 'promptwheel.config.json'), '{"metrics":[]}');
+    writeFileSync(join(d, 'a.js'), 'export const v = 1; // eslint-disable-line\n');
+    g('commit', '-qam', 'add a bare suppression');
+    // seed the outcome record (what the check has caught over time) + the per-check feed
+    mkdirSync(join(d, '.sawbuck'), { recursive: true });
+    writeFileSync(join(d, '.sawbuck', 'results.json'), JSON.stringify({ regressions: 1, gamed: 2, latest: { kind: 'gamed', file: 'a.js', reason: 'the win came from editing the test', at: '2026-10-31T00:00:00Z' } }));
+    writeFileSync(join(d, '.sawbuck', 'activity.jsonl'),
+      [{ at: '2026-10-30T00:00:00Z', kind: 'verified', file: 'a.js' }, { at: '2026-10-31T00:00:00Z', kind: 'gamed', file: 'a.js' }].map((e) => JSON.stringify(e)).join('\n') + '\n');
+
+    const o = sawbuck(['status', '.'], d);
+    assert.match(o, /Caught for you/, 'surfaces the outcome record');
+    assert.match(o, /verified/, 'shows the recent-check breakdown');
+    assert.match(o, /Debt accruing now/, 'surfaces the live debt');
+    assert.match(o, /silenced in HEAD/, 'counts the live suppression');
+    assert.match(o, /Measuring here/, 'reports whether it is armed here');
+
+    const j = JSON.parse(sawbuck(['status', '.', '--json'], d));
+    assert.equal(j.outcomes.gamedAllTime, 2, 'all-time gamed count from the record');
+    assert.equal(j.state, 'ready', 'a config present, not wired -> ready');
+    assert.ok(j.debt && j.debt.total >= 1, 'live debt counted the committed suppression');
+    assert.ok(j.debt.undocumented >= 1, 'the bare suppression reads undocumented');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 test('git attach leaves the worktree clean and detach --verify proves full removal', () => {
   const { d } = tmpRepo();
   try {

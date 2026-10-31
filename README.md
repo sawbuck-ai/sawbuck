@@ -31,6 +31,7 @@ sawbuck: gamed recorded on test.js       (the win came from editing the test, no
 
 - **Verifies the win.** `check` re-runs your metric from the source diff alone. A faked green (a deleted, weakened, or skipped test; a mocked grader; an edited golden file) reads `gamed`. Deterministic, zero-LLM, $0, and it cannot be obfuscated against because it never reads the trajectory (89% recall on a labeled gaming benchmark).
 - **Remembers what broke.** `context` and `rank` surface the relevant history (reverts, fragile areas, test-weakening) for the files you are touching: a ranked trail guide, before you act.
+- **Shows you everything.** `status` is the inventory: what it has caught for you over time, the debt accruing now, and whether it is armed here, in one view. On-demand, so it is quiet until you go looking.
 - **Rides on, does not replace.** Sawbuck is the verify + memory layer. Your agent and your loop stay yours.
 - **Clean on and off.** `attach` touches nothing in your worktree (the hook lives in `.git/`, the record is excluded locally); `detach` is a true inverse. `trace` shows every byte it placed, and `detach --verify` proves the repo came back unchanged.
 
@@ -43,6 +44,7 @@ sawbuck: gamed recorded on test.js       (the win came from editing the test, no
 | `sawbuck check [--base R --head R]` | verify a commit; record a regression or a gamed win |
 | `sawbuck context` · `sawbuck rank` | the ranked relevant history for the current change |
 | `sawbuck debt` | the whole-repo live suppression debt: what is still silenced in HEAD now, disabled tests first, heaviest files ranked |
+| `sawbuck status` · `sawbuck log` | the inventory (caught over time + debt now + armed state), in one view; and the recent per-check feed |
 | `sawbuck run --attempt '<agent cmd>'` | thin harness: load context, run one attempt through the keep-if-verified gate |
 | `sawbuck trace` · `sawbuck doctor` · `detach --verify` | show the footprint; check the attachment resolves; prove a clean removal |
 
