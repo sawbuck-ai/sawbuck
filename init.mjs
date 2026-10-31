@@ -26,7 +26,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const engineBin = (envVar, pkgSubpath, devPath) => {
   if (process.env[envVar]) return process.env[envVar];
-  try { return require.resolve(pkgSubpath); } catch { return devPath; }
+  // deep bin subpath (no-exports pkgs, e.g. promptwheel), then the bare package name
+  // (pkgs whose exports map "." to the bin, e.g. @promptwheel/logbook), then the dev sibling.
+  const bare = pkgSubpath.replace(/\/bin\/[^/]*$/, '');
+  for (const spec of [pkgSubpath, bare]) { try { return require.resolve(spec); } catch {} }
+  return devPath;
 };
 const PW = engineBin('PW_BIN', 'promptwheel/bin/promptwheel.mjs', join(HERE, '..', 'referee', 'bin', 'promptwheel.mjs'));
 const LB = engineBin('LB_BIN', '@promptwheel/logbook/bin/logbook.mjs', join(HERE, '..', 'logbook', 'bin', 'logbook.mjs'));
