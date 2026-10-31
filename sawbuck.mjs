@@ -135,7 +135,7 @@ switch (cmd) {
     if (!lines.length) { out('sawbuck: no activity recorded yet (the check logs here on each commit/turn).'); break; }
     const ni = rest.indexOf('-n');
     const n = ni > -1 ? (parseInt(rest[ni + 1], 10) || 20) : 20;
-    const icon = { verified: '✓', gamed: '🚩', regression: '✗', inconclusive: '≈' };
+    const icon = { verified: '✓', gamed: '🚩', regression: '✗', inconclusive: '≈', allowed: '✎' };
     const recent = lines.slice(-n).reverse();
     out(`sawbuck activity (last ${recent.length}):`);
     for (const l of recent) {
@@ -205,7 +205,7 @@ switch (cmd) {
         try { const r = JSON.parse(readFileSync(join(repo, '.sawbuck', 'results.json'), 'utf8')); caught = (r.regressions || 0) + (r.gamed || 0); } catch {}
         // the last verdict from the activity feed (includes verified passes), so you see it working each turn
         let last = '';
-        try { const L = readFileSync(join(repo, '.sawbuck', 'activity.jsonl'), 'utf8').trim().split('\n'); const e = JSON.parse(L[L.length - 1]); last = { verified: '✓', gamed: '🚩', regression: '✗', inconclusive: '≈' }[e.kind] || ''; } catch {}
+        try { const L = readFileSync(join(repo, '.sawbuck', 'activity.jsonl'), 'utf8').trim().split('\n'); const e = JSON.parse(L[L.length - 1]); last = { verified: '✓', gamed: '🚩', regression: '✗', inconclusive: '≈', allowed: '✎' }[e.kind] || ''; } catch {}
         // one state model, shared with the Reins band: watching (wired in) / ready (checkable, not wired yet) / memory (history only)
         const active = existsSync(join(repo, '.sawbuck', 'state.json'));
         const armed = existsSync(join(repo, 'promptwheel.config.json')) || existsSync(join(repo, 'package.json'));

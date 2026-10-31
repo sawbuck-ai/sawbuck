@@ -1,6 +1,6 @@
 {
   "name": "sawbuck",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Sign your agent to a contract so it does what you want: a deterministic, zero-LLM check that re-proves every win from the agent's source edits alone, so a green that came from editing the test is caught and reverted. A saddle for your coding harness.",
   "type": "module",
   "license": "MIT",
@@ -15,7 +15,7 @@
     "sawbuck": "sawbuck.mjs"
   },
   "dependencies": {
-    "promptwheel": "^0.6.0",
+    "promptwheel": "^0.7.0",
     "@promptwheel/logbook": "^0.9.0"
   },
   "files": [

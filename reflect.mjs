@@ -107,7 +107,7 @@ process.stderr.write(`sawbuck: ${kind} recorded on ${evidenceFile}\n`);
 function appendActivity(v, rep) {
   if (process.env.SAWBUCK_NO_LOG) return;
   const map = { pass: 'verified', gamed: 'gamed', fail: 'regression', inconclusive: 'inconclusive' };
-  const k = map[v];
+  const k = (v === 'pass' && rep.allowed) ? 'allowed' : map[v];   // a declared override is logged distinctly, for the audit trail
   if (!k) return;
   let sha = '', file = '';
   try { sha = git('rev-parse', head).slice(0, 8); } catch {}
@@ -115,6 +115,7 @@ function appendActivity(v, rep) {
   const gm = (rep.metrics || []).find((m) => m.gamed === true);
   const why = k === 'gamed' ? (gm?.gamingReason || 'the win came from editing the goalposts')
     : k === 'regression' ? 'a guarded metric regressed beyond noise'
+    : k === 'allowed' ? ('declared intentional: ' + (rep.allowed?.reason || ''))
     : k === 'verified' ? 'the source earned the green'
     : 'could not certify a pass';
   const ev = { at: new Date().toISOString(), kind: k, sha, file, reason: String(why).slice(0, 160), by: by || null };
