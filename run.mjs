@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// run.mjs — the thin reference harness. Each loop: load context, run ONE attempt
+// run.mjs, the thin reference harness. Each loop: load context, run ONE attempt
 // through the keep-if-verified gate, repeat. It loops primitives that already
 // exist (sawbuck context + promptwheel improve + YOUR agent); it is NOT an
-// orchestrator (no planning, routing, or queue — that is the platform's job).
+// orchestrator (no planning, routing, or queue, that is the platform's job).
 // Usage:  node run.mjs --attempt '<agent cmd>' [--loops N] [--repo P]
 //   the attempt cmd can read $SAWBUCK_CONTEXT (a file of the ranked relevant history).
 

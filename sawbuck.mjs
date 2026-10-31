@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// sawbuck — the saddle CLI. Zero-dep.
+// sawbuck, the saddle CLI. Zero-dep.
 // `attach` wires Sawbuck's reflex into a repo (a git post-commit hook by default,
 // or Claude Code hooks); `detach` removes it and leaves the repo exactly as it
 // was. Isolation invariant: the repo never imports Sawbuck, and detach is a true
@@ -7,7 +7,7 @@
 //
 // How removal stays honest: attach writes a receipt to .git/sawbuck/attach.json
 // recording every file/dir it created or modified and every .git/info/exclude
-// line it added. detach reads the receipt and reverses exactly that — deleting
+// line it added. detach reads the receipt and reverses exactly that, deleting
 // what it created, stripping only its own lines from what it modified, touching
 // nothing it did not touch. `trace` prints the footprint; `detach --verify`
 // proves the repo came back clean; `doctor` checks the attachment still resolves.
@@ -26,7 +26,11 @@ const S_END = '# <<< sawbuck <<<';
 const BLOCK_RE = new RegExp(`\\n?${S_START}[\\s\\S]*?${S_END}\\n?`, 'g');
 // the record/state dirs the engines write into the worktree; excluded locally so
 // attach never dirties `git status`.
-const RECORD_DIRS = ['.sawbuck/', '.promptwheel/'];
+// The record Sawbuck keeps on disk but must never let dirty git status: the engine records
+// plus the logbook's root working-set (ledger cache, digests, annotation planes). It is
+// memory, not the user's source, a user who wants LOGBOOK.md committed still can explicitly
+// (exclude only affects UNtracked files).
+const RECORD_DIRS = ['.sawbuck/', '.promptwheel/', 'events.jsonl', 'annotations.jsonl', 'annotation-reviews.jsonl', 'decision-cards.jsonl', 'LOGBOOK.md', 'JOURNEY.md'];
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -140,8 +144,8 @@ switch (cmd) {
       const repo = process.cwd();
       if (existsSync(join(repo, '.git'))) {
         let caught = 0;
-        try { const r = JSON.parse(readFileSync(join(repo, '.sawbuck', 'results.json'), 'utf8')); caught = (r.regressions || 0) + (r.invalid || 0); } catch {}
-        process.stdout.write(caught > 0 ? `🐴 ${caught} caught` : `🐴 watching`);
+        try { const r = JSON.parse(readFileSync(join(repo, '.sawbuck', 'results.json'), 'utf8')); caught = (r.regressions || 0) + (r.gamed || 0); } catch {}
+        process.stdout.write(caught > 0 ? `🐴 sawbuck · ${caught} caught` : `🐴 sawbuck · watching`);
       }
     } catch {}
     break;
@@ -189,7 +193,10 @@ function syncExclude(repo, manifest) {
 // falls back to the absolute path of the sawbuck that attached (dev checkouts).
 function hookBlock(repo) {
   const r = JSON.stringify(repo);
-  return `${S_START}\nif command -v sawbuck >/dev/null 2>&1; then sawbuck __hook --repo ${r}; else node ${JSON.stringify(SELF)} __hook --repo ${r}; fi || true\n${S_END}\n`;
+  // git exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE into its hooks. The check
+  // shells out to git (worktrees, diffs) and would inherit them, operate on the wrong
+  // repo, and silently catch nothing. Clear them so the reflex runs against `repo` clean.
+  return `${S_START}\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_COMMON_DIR\nif command -v sawbuck >/dev/null 2>&1; then sawbuck __hook --repo ${r}; else node ${JSON.stringify(SELF)} __hook --repo ${r}; fi || true\n${S_END}\n`;
 }
 function wireGit(repo) {
   if (!existsSync(join(repo, '.git'))) die(`${repo} is not a git repo (no .git)`);
@@ -338,7 +345,7 @@ function footprint(repo) {
 }
 function traceRepo(repo) {
   const items = footprint(repo);
-  if (!items.length) { out(`sawbuck: no footprint in ${repo} — nothing attached.`); return; }
+  if (!items.length) { out(`sawbuck: no footprint in ${repo}, nothing attached.`); return; }
   out(`sawbuck footprint in ${repo}:`);
   for (const it of items) out(`  ${it.state.padEnd(22)} ${it.what}`);
   out('\n  detach reverses every line above; `detach --verify` proves it.');
@@ -346,8 +353,8 @@ function traceRepo(repo) {
 function verifyClean(repo) {
   // the record dirs may stay (your data, unless --purge); the mechanism must be gone.
   const left = footprint(repo).filter((it) => !/record dir/.test(it.state));
-  if (!left.length) out('sawbuck: verified — the repo is back to how it was (mechanism fully removed).');
-  else { out('sawbuck: NOT clean — these remain:'); for (const it of left) out(`  ${it.state.padEnd(22)} ${it.what}`); process.exitCode = 1; }
+  if (!left.length) out('sawbuck: verified, the repo is back to how it was (mechanism fully removed).');
+  else { out('sawbuck: NOT clean, these remain:'); for (const it of left) out(`  ${it.state.padEnd(22)} ${it.what}`); process.exitCode = 1; }
 }
 function purgeRecord(repo) {
   let n = 0;
@@ -370,16 +377,16 @@ function doctorRepo(repo) {
   for (const [mode, f] of [['claude', join(repo, '.claude', 'settings.local.json')], ['claude-shared', join(repo, '.claude', 'settings.json')]]) {
     try { if (existsSync(f)) { const b = readFileSync(f, 'utf8'); if (b.includes('sawbuck.mjs')) checks.push({ mode, file: f, baked: extractBaked(b) }); } } catch {}
   }
-  if (!checks.length) { out(`sawbuck: no attachment in ${repo} — nothing to check.`); return; }
+  if (!checks.length) { out(`sawbuck: no attachment in ${repo}, nothing to check.`); return; }
   const pathOk = onPath();
   let bad = 0;
-  out(`sawbuck doctor — ${repo}:`);
+  out(`sawbuck doctor, ${repo}:`);
   for (const c of checks) {
     const ok = pathOk || (c.baked ? existsSync(c.baked) : false);
     if (!ok) bad++;
-    out(`  ${ok ? 'OK   ' : 'STALE'} ${c.mode.padEnd(14)} ${c.file}${ok ? '' : `  (baked path gone: ${c.baked || '?'} and sawbuck not on PATH — re-attach or install it)`}`);
+    out(`  ${ok ? 'OK   ' : 'STALE'} ${c.mode.padEnd(14)} ${c.file}${ok ? '' : `  (baked path gone: ${c.baked || '?'} and sawbuck not on PATH, re-attach or install it)`}`);
   }
-  out(pathOk ? '\n  sawbuck resolves on PATH — attachments survive a reinstall.' : '\n  tip: `npm i -g sawbuck` so hooks resolve by PATH and survive an upgrade.');
+  out(pathOk ? '\n  sawbuck resolves on PATH, attachments survive a reinstall.' : '\n  tip: `npm i -g sawbuck` so hooks resolve by PATH and survive an upgrade.');
   if (bad) process.exitCode = 1;
 }
 function doctorAll() {
@@ -422,6 +429,6 @@ function detachAll(purge) {
 function dryText(plan) { return ['sawbuck --dry-run: would leave this footprint (writing nothing):', ...plan.map((p) => '  ' + p), '  all of it reversible with `detach`.'].join('\n'); }
 function warnNoConfig(repo) {
   if (!existsSync(join(repo, 'promptwheel.config.json'))) {
-    out(`note: no promptwheel.config.json in ${repo} — the check needs one to know what to measure (e.g. npx promptwheel init).`);
+    out(`note: no promptwheel.config.json in ${repo}, the check needs one to know what to measure (e.g. npx promptwheel init).`);
   }
 }

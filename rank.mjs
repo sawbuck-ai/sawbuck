@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// rank.mjs — query-conditioned relevance for Sawbuck's read face.
+// rank.mjs, query-conditioned relevance for Sawbuck's read face.
 // Given the paths a change touches, score each path's history by
 // severity x recency x recurrence, so the agent sees the few relevant warnings
 // for what it is about to edit, not the whole book.
@@ -61,7 +61,7 @@ const ranked = paths.map((p) => {
     if (e.fix) fixDates.push(Date.parse(e.date));
     let w = 0, kind = null;
     if (e.revert) { w = 3; kind = 'revert (do-not-retry)'; }
-    // "weakened" only on a NET assertion drop (logbook's own rule: del > add + 2) —
+    // "weakened" only on a NET assertion drop (logbook's own rule: del > add + 2), 
     // a rewrite that removes some asserts but adds more is not a weakening.
     else if (codeish(p) && ((e.suppressions && e.suppressions.length) || ((e.del_asserts || 0) > (e.add_asserts || 0) + 2) || e.downgrades > 0)) { w = 2; kind = 'test weakened / suppressed'; }
     else if (e.fix) { w = 1.2; kind = 'bugfix here'; }
@@ -89,5 +89,5 @@ for (const r of ranked) {
   out.push(`\n  ${r.hot ? '🔥 ' : ''}${r.path}  ·  score ${r.score}`);
   for (const h of r.top) out.push(`    - ${h.kind}: ${h.subject}${h.sha ? ` (${h.sha}, ${h.date})` : ''}`);
 }
-out.push('\n  leads, not conclusions — verify against the diff before acting.');
+out.push('\n  leads, not conclusions; verify against the diff before acting.');
 console.log(out.join('\n'));

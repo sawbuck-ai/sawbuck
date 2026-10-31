@@ -1,7 +1,7 @@
 // Behavior test for the Sawbuck glue (node:test). Run: npm test  (or: node --test)
 //
 // The whole M0 loop in one scenario, with the engines stubbed via PW_BIN / LB_BIN:
-//   trip a bad commit -> the check says gamed -> reflect records it as an invalid
+//   trip a bad commit -> the check says gamed -> reflect records it as a gamed
 //   change in the results -> dispatch surfaces the freshly-learned finding.
 // Stubbing the check keeps this deterministic (no real metric run needed).
 
@@ -29,7 +29,7 @@ function setupRepo() {
   writeFileSync(join(dir, 'app.js'), 'export const v = 2;\n');
   git('add', '.'); git('commit', '-qm', 'change app');
   // Stub engines (untracked -> absent from the diff reflect inspects).
-  // The check engine keeps its own verdict vocabulary ('gamed'); Sawbuck maps it to 'invalid'.
+  // The check engine keeps its own verdict vocabulary ('gamed'); Sawbuck surfaces the same word.
   const pw = join(dir, 'pw-stub.mjs');
   writeFileSync(pw, "console.log(JSON.stringify({verdict:'gamed',metrics:[{gamed:true,gamingReason:'tests were edited to pass'}]}));\n");
   const lb = join(dir, 'lb-stub.mjs');
@@ -40,16 +40,16 @@ function setupRepo() {
 const runReflect = (dir, env) =>
   execFileSync(process.execPath, [REFLECT, '--repo', dir], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
-test('reflect records a gamed result as an invalid change in the results', () => {
+test('reflect records a gamed result as a gamed change in the results', () => {
   const { dir, env } = setupRepo();
   try {
     runReflect(dir, env);
     const rec = JSON.parse(readFileSync(join(dir, '.sawbuck', 'results.json'), 'utf8'));
-    assert.equal(rec.invalid, 1);
+    assert.equal(rec.gamed, 1);
     assert.equal(rec.regressions, 0);
-    assert.equal(rec.latest.kind, 'invalid');
+    assert.equal(rec.latest.kind, 'gamed');
     assert.equal(rec.latest.file, 'app.js');
-    assert.match(rec.latest.reason, /invalid/);
+    assert.match(rec.latest.reason, /gamed/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -61,7 +61,7 @@ test('dispatch surfaces the recently-learned finding (not just the file)', () =>
     runReflect(dir, env);
     const out = execFileSync(process.execPath, [DISPATCH, '--repo', dir], { encoding: 'utf8' });
     assert.match(out, /just learned/);
-    assert.match(out, /invalid/);
+    assert.match(out, /gamed/);
     assert.match(out, /app\.js/);
   } finally {
     rmSync(dir, { recursive: true, force: true });

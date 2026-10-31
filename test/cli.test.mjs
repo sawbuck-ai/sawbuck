@@ -93,10 +93,10 @@ test('trace shows the footprint, and reports clean after detach', () => {
 test('statusline prints a compact guide segment', () => {
   const { d } = tmpRepo();
   try {
-    assert.match(sawbuck(['statusline'], d), /🐴 watching/);
+    assert.match(sawbuck(['statusline'], d), /🐴 sawbuck · watching/);
     mkdirSync(join(d, '.sawbuck'), { recursive: true });
-    writeFileSync(join(d, '.sawbuck', 'results.json'), JSON.stringify({ regressions: 1, invalid: 1 }));
-    assert.match(sawbuck(['statusline'], d), /🐴 2 caught/);
+    writeFileSync(join(d, '.sawbuck', 'results.json'), JSON.stringify({ regressions: 1, gamed: 1 }));
+    assert.match(sawbuck(['statusline'], d), /🐴 sawbuck · 2 caught/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -104,6 +104,24 @@ test('attach refuses a non-git directory', () => {
   const d = mkdtempSync(join(tmpdir(), 'sawbuck-nogit-'));
   try { assert.throws(() => sawbuck(['attach', '.'], d)); }
   finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('git post-commit hook records a catch through a REAL commit (GIT_DIR inheritance regression)', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'promptwheel.config.json'), JSON.stringify({ linkNodeModules: false, repeat: 1, metrics: [{ name: 'tests_pass', cmd: 'node --test calc.test.mjs 2>&1', extract: 'exit', direction: 'pass', guard: true }] }));
+    writeFileSync(join(d, 'calc.mjs'), 'export const sub = (a, b) => a + b; // BUG\n');
+    writeFileSync(join(d, 'calc.test.mjs'), "import {test} from 'node:test';import assert from 'node:assert';import {sub} from './calc.mjs';\ntest('sub',()=>assert.strictEqual(sub(5,3),2));\n");
+    g('add', '-A'); g('commit', '-q', '-m', 'base (red)');
+    sawbuck(['attach', '.'], d);
+    sawbuck(['__hook', '--repo', d], d);   // arm the reflex on the base commit
+    // the cheat: edit the TEST to expect the buggy value, landed via a REAL git commit so the
+    // post-commit hook fires with git's own GIT_DIR/GIT_INDEX_FILE exported (the bug's trigger).
+    writeFileSync(join(d, 'calc.test.mjs'), "import {test} from 'node:test';import assert from 'node:assert';import {sub} from './calc.mjs';\ntest('sub',()=>assert.strictEqual(sub(5,3),8));\n");
+    g('commit', '-q', '-am', 'fake the pass');
+    const r = JSON.parse(readFileSync(join(d, '.sawbuck', 'results.json'), 'utf8'));
+    assert.ok((r.gamed || 0) + (r.regressions || 0) >= 1, 'the post-commit hook caught the faked win through a real commit (the hook must clear inherited git env)');
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
 test('rank filters findings per path (regression for the --file no-op bug)', () => {
@@ -115,7 +133,7 @@ test('rank filters findings per path (regression for the --file no-op bug)', () 
     const a = ranked.find((r) => r.path === 'a.js');
     const b = ranked.find((r) => r.path === 'b.js');
     assert.ok(a && a.score > 0, 'a.js is ranked (it has a fix in its history)');
-    assert.ok(!b, 'b.js is NOT ranked — proves per-path filtering, not the old all-equal bug');
+    assert.ok(!b, 'b.js is NOT ranked, proves per-path filtering, not the old all-equal bug');
     assert.match(a.top[0].subject, /patch a/, 'a.js surfaces its OWN commit');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
@@ -213,7 +231,17 @@ test('the reflex keeps the record out of git status under any attach mode (incl.
     assert.match(ex, /# >>> sawbuck >>>/, 'exclude block written by the reflex');
     assert.match(ex, /\.sawbuck\//);
     assert.match(ex, /\.promptwheel\//);
-    assert.equal(execFileSync('git', ['-C', d, 'status', '--porcelain'], { encoding: 'utf8' }).trim(), '', 'record dirs do not dirty git status');
+    assert.match(ex, /events\.jsonl/, 'the logbook root ledger cache is excluded (finding #11)');
+    assert.match(ex, /LOGBOOK\.md/, 'the logbook digests are excluded too');
+    assert.match(ex, /annotations\.jsonl/, 'the logbook annotation plane is excluded too');
+    // the records AND the whole logbook root working-set may not dirty git status
+    for (const f of ['events.jsonl', 'annotations.jsonl', 'LOGBOOK.md', 'JOURNEY.md']) writeFileSync(join(d, f), 'x\n');
+    mkdirSync(join(d, '.sawbuck'), { recursive: true }); writeFileSync(join(d, '.sawbuck', 'results.json'), '{}');
+    assert.equal(execFileSync('git', ['-C', d, 'status', '--porcelain'], { encoding: 'utf8' }).trim(), '', 'records + logbook working-set do not dirty git status');
+    // retrofit: a stale block (written before events.jsonl was added) is refreshed, not left as-is
+    writeFileSync(join(d, '.git', 'info', 'exclude'), '# >>> sawbuck >>>\n.sawbuck/\n.promptwheel/\n# <<< sawbuck <<<\n');
+    sawbuck(['__hook', '--repo', d], d, { LOGBOOK_NO_CACHE: '1' });
+    assert.match(readFileSync(join(d, '.git', 'info', 'exclude'), 'utf8'), /events\.jsonl/, 'a stale exclude block is retrofitted with events.jsonl');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -229,5 +257,30 @@ test('run drives an attempt through the keep-if-verified gate (dummy agent)', ()
     // dummy "agent": removes one TODO -> metric improves -> the gate keeps it
     const o = sawbuck(['run', '--attempt', "sed -i '0,/ \\/\\/ TODO/s///' app.js", '--loops', '1'], d, { LOGBOOK_NO_CACHE: '1' });
     assert.match(o, /-> kept/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('where lists an attached repo and drops it after detach', () => {
+  const { d } = tmpRepo();
+  try {
+    sawbuck(['attach', '.'], d);
+    assert.ok(sawbuck(['where'], d).includes(d), 'where lists the attached repo');
+    sawbuck(['detach', '.'], d);
+    assert.ok(!sawbuck(['where'], d).includes(d), 'where no longer lists it after detach');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('check (CLI) leaves an honest source fix uncharted (no false positive through the command)', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'promptwheel.config.json'), JSON.stringify({ linkNodeModules: false, repeat: 1, metrics: [{ name: 'tests_pass', cmd: 'node --test calc.test.mjs 2>&1', extract: 'exit', direction: 'pass', guard: true }] }));
+    writeFileSync(join(d, 'calc.mjs'), 'export const sub = (a, b) => a + b; // BUG\n');
+    writeFileSync(join(d, 'calc.test.mjs'), "import {test} from 'node:test';import assert from 'node:assert';import {sub} from './calc.mjs';\ntest('sub',()=>assert.strictEqual(sub(5,3),2));\n");
+    g('add', '-A'); g('commit', '-q', '-m', 'base (red)');
+    writeFileSync(join(d, 'calc.mjs'), 'export const sub = (a, b) => a - b;\n');   // real fix, test untouched
+    g('commit', '-q', '-am', 'fix sub in source');
+    sawbuck(['check', '--base', 'HEAD~1', '--head', 'HEAD'], d, { LOGBOOK_NO_CACHE: '1' });
+    let r = {}; try { r = JSON.parse(readFileSync(join(d, '.sawbuck', 'results.json'), 'utf8')); } catch { /* no file = no catch */ }
+    assert.equal((r.gamed || 0) + (r.regressions || 0), 0, 'a red->green fix earned in source is never charted as a catch');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

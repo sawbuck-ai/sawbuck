@@ -79,7 +79,7 @@ const BASE = {
 };
 
 test('stabilizer: the check CATCHES a gamed win and emits the contract reflect.mjs reads', () => {
-  // head makes the suite pass by deleting the failing assertion — no source change
+  // head makes the suite pass by deleting the failing assertion, no source change
   const report = pwReport(BASE, { 'test.js': "const a=require('assert');const{add}=require('./src');a.strictEqual(add(2,2),4);\n" });
   assert.ok(report, 'the engine produced a JSON report');
   assert.equal(report.verdict, 'gamed', 'a test-only "win" is flagged gamed');
@@ -89,7 +89,7 @@ test('stabilizer: the check CATCHES a gamed win and emits the contract reflect.m
 });
 
 test('stabilizer: the check CLEARS an honest fix (no false positive)', () => {
-  // head fixes it in source — the win survives a source-only re-run
+  // head fixes it in source, the win survives a source-only re-run
   const report = pwReport(BASE, { 'src.js': 'module.exports={add:(a,b)=>a+b,subtract:(a,b)=>a-b};\n' });
   assert.ok(report, 'the engine produced a JSON report');
   assert.equal(report.verdict, 'pass', 'an honest source fix is not flagged');
@@ -105,7 +105,7 @@ test('stabilizer: a hanging check is bounded by SAWBUCK_CHECK_TIMEOUT_MS', () =>
     const t0 = Date.now();
     sawbuck(['check', '--base', 'HEAD~1', '--head', 'HEAD'], d, { SAWBUCK_CHECK_TIMEOUT_MS: '2000', LOGBOOK_NO_CACHE: '1' });
     const dt = Date.now() - t0;
-    assert.ok(dt < 4500, `check returned in ${dt}ms — the 2s timeout fired before the 5s sleep finished`);
+    assert.ok(dt < 4500, `check returned in ${dt}ms, the 2s timeout fired before the 5s sleep finished`);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// reflect.mjs — the Sawbuck feedback edge (M0).
+// reflect.mjs, the Sawbuck feedback edge (M0).
 //
-// Run the check (packages/referee) on the latest commit; on an invalid or
-// regression result — deterministic ground truth — record a finding in the
+// Run the check (packages/referee) on the latest commit; on an gamed or
+// regression result, deterministic ground truth, record a finding in the
 // memory (packages/logbook) on the touched source paths, and tick the results
 // record. Quiet by default; the dispatch surfaces catches on a cadence.
 //
@@ -59,7 +59,7 @@ const verdict = report.verdict;                            // engine contract: '
 if (verdict !== 'gamed' && verdict !== 'fail') process.exit(0);   // only breakage is worth recording
 
 // map the engine verdict to Sawbuck's plain outcome words
-const kind = verdict === 'gamed' ? 'invalid' : 'regression';
+const kind = verdict === 'gamed' ? 'gamed' : 'regression';
 
 // --- 2) build the finding from the result ----------------------------------
 const sha = git('rev-parse', head);
@@ -70,8 +70,8 @@ const evidenceFile = srcFiles[0] || changed[0];
 if (!evidenceFile) process.exit(0);
 
 const gamedMetric = (report.metrics || []).find((m) => m.gamed === true);
-const reason = kind === 'invalid'
-  ? `sawbuck: a change here was invalid, ${gamedMetric?.gamingReason || 'a metric "improved" by weakening its test, not the source'}`
+const reason = kind === 'gamed'
+  ? `sawbuck: a change here was gamed, ${gamedMetric?.gamingReason || 'a metric "improved" by weakening its test, not the source'}`
   : `sawbuck: a change here regressed a guarded metric beyond noise`;
 
 // --- 3) record the finding in memory (unreviewed, machine-authored note) ----
@@ -86,9 +86,9 @@ try {
 // --- 4) tick the results record (the visible proof-of-work) -----------------
 const recDir = join(repo, '.sawbuck');
 const recPath = join(recDir, 'results.json');
-let rec = { regressions: 0, invalid: 0, latest: null };
+let rec = { regressions: 0, gamed: 0, latest: null };
 try { if (existsSync(recPath)) rec = JSON.parse(readFileSync(recPath, 'utf8')); } catch {}
-if (kind === 'invalid') rec.invalid += 1; else rec.regressions += 1;
+if (kind === 'gamed') rec.gamed += 1; else rec.regressions += 1;
 rec.latest = { sha: sha.slice(0, 8), kind, file: evidenceFile, reason: reason.replace(/^sawbuck: /, '').slice(0, 140), at: new Date().toISOString() };
 try { mkdirSync(recDir, { recursive: true }); writeFileSync(recPath, JSON.stringify(rec, null, 2) + '\n'); } catch {}
 

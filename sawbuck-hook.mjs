@@ -36,9 +36,9 @@ if (head && st.lastSha && head !== st.lastSha) {
 st.lastSha = head || st.lastSha;
 st.turns += 1;
 
-// 2) decide whether to speak — fresh catch always; cadence unless onlyOnCatch
+// 2) decide whether to speak, fresh catch always; cadence unless onlyOnCatch
 let total = 0;
-try { const r = JSON.parse(readFileSync(join(stDir, 'results.json'), 'utf8')); total = (r.regressions || 0) + (r.invalid || 0); } catch {}
+try { const r = JSON.parse(readFileSync(join(stDir, 'results.json'), 'utf8')); total = (r.regressions || 0) + (r.gamed || 0); } catch {}
 const freshCatch = total > (st.shownTotal || 0);
 const cadenceHit = everyTurns > 0 && st.turns % everyTurns === 0;
 if (freshCatch || (cadenceHit && !onlyOnCatch)) {
@@ -50,18 +50,21 @@ if (freshCatch || (cadenceHit && !onlyOnCatch)) {
 try { mkdirSync(stDir, { recursive: true }); writeFileSync(stPath, JSON.stringify(st, null, 2) + '\n'); } catch {}
 
 // Keep the record dirs out of `git status` via .git/info/exclude, so Sawbuck never
-// dirties the worktree — including under `attach --user`, which is global and cannot
+// dirties the worktree, including under `attach --user`, which is global and cannot
 // set this up per-repo at attach time. Idempotent; markers match the CLI's so a
 // per-repo `detach` removes them.
 function ensureExcluded(r) {
   try {
     if (!existsSync(join(r, '.git'))) return;
     const f = join(r, '.git', 'info', 'exclude');
-    let body = existsSync(f) ? readFileSync(f, 'utf8') : '';
-    if (body.includes('# >>> sawbuck >>>')) return;
-    if (body && !body.endsWith('\n')) body += '\n';
-    body += '# >>> sawbuck >>>\n.sawbuck/\n.promptwheel/\n# <<< sawbuck <<<\n';
+    // the record dirs + the logbook's root ledger cache (events.jsonl). Rewrite the block to
+    // the CURRENT set rather than bail on presence, so a grown set retrofits existing repos.
+    const WANT = '# >>> sawbuck >>>\n.sawbuck/\n.promptwheel/\nevents.jsonl\nannotations.jsonl\nannotation-reviews.jsonl\ndecision-cards.jsonl\nLOGBOOK.md\nJOURNEY.md\n# <<< sawbuck <<<\n';
+    const body = existsSync(f) ? readFileSync(f, 'utf8') : '';
+    const stripped = body.replace(/# >>> sawbuck >>>[\s\S]*?# <<< sawbuck <<<\n?/g, '');
+    const next = (stripped && !stripped.endsWith('\n') ? stripped + '\n' : stripped) + WANT;
+    if (next === body) return;
     mkdirSync(dirname(f), { recursive: true });
-    writeFileSync(f, body);
+    writeFileSync(f, next);
   } catch {}
 }

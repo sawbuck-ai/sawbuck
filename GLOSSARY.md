@@ -1,4 +1,4 @@
-# Sawbuck — Glossary & Controlled Vocabulary
+# Sawbuck: Glossary & Controlled Vocabulary
 
 Sawbuck is a saddle: an isolated layer you attach to a repo that fits its shape
 and responds when the repo moves. It reads the history (via Logbook) and a small
@@ -36,7 +36,7 @@ two vocabularies.
 
 ## The one humility rule
 
-Findings are **leads, not conclusions** — verify against the diff before acting.
+Findings are **leads, not conclusions**, verify against the diff before acting.
 
 ## Dispatch template
 

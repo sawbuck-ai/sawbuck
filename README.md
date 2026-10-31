@@ -1,8 +1,10 @@
 # sawbuck
 
-**A coding loop that can't keep a fake win.**
+**A saddle for your coding harness.**
 
-AI agents are great at making tests pass. Sometimes they make them pass by *editing the test*. Your CI goes green, you ship, and the bug is still there. Sawbuck catches that: it re-proves every win from the agent's **source** edits alone, so a green that came from weakening a test reads **invalid**. And it remembers what broke here before, so the agent stops repeating it.
+Sawbuck fits onto any agent loop and makes its wins provable instead of merely green. It re-proves every win from the agent's **source** edits alone, so a result that only passed because the agent edited the test, mocked the grader, or loosened a rule gets flagged and reverted. Deterministic, zero-LLM, un-gameable. Break it in and it carries your repo's history along: what broke in these files before, surfaced before you touch them.
+
+> Sawbuck is the reference implementation of the [Verified-Outcome Contract](CONTRACT.md): the open interface for a coding loop you can trust.
 
 ```sh
 npm i -g sawbuck         # also pulls the promptwheel + @promptwheel/logbook engines
@@ -16,12 +18,12 @@ On each change:
 
 ```
 $ sawbuck check
-sawbuck: invalid recorded on test.js       (the win came from editing the test, not the source)
+sawbuck: gamed recorded on test.js       (the win came from editing the test, not the source)
 ```
 
 ## What it does
 
-- **Verifies the win.** `check` re-runs your metric from the source diff alone. A faked green (a deleted, weakened, or skipped test; a mocked grader; an edited golden file) reads `invalid`. Deterministic, zero-LLM, $0, and it cannot be obfuscated against because it never reads the trajectory (89% recall on a labeled gaming benchmark).
+- **Verifies the win.** `check` re-runs your metric from the source diff alone. A faked green (a deleted, weakened, or skipped test; a mocked grader; an edited golden file) reads `gamed`. Deterministic, zero-LLM, $0, and it cannot be obfuscated against because it never reads the trajectory (89% recall on a labeled gaming benchmark).
 - **Remembers what broke.** `context` and `rank` surface the relevant history (reverts, fragile areas, test-weakening) for the files you are touching: a ranked trail guide, before you act.
 - **Rides on, does not replace.** Sawbuck is the verify + memory layer. Your agent and your loop stay yours.
 - **Clean on and off.** `attach` touches nothing in your worktree (the hook lives in `.git/`, the record is excluded locally); `detach` is a true inverse. `trace` shows every byte it placed, and `detach --verify` proves the repo came back unchanged.

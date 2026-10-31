@@ -1,7 +1,7 @@
 {
   "name": "sawbuck",
-  "version": "0.1.1",
-  "description": "A saddle for your repo: Sawbuck learns what actually breaks from the history and warns the agent before it repeats a regression.",
+  "version": "0.1.2",
+  "description": "A saddle for your coding harness: a deterministic, zero-LLM check that re-proves every agent win from the source alone, so a green that came from editing the test is caught and reverted. Carries your repo's history too.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -15,7 +15,7 @@
     "sawbuck": "sawbuck.mjs"
   },
   "dependencies": {
-    "promptwheel": "^0.4.4",
+    "promptwheel": "^0.4.5",
     "@promptwheel/logbook": "^0.8.0"
   },
   "files": [
@@ -26,6 +26,7 @@
     "rank.mjs",
     "run.mjs",
     "README.md",
-    "GLOSSARY.md"
+    "GLOSSARY.md",
+    "CONTRACT.md"
   ]
 }
