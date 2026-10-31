@@ -85,6 +85,8 @@ Usage:
   sawbuck rank [--base R --head R] [--file P ...]
                             Show the relevant past findings for the paths a change touches
   sawbuck context [repo]    Ranked relevant history for your current working changes (the read face)
+  sawbuck debt [repo]       The whole-repo live suppression debt: what is still silenced in HEAD now,
+                            disabled tests first, heaviest files ranked (surface the hidden debt)
   sawbuck run --attempt '<cmd>' [--loops N]
                             Thin harness: load context, run one attempt through the keep-if-verified gate
   sawbuck --help | --version
@@ -148,6 +150,12 @@ switch (cmd) {
   }
   case 'rank': {
     try { execFileSync(process.execPath, [join(HERE, 'rank.mjs'), ...rest], { stdio: 'inherit' }); }
+    catch (e) { process.exit(e.status || 1); }
+    break;
+  }
+  case 'debt': {
+    // the whole-repo debt ledger: live suppressions still in HEAD, severity-split, worst-first.
+    try { execFileSync(process.execPath, [join(HERE, 'debt.mjs'), ...rest], { stdio: 'inherit' }); }
     catch (e) { process.exit(e.status || 1); }
     break;
   }

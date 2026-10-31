@@ -42,6 +42,7 @@ sawbuck: gamed recorded on test.js       (the win came from editing the test, no
 | `sawbuck detach [--claude \| --user]` | remove it |
 | `sawbuck check [--base R --head R]` | verify a commit; record a regression or a gamed win |
 | `sawbuck context` · `sawbuck rank` | the ranked relevant history for the current change |
+| `sawbuck debt` | the whole-repo live suppression debt: what is still silenced in HEAD now, disabled tests first, heaviest files ranked |
 | `sawbuck run --attempt '<agent cmd>'` | thin harness: load context, run one attempt through the keep-if-verified gate |
 | `sawbuck trace` · `sawbuck doctor` · `detach --verify` | show the footprint; check the attachment resolves; prove a clean removal |
 
