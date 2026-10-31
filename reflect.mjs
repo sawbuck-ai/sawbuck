@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // reflect.mjs, the Sawbuck feedback edge (M0).
 //
-// Run the check (packages/referee) on the latest commit; on an gamed or
+// Run the check (the promptwheel engine) on the latest commit; on a gamed or
 // regression result, deterministic ground truth, record a finding in the
-// memory (packages/logbook) on the touched source paths, and tick the results
+// memory (the logbook engine) on the touched source paths, and tick the results
 // record. Quiet by default; the dispatch surfaces catches on a cadence.
 //
 // Zero-dep, Node ESM. Orchestrates the engine CLIs behind a clean layer
