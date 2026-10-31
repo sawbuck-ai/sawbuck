@@ -56,6 +56,10 @@ const recency = (d) => 1 / (1 + Math.max(0, (now - Date.parse(d)) / 86400000) / 
 // weaken/suppress are commit-level signals; only credit them to code/test files,
 // not the README/config that merely rode along in the same commit.
 const codeish = (p) => /\.(m?[jt]sx?|cjs|py|go|rs|rb|java|kt|c|cc|cpp|h|hpp|php|swift|scala|clj|ex|exs)$/i.test(p);
+// a suppression or assertion drop on a TEST path is a hidden-failure risk (a skipped
+// or weakened test), so it outranks the same marker in app code (a lone style
+// eslint-disable). The relevance lead: sharpen the signal, don't flatten it.
+const isTest = (p) => /(^|\/)(tests?|__tests__|specs?)\//i.test(p) || /[._-](test|spec)\.[a-z0-9]+$/i.test(p) || /(^|\/)test_[^/]+\.py$/i.test(p);
 
 const DAY = 86400000;
 const ranked = paths.map((p) => {
@@ -67,7 +71,10 @@ const ranked = paths.map((p) => {
     if (e.revert) { w = 3; kind = 'revert (do-not-retry)'; }
     // "weakened" only on a NET assertion drop (logbook's own rule: del > add + 2), 
     // a rewrite that removes some asserts but adds more is not a weakening.
-    else if (codeish(p) && ((e.suppressions && e.suppressions.length) || ((e.del_asserts || 0) > (e.add_asserts || 0) + 2) || e.downgrades > 0)) { w = 2; kind = 'test weakened / suppressed'; }
+    else if (codeish(p) && ((e.suppressions && e.suppressions.length) || ((e.del_asserts || 0) > (e.add_asserts || 0) + 2) || e.downgrades > 0)) {
+      if (isTest(p)) { w = 2.5; kind = 'test disabled / weakened'; }
+      else { w = 2; kind = 'suppression in source'; }
+    }
     else if (e.fix) { w = 1.2; kind = 'bugfix here'; }
     else continue;
     const weighted = w * recency(e.date);
