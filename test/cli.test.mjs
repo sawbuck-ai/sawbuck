@@ -136,9 +136,13 @@ test('trace shows the footprint, and reports clean after detach', () => {
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
-test('statusline prints a compact guide segment', () => {
+test('statusline reflects the active profile (memory vs watching vs caught)', () => {
   const { d } = tmpRepo();
   try {
+    // no contract yet: memory-only (history is live, the check cannot run)
+    assert.match(sawbuck(['statusline'], d), /🐴 sawbuck · memory/);
+    writeFileSync(join(d, 'promptwheel.config.json'), JSON.stringify({ metrics: [{ name: 'x', cmd: 'true', extract: 'exit', direction: 'pass', guard: true }] }));
+    // contract present: armed
     assert.match(sawbuck(['statusline'], d), /🐴 sawbuck · watching/);
     mkdirSync(join(d, '.sawbuck'), { recursive: true });
     writeFileSync(join(d, '.sawbuck', 'results.json'), JSON.stringify({ regressions: 1, gamed: 1 }));

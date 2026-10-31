@@ -174,7 +174,9 @@ switch (cmd) {
       if (existsSync(join(repo, '.git'))) {
         let caught = 0;
         try { const r = JSON.parse(readFileSync(join(repo, '.sawbuck', 'results.json'), 'utf8')); caught = (r.regressions || 0) + (r.gamed || 0); } catch {}
-        process.stdout.write(caught > 0 ? `🐴 sawbuck · ${caught} caught` : `🐴 sawbuck · watching`);
+        // profile readout: armed (a contract to check) vs memory-only (history live, no contract yet)
+        const armed = existsSync(join(repo, 'promptwheel.config.json'));
+        process.stdout.write(caught > 0 ? `🐴 sawbuck · ${caught} caught` : armed ? `🐴 sawbuck · watching` : `🐴 sawbuck · memory`);
       }
     } catch {}
     break;
