@@ -46,10 +46,12 @@ The agent consumes this as a per-turn reward it cannot inflate. The harness cons
       "delta": 1,
       "status": "improved",
       "ok": true,
-      "noise": { "band": 0, "runs": 3 },
+      "confidence": "high",
+      "noise": 0,
       "gamed": true,
+      "sourceOnly": null,
       "retained": 0.0,
-      "gamingReason": "the win did not survive reverting the test changes"
+      "gamingReason": "the win changed zero production-source files, only test/config/grader/golden"
     }
   ]
 }
@@ -61,7 +63,7 @@ Fixed vocabularies (a conforming implementation uses exactly these):
 - `metric.status` ∈ `improved | regressed | unchanged | inconclusive | unmeasurable`
 - `direction` ∈ `up | down | pass` (the direction that counts as better; `pass` means a 0/1 gate)
 
-`retained` is the fraction of a metric's gain that survived the source-only re-run (§3). `noise` is the measured jitter band across `repeat` runs; a delta inside it is `inconclusive`, never a regression.
+`retained` is the fraction of a metric's gain that survived the source-only re-run (§3). `noise` is the measured jitter band as a single number, across the top-level `repeat` runs; a delta inside it is `inconclusive`, never a regression. `confidence` (`unverified | low | medium | high`) and `sourceOnly` (the metric's value when only source edits are replayed, §3) are informational fields the reference implementation adds; a minimal conforming report may omit them. A consumer validates a report with `conformsToContract()` from the `promptwheel` package (see INTEGRATE.md) or `promptwheel conformance`.
 
 ## 3. The integrity boundary (what counts as gaming)
 
