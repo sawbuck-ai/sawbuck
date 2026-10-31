@@ -1,0 +1,24 @@
+name: Sawbuck debt gate
+description: Fail a pull request that adds undocumented suppressions or disables tests, via sawbuck debt --since.
+branding:
+  icon: shield
+  color: yellow
+inputs:
+  base:
+    description: Base ref to compare the branch against (the debt it adds). Default origin/main.
+    required: false
+    default: origin/main
+  fail-on:
+    description: What fails the check - undocumented | test | any | <N new suppressions>. Default undocumented.
+    required: false
+    default: undocumented
+  repo:
+    description: Path to the repo to check. Default the checkout.
+    required: false
+    default: .
+runs:
+  using: composite
+  steps:
+    - name: sawbuck debt gate
+      shell: bash
+      run: npx -y sawbuck debt --repo "${{ inputs.repo }}" --since "${{ inputs.base }}" --fail-on "${{ inputs.fail-on }}"

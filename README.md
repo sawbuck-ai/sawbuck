@@ -48,6 +48,27 @@ sawbuck: gamed recorded on test.js       (the win came from editing the test, no
 
 Each repo needs a `promptwheel.config.json` saying what to measure (your tests, lint, coverage, or an eval).
 
+## Gate debt on pull requests
+
+`sawbuck debt --since <base>` shows only the suppression debt a branch adds. Fail the build when a PR adds the kind you care about:
+
+```yaml
+# .github/workflows/debt.yml
+name: debt
+on: pull_request
+jobs:
+  debt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # the base ref must be present to diff against
+      - run: npx -y sawbuck debt --since "origin/${{ github.base_ref }}" --fail-on undocumented
+```
+
+`--fail-on` takes `undocumented` (a bare `# type: ignore` / `# noqa` with no code), `test` (a newly disabled test), `any`, or a number of new suppressions. Exit 1 fails the check; add `--json` for the machine-readable delta. This repo is also a composite action: `uses: sawbuck-ai/sawbuck@v0` with `base` and `fail-on` inputs.
+
+Debt also rises on its own: once attached, the per-turn `context` hook surfaces the live suppression debt on the files your agent is touching when it is the suspect kind (undocumented, a disabled test, or on code that keeps breaking), so you do not have to run anything.
+
 ## The engines
 
 Sawbuck is thin glue over two tools it depends on:

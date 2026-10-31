@@ -85,10 +85,10 @@ Usage:
   sawbuck rank [--base R --head R] [--file P ...]
                             Show the relevant past findings for the paths a change touches
   sawbuck context [repo]    Ranked relevant history for your current working changes (the read face)
-  sawbuck debt [repo] [--since REF]
+  sawbuck debt [repo] [--since REF] [--fail-on undocumented|test|any|N]
                             The whole-repo live suppression debt: what is still silenced in HEAD now,
                             risk-ranked (severity x file fragility), undocumented flagged. --since REF
-                            shows only the debt a branch/PR adds vs REF
+                            shows only the debt a branch adds; --fail-on exits nonzero for a CI gate
   sawbuck run --attempt '<cmd>' [--loops N]
                             Thin harness: load context, run one attempt through the keep-if-verified gate
   sawbuck --help | --version

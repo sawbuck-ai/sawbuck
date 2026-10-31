@@ -26,6 +26,8 @@ const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? (pro
 const repo = resolve(flag('--repo', process.cwd()));
 const top = Math.max(1, parseInt(flag('--top', '12'), 10) || 12);
 const since = flag('--since', null);
+const failRaw = flag('--fail-on', null); // undocumented | test | any | <N>; bare --fail-on = undocumented
+const failMode = failRaw === true ? 'undocumented' : (failRaw ? String(failRaw).toLowerCase() : null);
 const asJson = process.argv.includes('--json');
 
 // A disabled/skipped/weakened TEST is a hidden-failure risk; a lint/type/error suppression is
@@ -67,14 +69,21 @@ if (since && typeof since === 'string') {
   const norm = (s) => String(s).trim().replace(/\s+/g, ' ');
   const base = new Set(parseGrep(grepAt(since), since).map((r) => r.file + '\u0000' + norm(r.content)));
   const added = live.filter((it) => it.content && !base.has(it.file + '\u0000' + norm(it.content)));
-  if (asJson) { console.log(JSON.stringify({ since, added: added.length, testSkips: added.filter((it) => isTestSkip(it.kind)).length, undocumented: added.filter((it) => !it.documented).length, items: added.map((it) => ({ file: it.file, line: it.line, kind: String(it.kind).trim(), documented: it.documented })) }, null, 2)); process.exit(0); }
-  if (!added.length) { console.log(`🐴 sawbuck: no new suppression debt since ${since} (clean).`); process.exit(0); }
   const skips = added.filter((it) => isTestSkip(it.kind)).length, undoc = added.filter((it) => !it.documented).length;
+  // the gate: fail (exit 1) when the branch adds the kind of debt --fail-on names.
+  const fail = !failMode ? false
+    : /^\d+$/.test(failMode) ? added.length >= +failMode
+    : failMode === 'any' ? added.length > 0
+    : (failMode === 'test' || failMode === 'tests' || failMode === 'disabled') ? skips > 0
+    : undoc > 0; // default: undocumented
+  if (asJson) { console.log(JSON.stringify({ since, added: added.length, testSkips: skips, undocumented: undoc, failOn: failMode, fail, items: added.map((it) => ({ file: it.file, line: it.line, kind: String(it.kind).trim(), documented: it.documented })) }, null, 2)); process.exit(fail ? 1 : 0); }
+  if (!added.length) { console.log(`🐴 sawbuck: no new suppression debt since ${since} (clean).`); process.exit(0); }
   const o = [`🐴 sawbuck: ${added.length} new suppression${added.length === 1 ? '' : 's'} since ${since}  ·  ${skips} disabled test${skips === 1 ? '' : 's'}  ·  ${undoc} undocumented (no code/reason)`];
   for (const it of added.slice(0, Math.max(top, 20))) o.push(`     ${isTestSkip(it.kind) ? '🔴' : (it.documented ? '  ' : '✎ ')} ${it.file}:${it.line}  ${String(it.kind).trim()}${it.documented ? '' : '   (bare - no code/reason)'}`);
   o.push(`\n   ✎ = bare/undocumented (the suspect kind); declare intent (a rule code or reason) or remove it.`);
+  if (failMode) o.push(fail ? `\n   ❌ debt gate FAILED (--fail-on ${failMode}): this branch adds debt that must be declared or removed.` : `\n   ✓ debt gate passed (--fail-on ${failMode}).`);
   console.log(o.join('\n'));
-  process.exit(0);
+  process.exit(fail ? 1 : 0);
 }
 
 if (!live.length) { console.log(asJson ? '{"total":0,"testSkips":0,"codeSuppressions":0,"undocumented":0,"files":[]}' : '🐴 sawbuck: no live suppression debt in HEAD (nothing silenced in src/test/config). A clean tree.'); process.exit(0); }

@@ -90,22 +90,57 @@ const normMult = (p, kind) => {
   return Math.max(0.4, Math.min(1, REF / b));
 };
 
+// Classify a live suppression MARKER (disabled test = hidden-failure risk) and its line as
+// DOCUMENTED (a rule code/reason follows) vs BARE (just the directive, the suspect kind). Same
+// splits `sawbuck debt` uses, so the ambient surface and the ledger agree.
+const isTestSkip = (m) => /\bit\.skip\b|\btest\.skip\b|xit\(|xdescribe\(|\bdescribe\.skip\b|pytest\.mark\.skip|unittest\.skip|\bt\.Skip\b|@Disabled\b|@Ignore\b|^\[Ignore\b|^Skip\s*=|^#\[ignore|markTestSkipped|markTestIncomplete/.test(String(m).trim());
+const isDocumented = (c) => {
+  c = String(c || '');
+  if (/eslint-disable/.test(c)) return /eslint-disable(?:-next-line|-line)?\s+\S/.test(c);
+  if (/@ts-ignore/.test(c)) return false;
+  if (/@ts-expect-error/.test(c)) return /@ts-expect-error\s+\S/.test(c);
+  if (/noqa/i.test(c)) return /noqa:\s*\w/i.test(c);
+  if (/type:\s*ignore/i.test(c)) return /ignore\s*\[/.test(c);
+  return /\(\s*["']/.test(c) || /=\s*["']/.test(c);
+};
+// The "slider": debt rises on its own, but gently. A disabled test or an undocumented suppression
+// on a touched file always surfaces; a file that is churning (hot / reverted) surfaces any debt;
+// a stable file's routine documented suppressions stay quiet until they pile past DEBT_MIN. Tune
+// with SAWBUCK_DEBT_MIN. This is how debt rises by itself in the per-turn context, no command run.
+const DEBT_MIN = Math.max(1, +(process.env.SAWBUCK_DEBT_MIN) || 6);
+
 // Still-live filter (lead #4). A suppression on a path that is now CLEAN of suppressions is churn,
 // not current risk (the study: AutoMapper carries 4 live `[Ignore]` vs ~158/repo across C# history).
 // logbook's own SUPPRESS_PAT, git-grepped at HEAD but SCOPED to just the touched paths so the
 // per-turn hook stays cheap, tells us which still carry one. Imported so the pattern never drifts;
 // degrades to "treat all as live" if logbook cannot be imported. --raw turns it off.
 let liveSet = null;
+const liveDebt = new Map(); // path -> { n, skips, bare }: live suppressions in HEAD, for ambient surfacing
 if (!raw && paths.length) {
   try {
-    const { SUPPRESS_PAT } = await import(pathToFileURL(LB).href);
+    const { SUPPRESS_PAT, kindAllowedInFile, isMention } = await import(pathToFileURL(LB).href);
     if (SUPPRESS_PAT && SUPPRESS_PAT.source) {
+      // -nP (content), still scoped to the touched paths, so we can both weight AND surface the debt.
       let grep = '';
-      try { grep = execFileSync('git', ['-C', repo, 'grep', '-lP', SUPPRESS_PAT.source, 'HEAD', '--', ...paths], { encoding: 'utf8' }); }
+      try { grep = execFileSync('git', ['-C', repo, 'grep', '-nP', SUPPRESS_PAT.source, 'HEAD', '--', ...paths], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); }
       catch (e) { grep = (e.stdout || '').toString(); } // git grep exits 1 when nothing matches
-      liveSet = new Set(grep.split('\n').filter(Boolean).map((l) => l.replace(/^HEAD:/, '')));
+      liveSet = new Set();
+      for (const row of grep.split('\n')) {
+        const m = /^HEAD:(.+?):\d+:(.*)$/.exec(row); if (!m) continue;
+        const file = m[1], content = m[2];
+        const re = new RegExp(SUPPRESS_PAT.source, 'g'); let mm;
+        while ((mm = re.exec(content))) {
+          if (kindAllowedInFile && !kindAllowedInFile(mm[0], file)) continue; // gate exactly like audit
+          if (isMention && isMention(content, mm.index, mm[0])) continue;      // a comment ABOUT it is not live
+          liveSet.add(file);
+          const d = liveDebt.get(file) || { n: 0, skips: 0, bare: 0 };
+          d.n++;
+          if (isTestSkip(mm[0])) d.skips++; else if (!isDocumented(content)) d.bare++;
+          liveDebt.set(file, d);
+        }
+      }
     }
-  } catch { liveSet = null; } // logbook unavailable -> skip the filter, do not crash the read face
+  } catch { liveSet = null; liveDebt.clear(); } // logbook unavailable -> skip, do not crash the read face
 }
 // a suppression on a still-silenced path keeps its weight; on a now-clean path it is near-zero.
 const stillLive = (p) => (liveSet === null || liveSet.has(p) ? 1 : 0.25);
@@ -140,6 +175,20 @@ const ranked = paths.map((p) => {
   let burst = 0;
   for (let i = 0; i + 2 < fixDates.length; i++) if (fixDates[i + 2] - fixDates[i] <= 30 * DAY) { burst = fixDates.filter((x) => x >= fixDates[i] && x <= fixDates[i] + 30 * DAY).length; break; }
   if (burst >= 3) { score += 4; hits.unshift({ date: new Date(fixDates[fixDates.length - 1]).toISOString().slice(0, 10), kind: `HOT: ${burst} fixes in 30 days`, subject: 'this file was actively on fire, verify carefully', w: 99 }); }
+  // ambient debt: the live suppression debt on this file rises on its own when it is the suspect kind
+  // (a disabled test or an undocumented suppression), when the file is fragile (hot/reverted), or when
+  // it piles past the slider. Routine documented suppressions on stable files stay quiet. The score
+  // bump lets a file with ONLY debt (no history) surface at all; `sawbuck debt` is the full ledger.
+  const dbt = liveDebt.get(p);
+  if (dbt) {
+    const fragile = burst >= 3 || hits.some((h) => /revert/.test(h.kind || ''));
+    if (dbt.skips || dbt.bare || (fragile && dbt.n) || dbt.n >= DEBT_MIN) {
+      const extra = [dbt.skips ? `${dbt.skips} disabled test${dbt.skips === 1 ? '' : 's'}` : '', dbt.bare ? `${dbt.bare} undocumented` : ''].filter(Boolean).join(', ');
+      const w = dbt.skips ? 2.6 : (dbt.bare ? 2.2 : 1.4);
+      score += w;
+      hits.push({ kind: 'live debt here', subject: `${dbt.n} suppression${dbt.n === 1 ? '' : 's'} still silenced${extra ? ` (${extra})` : ''}; sawbuck debt for the ledger`, w });
+    }
+  }
   hits.sort((a, b) => b.w - a.w);
   return { path: p, score: +score.toFixed(2), top: hits.slice(0, 3), hot: burst >= 3 };
 }).filter((r) => r.score > 0).sort((a, b) => b.score - a.score).slice(0, top);
