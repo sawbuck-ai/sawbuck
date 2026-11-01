@@ -274,7 +274,10 @@ switch (cmd) {
         let yk = '';
         const ti = rest.findIndex((a) => a === '--transcript' || a === '--session');
         if (ti > -1 && rest[ti + 1]) { try { const { yanks, turns } = tally(readFileSync(rest[ti + 1], 'utf8')); if (turns) yk = `🤠 ${yanks}/${turns} yanks`; } catch {} }
-        const outp = [base, yk].filter(Boolean).join(' · ');
+        // live steering % from steer-scan's file (OFFLINE read; steer-scan does the LLM work, never sawbuck)
+        let st = '';
+        try { const sj = JSON.parse(readFileSync(join(repo, '.sawbuck', 'steer.json'), 'utf8')); if (sj && sj.scored) st = `🤠 steer ${Math.round((sj.steeringRate || 0) * 100)}%`; } catch {}
+        const outp = [base, yk, st].filter(Boolean).join(' · ');
         if (outp) process.stdout.write(outp);
       }
     } catch {}
