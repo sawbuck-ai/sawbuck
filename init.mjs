@@ -32,7 +32,7 @@ const engineBin = (envVar, pkgSubpath, devPath) => {
   for (const spec of [pkgSubpath, bare]) { try { return require.resolve(spec); } catch {} }
   return devPath;
 };
-const PW = engineBin('PW_BIN', 'promptwheel/bin/promptwheel.mjs', join(HERE, '..', 'referee', 'bin', 'promptwheel.mjs'));
+const PW = engineBin('PW_BIN', 'promptwheel/bin/promptwheel.mjs', join(HERE, '..', 'promptwheel', 'bin', 'promptwheel.mjs'));
 const LB = engineBin('LB_BIN', '@promptwheel/logbook/bin/logbook.mjs', join(HERE, '..', 'logbook', 'bin', 'logbook.mjs'));
 
 const argv = process.argv.slice(2);

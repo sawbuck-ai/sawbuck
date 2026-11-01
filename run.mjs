@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const bin = (envVar, pkg, dev) => { if (process.env[envVar]) return process.env[envVar]; const bare = pkg.replace(/\/bin\/[^/]*$/, ''); for (const s of [pkg, bare]) { try { return require.resolve(s); } catch {} } return dev; };
-const PW = bin('PW_BIN', 'promptwheel/bin/promptwheel.mjs', join(HERE, '..', 'referee', 'bin', 'promptwheel.mjs'));
+const PW = bin('PW_BIN', 'promptwheel/bin/promptwheel.mjs', join(HERE, '..', 'promptwheel', 'bin', 'promptwheel.mjs'));
 
 const arg = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const repo = arg('--repo', process.cwd());

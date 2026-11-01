@@ -27,7 +27,7 @@ const require = createRequire(import.meta.url);
 // resolve the promptwheel engine bin: env override, installed package, then the dev sibling
 const PW = process.env.PW_BIN
   || ['promptwheel/bin/promptwheel.mjs', 'promptwheel'].reduce((r, s) => { try { return r || require.resolve(s); } catch { return r; } }, '')
-  || join(HERE, '..', 'referee', 'bin', 'promptwheel.mjs');
+  || join(HERE, '..', 'promptwheel', 'bin', 'promptwheel.mjs');
 // run the engine and parse its JSON verdict (it prints JSON even when it exits nonzero)
 function gateReport(repo, a) {
   let o = '', code = 0;

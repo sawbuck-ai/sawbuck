@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Published-layout smoke test. The node:test suite resolves the engines via the
-# monorepo SIBLING path (../referee, ../logbook), so it never exercises how a real
+# monorepo SIBLING path (../promptwheel, ../logbook), so it never exercises how a real
 # `npm i sawbuck` resolves them from node_modules. That gap shipped the 0.1.2 bug:
 # @promptwheel/logbook's `exports` maps only "." to its bin, so
 # require.resolve('@promptwheel/logbook/bin/logbook.mjs') throws in an install and
