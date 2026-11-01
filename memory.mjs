@@ -31,7 +31,7 @@ function logbookBin() {
 }
 const envKey = (name) => 'SAWBUCK_MEMORY_' + name.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_BIN';
 // the ordered provider list. Each: { name, bin, dialect: 'logbook' | 'contract' }.
-const SHIPPED = new Set(['obsidian', 'mem0']); // reference contract providers that ship in providers/
+const SHIPPED = new Set(['obsidian', 'mem0', 'local']); // reference contract providers that ship in providers/
 export function providers() {
   const spec = (process.env.SAWBUCK_MEMORY || 'logbook').split(',').map((s) => s.trim()).filter(Boolean);
   return spec.map((name) => {

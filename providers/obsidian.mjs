@@ -103,7 +103,16 @@ if (cmd === 'record') {
   // a [[wikilink]] to the evidence path so Obsidian's graph connects the finding to the code note.
   const link = evidence ? `\n- evidence: [[${String(evidence).replace(/[[\]]/g, '')}]]` : '';
   const body = `---\nsawbuck: finding\nref: ${ref}\nby: ${by}\ndate: ${date}\nscope: ${leaf}\n---\n\n# ${summary.slice(0, 80)}\n\n${summary}\n\n- ref: \`${ref}\`${side ? `\n- side: ${side}` : ''}${link}\n`;
-  try { writeFileSync(join(dir, `${safeRef}.md`), body); console.log('recorded'); process.exit(0); }
+  // no-clobber + dedupe: if this exact finding is already noted, skip; if a DIFFERENT note shares the
+  // ref, write a suffixed sibling instead of overwriting the earlier one.
+  let target = join(dir, `${safeRef}.md`);
+  if (existsSync(target)) {
+    let prev = ''; try { prev = readFileSync(target, 'utf8'); } catch {}
+    if (prev.includes(summary)) { console.log('recorded (already present)'); process.exit(0); }
+    let i = 2; while (existsSync(join(dir, `${safeRef}-${i}.md`))) i++;
+    target = join(dir, `${safeRef}-${i}.md`);
+  }
+  try { writeFileSync(target, body); console.log('recorded'); process.exit(0); }
   catch (e) { die(`write failed: ${String(e.message).split('\n')[0]}`, 1); }
 }
 

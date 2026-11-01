@@ -17,6 +17,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', 'sawbuck.mjs');
 const OBSIDIAN = join(HERE, '..', 'providers', 'obsidian.mjs');   // reference local-notes memory provider
 const MEM0 = join(HERE, '..', 'providers', 'mem0.mjs');           // reference semantic (networked) memory provider
+const LOCAL = join(HERE, '..', 'providers', 'local.mjs');         // reference minimal local-file memory provider
 // isolate HOME so the global registry (~/.sawbuck) never touches the real home.
 const TMP_HOME = mkdtempSync(join(tmpdir(), 'sawbuck-home-'));
 after(() => rmSync(TMP_HOME, { recursive: true, force: true }));
@@ -188,6 +189,20 @@ test('memory-conformance: the obsidian reference provider conforms (recall array
     assert.match(o, /debt:\s+unsupported/, 'a note vault signals debt unsupported (nonzero), not a bare []');
     assert.match(o, /conforms to the Memory Contract/);
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('local provider: record + recall roundtrip, folder-scoped (a sibling scope is excluded), and conforms', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sawbuck-local-'));
+  const store = join(dir, 'm.json');
+  const run = (args) => execFileSync(process.execPath, [LOCAL, ...args], { encoding: 'utf8', env: { ...process.env, SAWBUCK_LOCAL_MEMORY: store } });
+  try {
+    run(['record', '--ref', 'c1', '--summary', 'watch the retry in app.js', '--scope', 'repoA', '--evidence-file', 'app.js', '--by', 'sawbuck']);
+    const a = JSON.parse(run(['recall', '--file', 'app.js', '--scope', 'repoA', '--scope', '']));
+    assert.ok(a.some((f) => f.ref === 'c1'), 'recall in the recording scope finds the note');
+    const b = JSON.parse(run(['recall', '--file', 'app.js', '--scope', 'repoB', '--scope', '']));
+    assert.ok(!b.some((f) => f.ref === 'c1'), 'a sibling scope is isolated');
+    assert.match(sawbuck(['memory-conformance', LOCAL], dir), /conforms to the Memory Contract/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('memory-conformance: the mem0 reference provider conforms offline (recall [], debt unsupported, no crash)', () => {
