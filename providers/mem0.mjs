@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// mem0.mjs, a REFERENCE (experimental) semantic memory provider for Sawbuck's Memory Contract: Mem0
-// (mem0.ai) as the memory.
+// mem0.mjs, a REFERENCE semantic memory provider for Sawbuck's Memory Contract: Mem0 (mem0.ai) as the
+// memory.
 //
-// STATUS: built against the DOCUMENTED Mem0 platform v3 API (/v3/memories/search|add) but not yet
-// verified against a live account; its offline degrade (no key -> [], debt unsupported) IS tested, its
-// live search/add calls are NOT. Treat it as a reference to adapt and verify against your Mem0 version,
-// not a guaranteed integration.
+// STATUS: VERIFIED against the live Mem0 platform v3 API on 2026-10-31. /v3/memories/search/ and
+// /v3/memories/add/ both returned 200 with the documented shapes (search -> { results: [...] }, add ->
+// { event_id, ... }) using the Token auth header. Offline degrade (no key -> [], debt unsupported) is
+// also tested. Adapt the query/scoping to taste; the wire calls are known-good.
 //
 // It is the THIRD contract implementation and a deliberately DIFFERENT axis from the other two:
 // a networked, LLM-backed semantic store, where logbook is deterministic git-truth and obsidian is
@@ -21,11 +21,24 @@
 //   debt   --json                        EXITS NONZERO: a semantic store is not git-aware (git-truth
 //                                         lives in a git provider like logbook); the contract skips it.
 //
-// Config: MEM0_API_KEY (required for live calls; without it recall degrades to [] and record errors),
-// MEM0_USER_ID (scope; default the repo folder name), MEM0_BASE_URL (default https://api.mem0.ai),
-// MEM0_TIMEOUT_MS (default 8000). NOTE: record SENDS the finding text to Mem0's service (your opt-in).
+// Config: MEM0_API_KEY, or a `~/.mem0` key file (a plain token, or JSON with api_key/key); without a
+// key recall degrades to [] and record errors. Also MEM0_USER_ID (scope override), MEM0_NAMESPACE
+// (id prefix), MEM0_BASE_URL (default https://api.mem0.ai), MEM0_TIMEOUT_MS (default 8000). NOTE:
+// record SENDS the finding text to Mem0's service (your opt-in).
 
-import { basename } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { homedir } from 'node:os';
+
+// the API key: MEM0_API_KEY, else a ~/.mem0 file (a plain token, or JSON with api_key/apiKey/key).
+function mem0Key() {
+  if (process.env.MEM0_API_KEY) return process.env.MEM0_API_KEY;
+  try {
+    const raw = readFileSync(join(homedir(), '.mem0'), 'utf8').trim();
+    if (raw.startsWith('{')) { const j = JSON.parse(raw); return j.api_key || j.apiKey || j.key || ''; }
+    return raw.split(/\s+/)[0] || '';
+  } catch { return ''; }
+}
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -69,7 +82,7 @@ if (cmd === 'debt') {
 }
 
 if (cmd === 'recall') {
-  const key = process.env.MEM0_API_KEY;
+  const key = mem0Key();
   if (!key) { console.log('[]'); process.exit(0); }                 // no key -> no memories, not an error
   const paths = flagAll('--file');
   if (!paths.length) { console.log('[]'); process.exit(0); }
@@ -90,7 +103,7 @@ if (cmd === 'recall') {
 }
 
 if (cmd === 'record') {
-  const key = process.env.MEM0_API_KEY;
+  const key = mem0Key();
   if (!key) die('cannot record: MEM0_API_KEY is unset', 2);
   const ref = String(flag('--ref', '')), summary = String(flag('--summary', '')), by = String(flag('--by', 'sawbuck'));
   const side = flag('--side', ''), evidence = flag('--evidence-file', '');
