@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { scopeChain } from '../memory.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', 'sawbuck.mjs');
 const OBSIDIAN = join(HERE, '..', 'providers', 'obsidian.mjs');   // reference local-notes memory provider
@@ -118,6 +120,42 @@ test('status: the inventory unions outcomes, live debt, and the armed state', ()
     // must have counted the committed bare suppression.
     if (j.debt && j.debt.total > 0) assert.ok(j.debt.undocumented >= 1, 'the bare suppression reads undocumented');
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('scopeChain: isolated leaf by default; self..root chain under a configured root', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sawbuck-root-'));
+  const repo = join(root, 'group', 'repo');
+  mkdirSync(repo, { recursive: true });
+  const prev = process.env.SAWBUCK_MEMORY_ROOT;
+  try {
+    delete process.env.SAWBUCK_MEMORY_ROOT;
+    assert.deepEqual(scopeChain(repo), ['repo'], 'no root in play -> an isolated leaf, no inheritance');
+    process.env.SAWBUCK_MEMORY_ROOT = root;
+    assert.deepEqual(scopeChain(repo), ['group/repo', 'group', ''], 'under a root -> self + ancestors + root ("")');
+    delete process.env.SAWBUCK_MEMORY_ROOT;
+    writeFileSync(join(root, '.sawbuck-root'), '');
+    assert.deepEqual(scopeChain(repo), ['group/repo', 'group', ''], 'a .sawbuck-root marker is discovered by walking up');
+  } finally {
+    if (prev === undefined) delete process.env.SAWBUCK_MEMORY_ROOT; else process.env.SAWBUCK_MEMORY_ROOT = prev;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('obsidian scope isolation: a sibling scope never leaks, the root scope is shared', () => {
+  const V = mkdtempSync(join(tmpdir(), 'sawbuck-vault-'));
+  mkdirSync(join(V, 'repoA')); mkdirSync(join(V, 'repoB'));
+  try {
+    writeFileSync(join(V, 'repoA', 'a.md'), '# A\n\nfoo.js in repoA.\n');
+    writeFileSync(join(V, 'repoB', 'b.md'), '# B\n\nfoo.js in repoB.\n');
+    writeFileSync(join(V, 'shared.md'), '# Shared\n\nfoo.js across projects.\n');
+    const recall = (sc) => JSON.parse(execFileSync(process.execPath, [OBSIDIAN, 'recall', '--file', 'foo.js', ...sc, '--json'], { encoding: 'utf8', env: { ...process.env, OBSIDIAN_VAULT: V } }));
+    const a = recall(['--scope', 'repoA', '--scope', '']);
+    assert.ok(a.some((f) => f.ref === 'repoA/a.md'), 'leaf scope note is present');
+    assert.ok(a.some((f) => f.ref === 'shared.md'), 'root-scope (vault root) note is shared');
+    assert.ok(!a.some((f) => f.ref === 'repoB/b.md'), 'a SIBLING scope must never leak into recall');
+    const b = recall(['--scope', 'repoB', '--scope', '']);
+    assert.ok(b.some((f) => f.ref === 'repoB/b.md') && !b.some((f) => f.ref === 'repoA/a.md'), 'isolation holds both directions');
+  } finally { rmSync(V, { recursive: true, force: true }); }
 });
 
 test('memory-conformance: the obsidian reference provider conforms (recall array, debt unsupported)', () => {

@@ -15,8 +15,10 @@
 
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { join, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, dirname, relative, resolve, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -37,6 +39,40 @@ export function providers() {
     if (SHIPPED.has(name)) return { name, bin: process.env[envKey(name)] || join(HERE, 'providers', name + '.mjs'), dialect: 'contract' };
     return { name, bin: process.env[envKey(name)] || name, dialect: 'contract' }; // a bin path, or a name with an env-set bin
   });
+}
+
+// scopeChain(): the folder-based scope chain for a repo, most-specific first: the repo, then each
+// ancestor up to the memory root, then the root ("" = the shared/global scope). ISOLATION BY DEFAULT:
+// with no configured root the chain is just the leaf, so a repo sees only itself and never a sibling.
+// A root is SAWBUCK_MEMORY_ROOT, or the nearest ancestor holding a `.sawbuck-root` marker; with one,
+// a repo also inherits its ancestors' shared memory. Ids are paths relative to the root (forward
+// slashes), so sibling repos with the same basename never collide and never leak into each other.
+export function scopeChain(repo) {
+  const start = resolve(repo);
+  let root = process.env.SAWBUCK_MEMORY_ROOT ? resolve(process.env.SAWBUCK_MEMORY_ROOT) : null;
+  if (!root) {
+    let d = start; const stop = resolve(homedir());
+    for (let i = 0; i < 64; i++) {
+      if (existsSync(join(d, '.sawbuck-root'))) { root = d; break; }
+      const up = dirname(d);
+      if (up === d || d === stop) break;
+      d = up;
+    }
+  }
+  if (root && (start === root || start.startsWith(root + sep))) {
+    const idOf = (dir) => relative(root, dir).split(sep).join('/'); // "" for the root itself
+    const chain = [];
+    let d = start;
+    for (let i = 0; i < 64; i++) {
+      chain.push(idOf(d));
+      if (d === root) break;
+      const up = dirname(d);
+      if (up === d) break;
+      d = up;
+    }
+    return chain; // leaf-first, ending with "" (root = shared/global)
+  }
+  return [basename(start) || '.']; // no root in play: an isolated leaf, no inheritance
 }
 
 // run a provider bin; null on a real failure / unsupported-capability (nonzero exit), stdout otherwise.
@@ -110,12 +146,13 @@ export function debt(repo, { paths = null, ref = null } = {}) {
 // (contract-dialect; logbook's own history is surfaced via rank, not here). Each is a Finding of kind
 // note/decision, source-tagged. [] when nothing relevant. git-truth is never diluted by these.
 export function recall(repo, paths) {
+  const scopeArgs = scopeChain(repo).flatMap((id) => ['--scope', id]); // leaf-first: self + ancestors, never siblings
   const out = [];
   for (const p of providers()) {
     if (p.dialect !== 'contract') continue;
-    const r = run(p.bin, repo, ['recall', '--json', ...((paths || []).flatMap((f) => ['--file', f]))]);
+    const r = run(p.bin, repo, ['recall', '--json', ...((paths || []).flatMap((f) => ['--file', f])), ...scopeArgs]);
     if (r === null) continue;
-    for (const it of parseArray(r)) out.push({ kind: String(it.kind || 'note'), path: it.path ?? null, ref: it.ref ?? null, date: it.date ?? null, summary: String(it.summary || '').slice(0, 280), source: p.name });
+    for (const it of parseArray(r)) out.push({ kind: String(it.kind || 'note'), path: it.path ?? null, ref: it.ref ?? null, date: it.date ?? null, summary: String(it.summary || '').slice(0, 280), source: p.name, scope: it.scope ?? null });
   }
   return out;
 }
@@ -139,6 +176,7 @@ export function conform(bin, repo, probePath = 'README.md') {
 // throws into the caller. Returns true if at least one provider accepted it.
 export function record(repo, { sha, reason, side, evidenceFile, by = 'sawbuck' }) {
   const text = String(reason).slice(0, 280);
+  const leaf = scopeChain(repo)[0]; // a finding belongs to the most-specific scope that produced it
   let ok = false;
   for (const p of providers()) {
     const exec = (a) => execFileSync(process.execPath, [p.bin, ...a], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -147,7 +185,7 @@ export function record(repo, { sha, reason, side, evidenceFile, by = 'sawbuck' }
         const full = ['annotate', sha, text, ...(side ? ['--side', side] : []), ...(evidenceFile ? ['--evidence-file', evidenceFile] : []), '--by', by];
         try { exec(full); } catch { exec(['annotate', sha, text, '--by', by]); }
       } else {
-        exec(['record', '--ref', sha, '--summary', text, ...(side ? ['--side', side] : []), ...(evidenceFile ? ['--evidence-file', evidenceFile] : []), '--by', by]);
+        exec(['record', '--ref', sha, '--summary', text, ...(side ? ['--side', side] : []), ...(evidenceFile ? ['--evidence-file', evidenceFile] : []), '--scope', leaf, '--by', by]);
       }
       ok = true;
     } catch { /* this provider declined; others may still accept */ }
