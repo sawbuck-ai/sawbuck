@@ -19,7 +19,10 @@ echo "packing $HERE ..."
 TGZ="$(cd "$HERE" && npm pack --pack-destination "$TMP" 2>/dev/null | tail -1)"
 cd "$TMP"; echo '{"name":"sawbuck-smoke","private":true}' > package.json
 echo "installing the pack + the published engines ..."
-npm i "$TMP/$TGZ" >/dev/null 2>&1
+# --prefer-online: revalidate the registry so we resolve the TRUE latest published
+# engines, never a stale cached packument. A stale cache can install an older engine
+# from inside the dep range and give this gate false confidence.
+npm i "$TMP/$TGZ" --prefer-online >/dev/null 2>&1
 SB="$TMP/node_modules/.bin/sawbuck"
 
 R="$TMP/r"; mkdir -p "$R"; cd "$R"
