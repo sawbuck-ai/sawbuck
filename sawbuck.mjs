@@ -63,10 +63,11 @@ try { version = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).ver
 const help = `sawbuck ${version}: a saddle for your repo
 
 Usage:
-  sawbuck init [--yes] [--wizard] [--no-investigate]
+  sawbuck init [--yes] [--wizard] [--no-investigate] [--no-agent-block]
                             Generate the contract (promptwheel.config.json): a stack starter, tuned and
-                            explained by what your git history shows actually breaks. Wizard in a terminal,
-                            non-interactive in a pipe/CI/agent (or with --yes).
+                            explained by what your git history shows actually breaks. Also writes a short
+                            contract guide into AGENTS.md so your agent knows the rules (--no-agent-block
+                            to skip). Wizard in a terminal, non-interactive in a pipe/CI/agent (or --yes).
   sawbuck attach [repo]     Wire Sawbuck into a repo (default: a git post-commit hook)
       --claude              instead wire project Claude Code hooks (writes .claude/settings.local.json)
       --shared              with --claude, write the tracked .claude/settings.json (team-shared, visible in git)

@@ -52,7 +52,7 @@ sawbuck: gamed recorded on test.js       (the win came from editing the test, no
 
 ## Give your agent the contract
 
-`sawbuck attach --claude` enforces this every turn automatically. For an agent or loop that is not wired to the hook, paste this into your `AGENTS.md` / `CLAUDE.md` so it knows the rules it is held to:
+`sawbuck init` writes this block into your `AGENTS.md` for you (and `CLAUDE.md` / `.cursorrules` if present; `--no-agent-block` to skip), and `sawbuck attach --claude` enforces the same thing every turn via the hook. Here it is to paste yourself if you want:
 
     This repo is under a Sawbuck contract: a change is done only when the win survives verification
     from the source alone. Before finishing, run `sawbuck check`. If it reads `gamed`, the green came
