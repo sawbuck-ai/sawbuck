@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
 import { recall as memRecall, conform as memConform } from './memory.mjs';
+import { tally, resolveSessionPath } from './yank.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const HERE = dirname(SELF);
@@ -98,6 +99,10 @@ Usage:
                             shows only the debt a branch adds; --fail-on exits nonzero for a CI gate
   sawbuck run --attempt '<cmd>' [--loops N]
                             Thin harness: load context, run one attempt through the keep-if-verified gate
+  sawbuck yank [--session <path>] [--json]
+                            The steering meter: how much you had to steer (yank the reins) this session,
+                            read from your Claude Code transcript. The check guards the turns you did not
+                            steer — a miss there is the risk. Yank rate falling = the reins getting looser.
   sawbuck --help | --version
 
 Rides two engines: promptwheel (the check) + @promptwheel/logbook (memory).`;
@@ -264,9 +269,36 @@ switch (cmd) {
         const armed = existsSync(join(repo, 'promptwheel.config.json')) || existsSync(join(repo, 'package.json'));
         const mem = existsSync(join(repo, 'LOGBOOK.md')) || existsSync(join(repo, 'events.jsonl'));
         const seg = caught > 0 ? `🐴 sawbuck · ${caught} caught` : active ? `🐴 sawbuck · watching` : armed ? `🐴 sawbuck · ready` : mem ? `🐴 sawbuck · memory` : '';
-        if (seg) process.stdout.write(last ? `${seg} · ${last}` : seg);
+        const base = seg ? (last ? `${seg} · ${last}` : seg) : '';
+        // the live steering readout, when the wrapper forwards the session transcript path
+        let yk = '';
+        const ti = rest.findIndex((a) => a === '--transcript' || a === '--session');
+        if (ti > -1 && rest[ti + 1]) { try { const { yanks, turns } = tally(readFileSync(rest[ti + 1], 'utf8')); if (turns) yk = `🤠 ${yanks}/${turns} yanks`; } catch {} }
+        const outp = [base, yk].filter(Boolean).join(' · ');
+        if (outp) process.stdout.write(outp);
       }
     } catch {}
+    break;
+  }
+  case 'yank': {
+    // the live steering meter (the reins hook): how much did you have to steer this session?
+    // A MIRROR read from the Claude Code transcript; the check guards the turns you did NOT steer.
+    const si = rest.findIndex((a) => a === '--session' || a === '--transcript');
+    const sess = resolveSessionPath(si > -1 ? rest[si + 1] : null, process.cwd());
+    if (!sess) { out('🐴 sawbuck: no session transcript found to read (pass --session <path.jsonl>).'); process.exit(2); }
+    let text = ''; try { text = readFileSync(sess, 'utf8'); } catch { out('🐴 sawbuck: could not read the session transcript.'); process.exit(2); }
+    const { turns, yanks, rate, recent } = tally(text);
+    if (flags.has('--json')) { out(JSON.stringify({ turns, yanks, rate, recent })); break; }
+    const pct = Math.round(rate * 100);
+    out('🐴 reins: steering this session');
+    if (yanks === 0) {
+      out(`   0 hard yanks across ${turns} turns — you did not have to pull the reins hard.`);
+    } else {
+      out(`   ${yanks} hard yank${yanks === 1 ? '' : 's'} across ${turns} turns (${pct}%) — times you pulled me back hard.`);
+      if (turns - yanks > 0) out(`   the check guards the other ${turns - yanks} turns you trusted me with — a miss there is the risk.`);
+      if (recent.length) out(`   recent: ${recent.map((r) => '"' + r + '"').join(' · ')}`);
+    }
+    out('   (terse course-corrections only; the full steer rate, incl. discursive redirects, is the harvest layer.)');
     break;
   }
   default: die(`unknown command '${cmd}'\n\n${help}`);
