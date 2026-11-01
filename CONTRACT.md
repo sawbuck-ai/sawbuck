@@ -2,11 +2,13 @@
 
 *Put your coding agent under contract: a win counts only if it survives verification from the source alone, not because the agent said so. The terms below are not a promise the agent makes, they are a result anyone can re-prove.*
 
-**Status:** Draft v0.1 · **License:** MIT · **Reference implementation:** [Sawbuck](https://github.com/sawbuck-ai/sawbuck) (the saddle), [promptwheel](https://github.com/promptwheel-ai/promptwheel) (the check), [@promptwheel/logbook](https://github.com/promptwheel-ai/logbook) (the context record)
+**Status:** Draft v0.1 · **License:** MIT · **Reference implementation:** [Sawbuck](https://github.com/sawbuck-ai/sawbuck) (the saddle), [promptwheel](https://github.com/promptwheel-ai/promptwheel) (the check), [@promptwheel/logbook](https://github.com/promptwheel-ai/logbook) (the default memory provider)
 
 This is an open interface for making an AI coding harness trustworthy. It defines how a loop's wins get verified, what a verdict looks like, what counts as gaming the goalposts, and how a repo's history is carried along. Any harness can emit or consume it without using this code. Sawbuck is a reference saddle that implements it; it is not the only possible one.
 
 The contract has one property that holds all of it together: a verdict is **deterministic and reproducible from `(base, head, config)` alone**. No LLM is in the path, and nothing is read from the agent's trajectory, so the result cannot be obfuscated against and does not change when you ask it twice.
+
+> This contract covers the check. Sawbuck pairs it with the other half, **memory** (the relevant history for what you touch, plus the live debt), as the mirror idea: where the check is a standard others *conform to*, memory is a socket others *fill*. The default memory provider is @promptwheel/logbook, carried along so it works out of the box, but it is swappable; logbook is a default, not a requirement of the idea.
 
 ---
 

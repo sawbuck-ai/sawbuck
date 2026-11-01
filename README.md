@@ -73,9 +73,11 @@ Debt also rises on its own: once attached, the per-turn `context` hook surfaces 
 
 ## The engines
 
-Sawbuck is thin glue over two tools it depends on:
+Sawbuck is thin glue over two roles, each behind an open interface that points in opposite directions:
 
-- **promptwheel** : the check (the deterministic outcome gate).
-- **@promptwheel/logbook** : the memory (git history as agent memory; also ships an MCP server for on-demand lookups).
+- **the check** : the deterministic outcome gate, a published standard (the [Verified-Outcome Contract](CONTRACT.md)) that others conform to. Reference implementation: **promptwheel**. You plug in *what* to measure (your tests, lint, coverage, an eval); the un-gameable source re-proof is the fixed part. Embed it with `import { check }`, or check any tool's verdict with `promptwheel conformance`.
+- **the memory** : the relevant history for the files you touch, plus the live debt. A socket you can fill. Default provider: **@promptwheel/logbook** (git history as agent memory; also ships an MCP server). Sawbuck reads it through one adapter, so you can point it at your own memory with `SAWBUCK_MEMORY_BIN`. logbook is the default, not a hard requirement of the idea.
+
+In one line: the check is a standard we publish for others to meet; the memory is a socket we expose for others to fill. Sawbuck composes the two.
 
 MIT.
