@@ -82,7 +82,7 @@ if (cmd === 'recall') {
       const title = (text.match(/^#\s+(.+)$/m) || [, basename(file, '.md')])[1].trim();
       const lineWith = (text.split('\n').find((l) => needles.some((n) => l.includes(n))) || '').trim().slice(0, 160);
       let date = null; try { date = new Date(statSync(file).mtimeMs).toISOString().slice(0, 10); } catch {}
-      findings.push({ kind: 'note', path: hitPath, ref: relative(VAULT, file), date, summary: `${title}: ${lineWith}`.slice(0, 280), scope: id, _hits: hits });
+      findings.push({ kind: 'note', path: hitPath, ref: relative(VAULT, file), date, summary: `${title}: ${lineWith}`.slice(0, 280), scope: id, score: Math.min(1, hits / 5), _hits: hits });
     }
   }
   findings.sort((a, b) => b._hits - a._hits || String(b.date).localeCompare(String(a.date)));

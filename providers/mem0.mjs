@@ -1,6 +1,13 @@
 #!/usr/bin/env node
-// mem0.mjs, a REFERENCE semantic memory provider for Sawbuck's Memory Contract: Mem0 (mem0.ai) as the
-// memory. It is the THIRD contract implementation and a deliberately DIFFERENT axis from the other two:
+// mem0.mjs, a REFERENCE (experimental) semantic memory provider for Sawbuck's Memory Contract: Mem0
+// (mem0.ai) as the memory.
+//
+// STATUS: built against the DOCUMENTED Mem0 platform v3 API (/v3/memories/search|add) but not yet
+// verified against a live account; its offline degrade (no key -> [], debt unsupported) IS tested, its
+// live search/add calls are NOT. Treat it as a reference to adapt and verify against your Mem0 version,
+// not a guaranteed integration.
+//
+// It is the THIRD contract implementation and a deliberately DIFFERENT axis from the other two:
 // a networked, LLM-backed semantic store, where logbook is deterministic git-truth and obsidian is
 // local notes. Because of that it is the one provider that is NOT offline: it needs the NETWORK and a
 // MEM0_API_KEY. So it is an OPTIONAL provider isolated behind the socket, never part of the zero-network
@@ -75,7 +82,7 @@ if (cmd === 'recall') {
     for (const m of (res && Array.isArray(res.results) ? res.results : [])) {
       if (!m.memory || seen.has(m.id)) continue;
       seen.add(m.id);
-      findings.push({ kind: 'note', path: null, ref: m.id || null, date: (m.created_at || '').slice(0, 10) || null, summary: String(m.memory).slice(0, 280), scope: uid });
+      findings.push({ kind: 'note', path: null, ref: m.id || null, date: (m.created_at || '').slice(0, 10) || null, summary: String(m.memory).slice(0, 280), scope: uid, score: typeof m.score === 'number' ? m.score : null });
     }
   }
   console.log(JSON.stringify(findings.slice(0, 8)));

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { scopeChain } from '../memory.mjs';
+import { scopeChain, recall as recallMem } from '../memory.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', 'sawbuck.mjs');
@@ -120,6 +120,28 @@ test('status: the inventory unions outcomes, live debt, and the armed state', ()
     // must have counted the committed bare suppression.
     if (j.debt && j.debt.total > 0) assert.ok(j.debt.undocumented >= 1, 'the bare suppression reads undocumented');
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('recall composition: the same note from two providers dedups to one, keeps the higher score + both sources', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sawbuck-fake-'));
+  const repo = mkdtempSync(join(tmpdir(), 'sawbuck-fakerepo-'));
+  const script = (score) => `const c=process.argv[2];\nif(c==='recall'){console.log(JSON.stringify([{kind:'note',summary:'shared gotcha about app.js',score:${score}}]));process.exit(0)}\nprocess.exit(2);\n`;
+  const hi = join(dir, 'hi.mjs'), lo = join(dir, 'lo.mjs');
+  writeFileSync(hi, script(0.9)); writeFileSync(lo, script(0.2));
+  const prev = process.env.SAWBUCK_MEMORY;
+  try {
+    process.env.SAWBUCK_MEMORY = 'fakehi,fakelo';
+    process.env.SAWBUCK_MEMORY_FAKEHI_BIN = hi;
+    process.env.SAWBUCK_MEMORY_FAKELO_BIN = lo;
+    const notes = recallMem(repo, ['app.js']);
+    assert.equal(notes.length, 1, 'the overlapping note collapses to one');
+    assert.equal(notes[0].score, 0.9, 'keeps the higher-scored instance');
+    assert.ok(notes[0].source.includes('fakehi') && notes[0].source.includes('fakelo'), 'records that both providers knew it');
+  } finally {
+    if (prev === undefined) delete process.env.SAWBUCK_MEMORY; else process.env.SAWBUCK_MEMORY = prev;
+    delete process.env.SAWBUCK_MEMORY_FAKEHI_BIN; delete process.env.SAWBUCK_MEMORY_FAKELO_BIN;
+    rmSync(dir, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test('scopeChain: isolated leaf by default; self..root chain under a configured root', () => {

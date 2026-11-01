@@ -145,16 +145,29 @@ export function debt(repo, { paths = null, ref = null } = {}) {
 // recall(): supplementary relevant NOTES for the touched paths, from providers that produce them
 // (contract-dialect; logbook's own history is surfaced via rank, not here). Each is a Finding of kind
 // note/decision, source-tagged. [] when nothing relevant. git-truth is never diluted by these.
+const normText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').replace(/[^\w ]+/g, '').trim();
 export function recall(repo, paths) {
   const scopeArgs = scopeChain(repo).flatMap((id) => ['--scope', id]); // leaf-first: self + ancestors, never siblings
-  const out = [];
+  const raw = [];
   for (const p of providers()) {
     if (p.dialect !== 'contract') continue;
     const r = run(p.bin, repo, ['recall', '--json', ...((paths || []).flatMap((f) => ['--file', f])), ...scopeArgs]);
     if (r === null) continue;
-    for (const it of parseArray(r)) out.push({ kind: String(it.kind || 'note'), path: it.path ?? null, ref: it.ref ?? null, date: it.date ?? null, summary: String(it.summary || '').slice(0, 280), source: p.name, scope: it.scope ?? null });
+    for (const it of parseArray(r)) raw.push({ kind: String(it.kind || 'note'), path: it.path ?? null, ref: it.ref ?? null, date: it.date ?? null, summary: String(it.summary || '').slice(0, 280), source: p.name, scope: it.scope ?? null, score: typeof it.score === 'number' ? it.score : null });
   }
-  return out;
+  // Cross-provider dedup + unified ordering. The same note surfaced by two providers collapses to one
+  // (keep the higher score; record that both knew it). Ordering is best-effort by the providers' own
+  // relevance scores: these are SUPPLEMENTARY leads, never git-truth, so a fuzzy order is fine.
+  const byKey = new Map();
+  for (const f of raw) {
+    const k = (f.path ? normText(f.path) + '\u0000' : '') + normText(f.summary);
+    const prev = byKey.get(k);
+    if (!prev) { byKey.set(k, f); continue; }
+    const keep = (f.score ?? 0) > (prev.score ?? 0) ? f : prev, other = keep === f ? prev : f;
+    if (other.source && !String(keep.source).split('+').includes(other.source)) keep.source = `${keep.source}+${other.source}`;
+    byKey.set(k, keep);
+  }
+  return [...byKey.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 8);
 }
 
 // conform(): read-only conformance probe of a contract-dialect provider bin. Checks recall returns a
