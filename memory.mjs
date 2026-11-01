@@ -1,11 +1,17 @@
-// memory.mjs, Sawbuck's memory adapter: the single seam between the glue and the memory provider.
-// It speaks the Memory Contract (recall/debt/record) over the provider's CLI, so no other glue file
-// imports the provider's internals (no SUPPRESS_PAT, no auditHead, no gating functions). logbook is
-// the default provider; SAWBUCK_MEMORY_BIN / LB_BIN override. Zero-dep.
+// memory.mjs, Sawbuck's memory adapter: the single seam between the glue and the memory provider(s).
+// It speaks the Memory Contract (recall / debt / record) over a provider's CLI, so no other glue file
+// imports a provider's internals. Zero-dep.
 //
-// Degradation is explicit: a read returns null when the provider FAILS (missing/old/crashed) and []
-// when the provider ran and found nothing. Callers decide what a failure means (rank treats it as
-// "assume all live, do not penalize"; debt refuses to report a failure as a clean tree).
+// Providers: SAWBUCK_MEMORY is an ordered, comma-separated list (default "logbook"). An entry is
+// either the built-in "logbook" (the reference provider, adapted to its native query/audit/annotate
+// verbs) or another provider that speaks the clean contract verbs: `recall --file P --json`,
+// `debt [--since REF] --json`, `record --ref SHA --summary S [--side X] [--evidence-file F] --by WHO`.
+// The shipped reference non-git provider is "obsidian" (providers/obsidian.mjs); point at any other
+// with SAWBUCK_MEMORY_<NAME>_BIN or a path entry.
+//
+// Degradation is explicit: a read returns null when its PRIMARY (git-truth) source failed, [] when it
+// ran clean. A provider that does not support a capability signals it by exiting nonzero (we skip it),
+// never by printing []. git-truth stays authoritative; other providers add supplementary notes.
 
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -15,30 +21,36 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
-// resolve the provider bin: env override, installed package (published install), then the dev sibling.
-function providerBin() {
-  if (process.env.SAWBUCK_MEMORY_BIN) return process.env.SAWBUCK_MEMORY_BIN;
+function logbookBin() {
+  if (process.env.SAWBUCK_MEMORY_BIN) return process.env.SAWBUCK_MEMORY_BIN; // back-compat single-provider override
   if (process.env.LB_BIN) return process.env.LB_BIN;
   for (const spec of ['@promptwheel/logbook/bin/logbook.mjs', '@promptwheel/logbook']) { try { return require.resolve(spec); } catch {} }
   return join(HERE, '..', 'logbook', 'bin', 'logbook.mjs');
 }
-const LB = providerBin();
+const envKey = (name) => 'SAWBUCK_MEMORY_' + name.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_BIN';
+// the ordered provider list. Each: { name, bin, dialect: 'logbook' | 'contract' }.
+export function providers() {
+  const spec = (process.env.SAWBUCK_MEMORY || 'logbook').split(',').map((s) => s.trim()).filter(Boolean);
+  return spec.map((name) => {
+    if (name === 'logbook') return { name, bin: logbookBin(), dialect: 'logbook' };
+    if (name === 'obsidian') return { name, bin: process.env[envKey(name)] || join(HERE, 'providers', 'obsidian.mjs'), dialect: 'contract' };
+    return { name, bin: process.env[envKey(name)] || name, dialect: 'contract' }; // a bin path, or a name with an env-set bin
+  });
+}
 
-// run the provider; null on a real failure (nonzero exit / missing bin), the stdout string otherwise.
-function run(repo, args, maxBuffer = 512 * 1024 * 1024) {
-  try { return execFileSync(process.execPath, [LB, ...args], { cwd: repo, encoding: 'utf8', maxBuffer, stdio: ['ignore', 'pipe', 'ignore'] }); }
+// run a provider bin; null on a real failure / unsupported-capability (nonzero exit), stdout otherwise.
+function run(bin, repo, args, maxBuffer = 512 * 1024 * 1024) {
+  try { return execFileSync(process.execPath, [bin, ...args], { cwd: repo, encoding: 'utf8', maxBuffer, stdio: ['ignore', 'pipe', 'ignore'] }); }
   catch { return null; }
 }
-// a provider's JSON-array stdout. [] when it is not an array (old provider emitting NDJSON events, say).
 function parseArray(out) {
   const t = (out || '').trim();
   if (!t.startsWith('[')) return [];
   try { const v = JSON.parse(t); return Array.isArray(v) ? v : []; } catch { return []; }
 }
 
-// --- debt sub-classification (Sawbuck policy, applied once here so the ledger and the per-turn
-// surface always agree). The provider supplies the fact + line content; the documented/bare and
-// disabled-test reading is ours. Exported so a provider-conformance test can reuse them.
+// --- debt sub-classification (Sawbuck policy; applied once so the ledger and the per-turn surface
+// agree). Exported so the conformance checker can reuse them.
 export const isTestSkip = (m) => /\bit\.skip\b|\btest\.skip\b|xit\(|xdescribe\(|\bdescribe\.skip\b|pytest\.mark\.skip|unittest\.skip|\bt\.Skip\b|@Disabled\b|@Ignore\b|^\[Ignore\b|^Skip\s*=|^#\[ignore|markTestSkipped|markTestIncomplete/.test(String(m).trim());
 export const isDocumented = (c) => {
   c = String(c || '');
@@ -50,45 +62,94 @@ export const isDocumented = (c) => {
   return /\(\s*["']/.test(c) || /=\s*["']/.test(c);
 };
 
-// recall() facts: the raw event record (NDJSON, one event per line), for the consumer to rank.
-// [] on failure here, since every consumer already treats a missing record as "no history".
+const classify = (r, source) => ({
+  file: r.file, line: r.line, kind: String(r.kind ?? '').trim(), content: r.content ?? '',
+  since: r.since ?? null, sha: r.sha ?? null,
+  documented: r.content ? isDocumented(r.content) : false,
+  testSkip: isTestSkip(r.kind ?? r.content ?? ''),
+  source,
+});
+
+// events(): the raw git event record (the ranking input), from the logbook-dialect provider only
+// (events with revert/fix/suppression semantics are git-truth; a note provider does not produce them).
+// [] when there is no such provider or it fails, exactly as "no history".
 export function events(repo) {
-  const out = run(repo, ['query', '--json'], 256 * 1024 * 1024);
+  const lb = providers().find((p) => p.dialect === 'logbook');
+  if (!lb) return [];
+  const out = run(lb.bin, repo, ['query', '--json'], 256 * 1024 * 1024);
   if (out === null) return [];
   return out.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 }
 
-// debt(): the live suppressions still in the tree, each classified documented/testSkip.
-//   opts.paths  scopes it to those paths (the cheap per-turn surface)
-//   opts.ref    returns the raw (ungated) set at a past ref (the delta base for `--since`)
-// Returns null when the provider FAILED (caller decides), [] when it ran and the tree is clean.
-export function debt(repo, { paths = null, ref = null } = {}) {
-  const args = ['audit', '--json'];
-  if (ref) args.push('--ref', ref);
-  if (paths && paths.length) for (const p of paths) args.push('--file', p);
-  const out = run(repo, args);
-  if (out === null) return null;
-  return parseArray(out).map((r) => ({
-    file: r.file,
-    line: r.line,
-    kind: String(r.kind ?? '').trim(),
-    content: r.content ?? '',
-    since: r.since ?? null,
-    sha: r.sha ?? null,
-    documented: r.content ? isDocumented(r.content) : false,
-    testSkip: isTestSkip(r.kind ?? r.content ?? ''),
-  }));
+// the per-provider debt call, dialect-aware.
+function debtRaw(p, repo, { paths, ref }) {
+  const args = p.dialect === 'logbook'
+    ? ['audit', '--json', ...(ref ? ['--ref', ref] : []), ...((paths || []).flatMap((f) => ['--file', f]))]
+    : ['debt', '--json', ...(ref ? ['--since', ref] : []), ...((paths || []).flatMap((f) => ['--file', f]))];
+  return run(p.bin, repo, args);
 }
 
-// record(): persist a machine-authored, explicitly-unreviewed finding (the write-back). Best-effort;
-// never throws into the caller. Mirrors reflect's prior two-try annotate (with grounding, then bare).
+// debt(): live suppressions still in the tree, each classified. Fans out across providers that SUPPORT
+// debt (git-truth); a provider that does not implement it exits nonzero and is skipped. Returns null
+// only when NO provider answered (unmeasurable, not clean); [] when a provider ran and the tree is
+// clean. Default (logbook-only) is byte-identical to the single-provider behavior.
+export function debt(repo, { paths = null, ref = null } = {}) {
+  let answered = false;
+  const rows = [];
+  for (const p of providers()) {
+    const out = debtRaw(p, repo, { paths, ref });
+    if (out === null) continue;              // failed or unsupported -> skip
+    answered = true;
+    for (const r of parseArray(out)) rows.push(classify(r, p.name));
+  }
+  return answered ? rows : null;
+}
+
+// recall(): supplementary relevant NOTES for the touched paths, from providers that produce them
+// (contract-dialect; logbook's own history is surfaced via rank, not here). Each is a Finding of kind
+// note/decision, source-tagged. [] when nothing relevant. git-truth is never diluted by these.
+export function recall(repo, paths) {
+  const out = [];
+  for (const p of providers()) {
+    if (p.dialect !== 'contract') continue;
+    const r = run(p.bin, repo, ['recall', '--json', ...((paths || []).flatMap((f) => ['--file', f]))]);
+    if (r === null) continue;
+    for (const it of parseArray(r)) out.push({ kind: String(it.kind || 'note'), path: it.path ?? null, ref: it.ref ?? null, date: it.date ?? null, summary: String(it.summary || '').slice(0, 280), source: p.name });
+  }
+  return out;
+}
+
+// conform(): read-only conformance probe of a contract-dialect provider bin. Checks recall returns a
+// JSON array (or errors cleanly) and that debt either returns an array (git-truth) or signals
+// unsupported by exiting nonzero (never a bare []). Does not write, so record is validated elsewhere
+// (the record fan-out). Returns a report the `memory-conformance` command prints.
+export function conform(bin, repo, probePath = 'README.md') {
+  const probe = (args) => { try { return { out: execFileSync(process.execPath, [bin, ...args], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }), code: 0 }; } catch (e) { return { out: (e.stdout || '').toString(), code: e.status || 1 }; } };
+  const isArray = (s) => { s = (s || '').trim(); if (!s.startsWith('[')) return false; try { return Array.isArray(JSON.parse(s)); } catch { return false; } };
+  const r = probe(['recall', '--json', '--file', probePath]);
+  const recall = r.code !== 0 ? 'error (nonzero exit on recall)' : (isArray(r.out) ? 'ok (Finding[])' : 'bad shape (recall must print a JSON array)');
+  const d = probe(['debt', '--json']);
+  const debt = d.code !== 0 ? 'unsupported (exits nonzero, ok for a non-git provider)' : (isArray(d.out) ? 'supported (Suppression[])' : 'bad shape (debt must print a JSON array or exit nonzero)');
+  const pass = /^ok/.test(recall) && !/bad shape/.test(debt);
+  return { bin, recall, debt, pass };
+}
+
+// record(): persist a machine finding to every WRITABLE provider (the write-back). Best-effort; never
+// throws into the caller. Returns true if at least one provider accepted it.
 export function record(repo, { sha, reason, side, evidenceFile, by = 'sawbuck' }) {
   const text = String(reason).slice(0, 280);
-  const full = ['annotate', sha, text];
-  if (side) full.push('--side', side);
-  if (evidenceFile) full.push('--evidence-file', evidenceFile);
-  full.push('--by', by);
-  const exec = (a) => execFileSync(process.execPath, [LB, ...a], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  try { exec(full); return true; }
-  catch { try { exec(['annotate', sha, text, '--by', by]); return true; } catch { return false; } }
+  let ok = false;
+  for (const p of providers()) {
+    const exec = (a) => execFileSync(process.execPath, [p.bin, ...a], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    try {
+      if (p.dialect === 'logbook') {
+        const full = ['annotate', sha, text, ...(side ? ['--side', side] : []), ...(evidenceFile ? ['--evidence-file', evidenceFile] : []), '--by', by];
+        try { exec(full); } catch { exec(['annotate', sha, text, '--by', by]); }
+      } else {
+        exec(['record', '--ref', sha, '--summary', text, ...(side ? ['--side', side] : []), ...(evidenceFile ? ['--evidence-file', evidenceFile] : []), '--by', by]);
+      }
+      ok = true;
+    } catch { /* this provider declined; others may still accept */ }
+  }
+  return ok;
 }

@@ -45,6 +45,7 @@ sawbuck: gamed recorded on test.js       (the win came from editing the test, no
 | `sawbuck context` · `sawbuck rank` | the ranked relevant history for the current change |
 | `sawbuck debt` | the whole-repo live suppression debt: what is still silenced in HEAD now, disabled tests first, heaviest files ranked |
 | `sawbuck status` · `sawbuck log` | the inventory (caught over time + debt now + armed state), in one view; and the recent per-check feed |
+| `sawbuck recall` | related notes for your current change from extra memory providers you compose in (bring your own) |
 | `sawbuck run --attempt '<agent cmd>'` | thin harness: load context, run one attempt through the keep-if-verified gate |
 | `sawbuck trace` · `sawbuck doctor` · `detach --verify` | show the footprint; check the attachment resolves; prove a clean removal |
 
@@ -76,7 +77,7 @@ Debt also rises on its own: once attached, the per-turn `context` hook surfaces 
 Sawbuck is thin glue over two roles, each behind an open interface that points in opposite directions:
 
 - **the check** : the deterministic outcome gate, a published standard (the [Verified-Outcome Contract](CONTRACT.md)) that others conform to. Reference implementation: **promptwheel**. You plug in *what* to measure (your tests, lint, coverage, an eval); the un-gameable source re-proof is the fixed part. Embed it with `import { check }`, or check any tool's verdict with `promptwheel conformance`.
-- **the memory** : the relevant history for the files you touch, plus the live debt. A socket you can fill. Default provider: **@promptwheel/logbook** (git history as agent memory; also ships an MCP server). Sawbuck reads it through one adapter, so you can point it at your own memory with `SAWBUCK_MEMORY_BIN`. logbook is the default, not a hard requirement of the idea.
+- **the memory** : the relevant history for the files you touch, plus the live debt. A socket you can fill. Default provider: **@promptwheel/logbook** (git history as agent memory; also ships an MCP server). Sawbuck reads it through one adapter, so you can *compose in your own* memory: `SAWBUCK_MEMORY=logbook,obsidian` keeps logbook as the git-truth + debt provider and adds your notes (a reference Obsidian provider ships in `providers/`; set `OBSIDIAN_VAULT`, then `sawbuck recall`). Any bin that speaks the three contract verbs works; `sawbuck memory-conformance <bin>` checks one. logbook is the default, not a hard requirement of the idea.
 
 In one line: the check is a standard we publish for others to meet; the memory is a socket we expose for others to fill. Sawbuck composes the two.
 

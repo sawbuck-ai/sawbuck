@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', 'sawbuck.mjs');
+const OBSIDIAN = join(HERE, '..', 'providers', 'obsidian.mjs');   // the reference non-git memory provider
 // isolate HOME so the global registry (~/.sawbuck) never touches the real home.
 const TMP_HOME = mkdtempSync(join(tmpdir(), 'sawbuck-home-'));
 after(() => rmSync(TMP_HOME, { recursive: true, force: true }));
@@ -116,6 +117,30 @@ test('status: the inventory unions outcomes, live debt, and the armed state', ()
     // must have counted the committed bare suppression.
     if (j.debt && j.debt.total > 0) assert.ok(j.debt.undocumented >= 1, 'the bare suppression reads undocumented');
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('memory-conformance: the obsidian reference provider conforms (recall array, debt unsupported)', () => {
+  const { d } = tmpRepo();
+  try {
+    const o = sawbuck(['memory-conformance', OBSIDIAN], d);
+    assert.match(o, /recall: ok/, 'recall returns a JSON array');
+    assert.match(o, /debt:\s+unsupported/, 'a note vault signals debt unsupported (nonzero), not a bare []');
+    assert.match(o, /conforms to the Memory Contract/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('recall + composition: a second provider (obsidian) contributes notes alongside logbook', () => {
+  const { d } = tmpRepo();                       // commits a.js
+  const V = mkdtempSync(join(tmpdir(), 'sawbuck-vault-'));
+  try {
+    writeFileSync(join(V, 'gotcha.md'), '# a.js gotcha\n\nThe value in a.js must stay 1 for the downstream parser.\n');
+    writeFileSync(join(d, 'a.js'), 'export const v = 2;\n');   // a working change, so a.js is a changed path
+    // SAWBUCK_MEMORY lists both; recall pulls notes from the contract-dialect provider (obsidian),
+    // logbook (git-truth) is not asked for notes. The default obsidian bin resolves next to memory.mjs.
+    const o = sawbuck(['recall', '.'], d, { SAWBUCK_MEMORY: 'logbook,obsidian', OBSIDIAN_VAULT: V });
+    assert.match(o, /\[obsidian\]/, 'tags the note with its source provider');
+    assert.match(o, /a\.js gotcha/, 'surfaces the relevant vault note');
+  } finally { rmSync(d, { recursive: true, force: true }); rmSync(V, { recursive: true, force: true }); }
 });
 
 test('git attach leaves the worktree clean and detach --verify proves full removal', () => {

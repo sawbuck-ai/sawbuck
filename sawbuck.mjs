@@ -18,6 +18,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
+import { recall as memRecall, conform as memConform } from './memory.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const HERE = dirname(SELF);
@@ -86,6 +87,10 @@ Usage:
   sawbuck rank [--base R --head R] [--file P ...]
                             Show the relevant past findings for the paths a change touches
   sawbuck context [repo]    Ranked relevant history for your current working changes (the read face)
+  sawbuck recall [repo]     Related notes for your current changes from extra memory providers
+                            (SAWBUCK_MEMORY=logbook,obsidian + OBSIDIAN_VAULT); supplementary to context
+  sawbuck memory-conformance <bin>
+                            Check a provider bin speaks the Memory Contract (recall/debt/record)
   sawbuck debt [repo] [--since REF] [--fail-on undocumented|test|any|N]
                             The whole-repo live suppression debt: what is still silenced in HEAD now,
                             risk-ranked (severity x file fragility), undocumented flagged. --since REF
@@ -180,6 +185,32 @@ switch (cmd) {
     if (/relevant history/.test(o)) out(o);
     else if (speak) out('🐴 sawbuck: no notable history for the files you are touching (a clean trail).');
     break;
+  }
+  case 'recall': {
+    // the notes face: supplementary relevant notes for your current changes, from any non-git memory
+    // provider (e.g. an Obsidian vault). On-demand. Git history + live debt come from context / debt.
+    const repo = repoArg();
+    const g = (...a) => { try { return execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim(); } catch { return ''; } };
+    let changed = g('diff', '--name-only', 'HEAD').split('\n').filter(Boolean);
+    if (!changed.length) changed = g('diff', '--name-only', 'HEAD~1', 'HEAD').split('\n').filter(Boolean);
+    if (!changed.length) { out('🐴 sawbuck: nothing changed to look up.'); break; }
+    const notes = memRecall(repo, changed);
+    if (!notes.length) { out('🐴 sawbuck: no related notes (configure extra memory providers with SAWBUCK_MEMORY, e.g. logbook,obsidian; logbook history is in `sawbuck context`).'); break; }
+    out(`🐴 related notes for ${changed.length} changed path${changed.length === 1 ? '' : 's'} (leads, not conclusions):`);
+    for (const n of notes) out(`  - [${n.source}] ${n.summary}${n.ref ? `  (${n.ref})` : ''}`);
+    break;
+  }
+  case 'memory-conformance': {
+    // check that a provider bin speaks the Memory Contract (recall returns Finding[]; debt returns
+    // Suppression[] or exits nonzero to signal it is not a git-truth provider). Read-only probe.
+    const bin = positional[0];
+    if (!bin) die('usage: sawbuck memory-conformance <provider-bin>   (a bin speaking the contract verbs recall/debt/record)');
+    const r = memConform(bin, process.cwd());
+    out(`🐴 memory-conformance: ${bin}`);
+    out(`   recall: ${r.recall}`);
+    out(`   debt:   ${r.debt}`);
+    out(r.pass ? '   ✓ conforms to the Memory Contract.' : '   ✗ does not conform (see above).');
+    process.exit(r.pass ? 0 : 1);
   }
   case 'run': {
     try { execFileSync(process.execPath, [join(HERE, 'run.mjs'), ...rest], { stdio: 'inherit' }); }
