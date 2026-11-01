@@ -31,6 +31,7 @@
     "providers/obsidian.mjs",
     "providers/mem0.mjs",
     "providers/local.mjs",
+    "providers/claude.mjs",
     "run.mjs",
     "README.md",
     "GLOSSARY.md",

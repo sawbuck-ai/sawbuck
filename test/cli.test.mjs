@@ -18,6 +18,7 @@ const CLI = join(HERE, '..', 'sawbuck.mjs');
 const OBSIDIAN = join(HERE, '..', 'providers', 'obsidian.mjs');   // reference local-notes memory provider
 const MEM0 = join(HERE, '..', 'providers', 'mem0.mjs');           // reference semantic (networked) memory provider
 const LOCAL = join(HERE, '..', 'providers', 'local.mjs');         // reference minimal local-file memory provider
+const CLAUDEP = join(HERE, '..', 'providers', 'claude.mjs');      // reference read-only Claude-memory provider
 // isolate HOME so the global registry (~/.sawbuck) never touches the real home.
 const TMP_HOME = mkdtempSync(join(tmpdir(), 'sawbuck-home-'));
 after(() => rmSync(TMP_HOME, { recursive: true, force: true }));
@@ -189,6 +190,19 @@ test('memory-conformance: the obsidian reference provider conforms (recall array
     assert.match(o, /debt:\s+unsupported/, 'a note vault signals debt unsupported (nonzero), not a bare []');
     assert.match(o, /conforms to the Memory Contract/);
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('claude provider: read-only recall from project memory (CLAUDE.md), debt/record unsupported', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sawbuck-cm-'));
+  try {
+    writeFileSync(join(dir, 'CLAUDE.md'), '# Gotchas\n\nThe retry in app.js must keep the backoff; do not simplify it.\n');
+    const got = JSON.parse(execFileSync(process.execPath, [CLAUDEP, 'recall', '--file', 'app.js', '--json'], { encoding: 'utf8', cwd: dir }));
+    assert.ok(got.some((f) => /retry in app\.js/.test(f.summary)), 'surfaces the relevant CLAUDE.md line');
+    // debt + record are unsupported (read-only), so they exit nonzero
+    assert.throws(() => execFileSync(process.execPath, [CLAUDEP, 'debt', '--json'], { cwd: dir, stdio: 'ignore' }), 'debt unsupported');
+    assert.throws(() => execFileSync(process.execPath, [CLAUDEP, 'record', '--ref', 'x', '--summary', 'y'], { cwd: dir, stdio: 'ignore' }), 'record unsupported');
+    assert.match(sawbuck(['memory-conformance', CLAUDEP], dir), /conforms to the Memory Contract/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('local provider: record + recall roundtrip, folder-scoped (a sibling scope is excluded), and conforms', () => {
