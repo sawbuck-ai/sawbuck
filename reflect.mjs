@@ -19,11 +19,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { record as memRecord } from './memory.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-// Resolve each engine CLI: env override, then the installed package (published
-// install), then the monorepo sibling (dev checkout).
+// Resolve the check engine CLI: env override, then the installed package (published
+// install), then the monorepo sibling (dev checkout). The MEMORY engine is reached only
+// through memory.mjs (the Memory Contract seam), never resolved or shelled directly here.
 const engineBin = (envVar, pkgSubpath, devPath) => {
   if (process.env[envVar]) return process.env[envVar];
   // deep bin subpath (no-exports pkgs, e.g. promptwheel), then the bare package name
@@ -33,7 +35,6 @@ const engineBin = (envVar, pkgSubpath, devPath) => {
   return devPath;
 };
 const PW = engineBin('PW_BIN', 'promptwheel/bin/promptwheel.mjs', join(HERE, '..', 'referee', 'bin', 'promptwheel.mjs'));
-const LB = engineBin('LB_BIN', '@promptwheel/logbook/bin/logbook.mjs', join(HERE, '..', 'logbook', 'bin', 'logbook.mjs'));
 
 const flag = (name, def) => { const i = process.argv.indexOf(name); return i > -1 ? process.argv[i + 1] : def; };
 const repo = flag('--repo', process.cwd());
@@ -81,13 +82,10 @@ const reason = kind === 'gamed'
   : `sawbuck: a change here regressed a guarded metric beyond noise`;
 
 // --- 3) record the finding in memory (unreviewed, machine-authored note) ----
+// The Memory Contract's `record` capability, through the adapter (no direct engine shell here).
 // M0 keeps it simple: a commit-attached digest note. M1 adds --span grounding
-// + true coupling (the fix diff → "change X ⇒ also Y").
-try {
-  runNode(LB, ['annotate', sha, reason.slice(0, 280), '--side', 'diff', '--evidence-file', evidenceFile, '--by', 'sawbuck']);
-} catch {
-  try { runNode(LB, ['annotate', sha, reason.slice(0, 280), '--by', 'sawbuck']); } catch { /* best-effort */ }
-}
+// + true coupling (the fix diff -> "change X also needs Y").
+memRecord(repo, { sha, reason: reason.slice(0, 280), side: 'diff', evidenceFile, by: 'sawbuck' });
 
 // --- 4) tick the results record (the visible proof-of-work) -----------------
 const recDir = join(repo, '.sawbuck');

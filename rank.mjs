@@ -12,21 +12,7 @@
 // renames). v1 does not follow a file across a pre-rename name.
 
 import { execFileSync } from 'node:child_process';
-import { createRequire } from 'node:module';
-import { join, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
-const engineBin = (envVar, pkgSubpath, devPath) => {
-  if (process.env[envVar]) return process.env[envVar];
-  // deep bin subpath (no-exports pkgs, e.g. promptwheel), then the bare package name
-  // (pkgs whose exports map "." to the bin, e.g. @promptwheel/logbook), then the dev sibling.
-  const bare = pkgSubpath.replace(/\/bin\/[^/]*$/, '');
-  for (const spec of [pkgSubpath, bare]) { try { return require.resolve(spec); } catch {} }
-  return devPath;
-};
-const LB = engineBin('LB_BIN', '@promptwheel/logbook/bin/logbook.mjs', join(HERE, '..', 'logbook', 'bin', 'logbook.mjs'));
+import { events as memEvents, debt as memDebt } from './memory.mjs';
 
 const arg = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const multi = (n) => process.argv.reduce((a, v, i) => (process.argv[i - 1] === n ? [...a, v] : a), []);
@@ -42,11 +28,9 @@ let paths = multi('--file');
 if (!paths.length) paths = git('diff', '--name-only', base, head).split('\n').filter(Boolean);
 if (!paths.length) { console.log(asJson ? '[]' : 'rank: no paths to rank'); process.exit(0); }
 
-// pull the full event record once (query --file does not narrow --json)
-let record = '';
-try { record = execFileSync(process.execPath, [LB, 'query', '--json'], { cwd: repo, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }); }
-catch (e) { record = (e.stdout || '').toString(); }
-const EVENTS = record.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+// the full event record (the memory provider's recall facts), ranked client-side below
+// (the provider's --file does not narrow the record, so we pull it once and filter by path here).
+const EVENTS = memEvents(repo);
 
 const resolveRename = (f) => f.replace(/\{[^}]*=>\s*([^}]*)\}/g, '$1').replace(/\/{2,}/g, '/');
 const touches = (e, p) => (e.files || []).some((f) => resolveRename(f) === p);
@@ -90,57 +74,32 @@ const normMult = (p, kind) => {
   return Math.max(0.4, Math.min(1, REF / b));
 };
 
-// Classify a live suppression MARKER (disabled test = hidden-failure risk) and its line as
-// DOCUMENTED (a rule code/reason follows) vs BARE (just the directive, the suspect kind). Same
-// splits `sawbuck debt` uses, so the ambient surface and the ledger agree.
-const isTestSkip = (m) => /\bit\.skip\b|\btest\.skip\b|xit\(|xdescribe\(|\bdescribe\.skip\b|pytest\.mark\.skip|unittest\.skip|\bt\.Skip\b|@Disabled\b|@Ignore\b|^\[Ignore\b|^Skip\s*=|^#\[ignore|markTestSkipped|markTestIncomplete/.test(String(m).trim());
-const isDocumented = (c) => {
-  c = String(c || '');
-  if (/eslint-disable/.test(c)) return /eslint-disable(?:-next-line|-line)?\s+\S/.test(c);
-  if (/@ts-ignore/.test(c)) return false;
-  if (/@ts-expect-error/.test(c)) return /@ts-expect-error\s+\S/.test(c);
-  if (/noqa/i.test(c)) return /noqa:\s*\w/i.test(c);
-  if (/type:\s*ignore/i.test(c)) return /ignore\s*\[/.test(c);
-  return /\(\s*["']/.test(c) || /=\s*["']/.test(c);
-};
 // The "slider": debt rises on its own, but gently. A disabled test or an undocumented suppression
 // on a touched file always surfaces; a file that is churning (hot / reverted) surfaces any debt;
 // a stable file's routine documented suppressions stay quiet until they pile past DEBT_MIN. Tune
 // with SAWBUCK_DEBT_MIN. This is how debt rises by itself in the per-turn context, no command run.
 const DEBT_MIN = Math.max(1, +(process.env.SAWBUCK_DEBT_MIN) || 6);
 
-// Still-live filter (lead #4). A suppression on a path that is now CLEAN of suppressions is churn,
-// not current risk (the study: AutoMapper carries 4 live `[Ignore]` vs ~158/repo across C# history).
-// logbook's own SUPPRESS_PAT, git-grepped at HEAD but SCOPED to just the touched paths so the
-// per-turn hook stays cheap, tells us which still carry one. Imported so the pattern never drifts;
-// degrades to "treat all as live" if logbook cannot be imported. --raw turns it off.
+// Still-live filter (lead #4) + ambient debt, via the memory adapter (the Memory Contract's `debt`
+// capability), scoped to the touched paths so the per-turn hook stays cheap. A suppression on a path
+// now CLEAN of suppressions is churn, not current risk (the study: AutoMapper carries 4 live
+// `[Ignore]` vs ~158/repo across C# history). The adapter runs the provider's own detection + gating
+// and returns classified suppressions, so the glue never imports the provider's pattern. null = the
+// provider failed -> treat all as live (do not penalize); [] = genuinely clean. --raw turns it off.
 let liveSet = null;
-const liveDebt = new Map(); // path -> { n, skips, bare }: live suppressions in HEAD, for ambient surfacing
+const liveDebt = new Map(); // path -> { n, skips, bare }: live suppressions, for ambient surfacing
 if (!raw && paths.length) {
-  try {
-    const { SUPPRESS_PAT, kindAllowedInFile, isMention } = await import(pathToFileURL(LB).href);
-    if (SUPPRESS_PAT && SUPPRESS_PAT.source) {
-      // -nP (content), still scoped to the touched paths, so we can both weight AND surface the debt.
-      let grep = '';
-      try { grep = execFileSync('git', ['-C', repo, 'grep', '-nP', SUPPRESS_PAT.source, 'HEAD', '--', ...paths], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); }
-      catch (e) { grep = (e.stdout || '').toString(); } // git grep exits 1 when nothing matches
-      liveSet = new Set();
-      for (const row of grep.split('\n')) {
-        const m = /^HEAD:(.+?):\d+:(.*)$/.exec(row); if (!m) continue;
-        const file = m[1], content = m[2];
-        const re = new RegExp(SUPPRESS_PAT.source, 'g'); let mm;
-        while ((mm = re.exec(content))) {
-          if (kindAllowedInFile && !kindAllowedInFile(mm[0], file)) continue; // gate exactly like audit
-          if (isMention && isMention(content, mm.index, mm[0])) continue;      // a comment ABOUT it is not live
-          liveSet.add(file);
-          const d = liveDebt.get(file) || { n: 0, skips: 0, bare: 0 };
-          d.n++;
-          if (isTestSkip(mm[0])) d.skips++; else if (!isDocumented(content)) d.bare++;
-          liveDebt.set(file, d);
-        }
-      }
+  const sup = memDebt(repo, { paths });
+  if (sup !== null) {
+    liveSet = new Set();
+    for (const it of sup) {
+      liveSet.add(it.file);
+      const d = liveDebt.get(it.file) || { n: 0, skips: 0, bare: 0 };
+      d.n++;
+      if (it.testSkip) d.skips++; else if (!it.documented) d.bare++;
+      liveDebt.set(it.file, d);
     }
-  } catch { liveSet = null; liveDebt.clear(); } // logbook unavailable -> skip, do not crash the read face
+  }
 }
 // a suppression on a still-silenced path keeps its weight; on a now-clean path it is near-zero.
 const stillLive = (p) => (liveSet === null || liveSet.has(p) ? 1 : 0.25);

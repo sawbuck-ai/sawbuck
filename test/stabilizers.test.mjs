@@ -22,7 +22,7 @@ const require = createRequire(import.meta.url);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', 'sawbuck.mjs');
 const PW = require.resolve('promptwheel/bin/promptwheel.mjs');   // the check engine (sibling)
-const GLUE_FILES = ['sawbuck.mjs', 'reflect.mjs', 'dispatch.mjs', 'sawbuck-hook.mjs', 'rank.mjs', 'status.mjs', 'run.mjs'].map((f) => join(HERE, '..', f));
+const GLUE_FILES = ['sawbuck.mjs', 'reflect.mjs', 'dispatch.mjs', 'sawbuck-hook.mjs', 'rank.mjs', 'debt.mjs', 'memory.mjs', 'status.mjs', 'run.mjs'].map((f) => join(HERE, '..', f));
 
 const TMP_HOME = mkdtempSync(join(tmpdir(), 'sawbuck-shome-'));
 after(() => rmSync(TMP_HOME, { recursive: true, force: true }));
@@ -113,10 +113,15 @@ test('stabilizer: a hanging check is bounded by SAWBUCK_CHECK_TIMEOUT_MS', () =>
 test('stabilizer: the glue only execs the engine bins, never imports their source', () => {
   const staticImport = /^\s*import\s[^;]*\bfrom\s*['"](promptwheel|@promptwheel\/logbook)(?:['"]|\/)/m;
   const requireCall = /\brequire\s*\(\s*['"](promptwheel|@promptwheel\/logbook)/;   // require.resolve(...) is allowed; require(...) is not
+  // dynamic import of an engine's source (the old debt.mjs/rank.mjs trick: `await import(pathToFileURL(LB))`
+  // to borrow auditHead/SUPPRESS_PAT). The memory engine is reachable ONLY by shelling its bin, through
+  // memory.mjs; no glue file may import its source by any mechanism.
+  const dynamicEngineImport = /\bimport\s*\(\s*(pathToFileURL|require\.resolve|['"`](?:promptwheel|@promptwheel\/logbook))/;
   for (const f of GLUE_FILES) {
     const src = readFileSync(f, 'utf8');
     assert.ok(!staticImport.test(src), `${f} statically imports an engine (must spawn its bin instead)`);
     assert.ok(!requireCall.test(src), `${f} require()s an engine (use require.resolve + execFile)`);
+    assert.ok(!dynamicEngineImport.test(src), `${f} dynamic-imports an engine's source (go through memory.mjs, which shells the bin)`);
   }
 });
 
