@@ -14,7 +14,7 @@ it is plain and scientific. The saddle is the brand and the architecture spine
 (the name, `attach`, `fit`); it is NOT a vocabulary for every concept.
 
 Why plain wins everywhere: an LLM has strong trained priors on words like
-`regression`, `verified`, `invalid`. Metaphor jargon in the model's context forces
+`regression`, `verified`, `gamed`. Metaphor jargon in the model's context forces
 a gloss every session (token cost) and risks a misread (trajectory drift). Plain,
 high-prior words serve the human reader and the agent equally, so we do not keep
 two vocabularies.
@@ -28,7 +28,7 @@ two vocabularies.
 | the verifier | **the check** (verb: *verify*) | runs the metrics on a change |
 | a change that improved and holds | **verified** | |
 | a change that made a guarded metric worse | **regression** | do-not-retry |
-| a change that passed by weakening its test | **invalid** | the test was weakened, not the metric improved (engine verdict: `gamed`) |
+| a change that passed by faking the metric | **gamed** | the win came from editing the test, config, or grader, not the source (the engine verdict, and the word every Sawbuck surface uses) |
 | the accumulated record of outcomes | **results** | `results.json` |
 | what Sawbuck leaves you | **verified history** | the findings you can trust |
 | a surfaced past outcome | **finding** | |
@@ -61,12 +61,13 @@ Findings are **leads, not conclusions**, verify against the diff before acting.
 ## Dispatch template
 
 ```
-Sawbuck · {N} regressions charted · {N} invalid changes caught
+Sawbuck · {N} regressions charted · {N} gamed changes caught
    🆕 just learned: {reason} ({file})
 ```
 
 ## Note on engine verdicts
 
-The check engine still emits its own verdicts (`gamed`, `fail`, `pass`); Sawbuck
-maps them to the plain outcome words above (`gamed` → **invalid**, `fail` →
-**regression**). Engine-internal names are not part of this surface.
+The check engine emits verdicts (`gamed`, `fail`, `pass`); the surface keeps **gamed**
+as-is (it is vivid and used on every surface) and maps `fail` → **regression** and
+`pass` → **verified**. ("Invalid" was an earlier softening of `gamed` that no surface
+adopted; `gamed` is canonical.)

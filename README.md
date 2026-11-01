@@ -48,6 +48,17 @@ sawbuck: gamed recorded on test.js       (the win came from editing the test, no
 | `sawbuck recall` | related notes for your current change from extra memory providers you compose in (bring your own) |
 | `sawbuck run --attempt '<agent cmd>'` | thin harness: load context, run one attempt through the keep-if-verified gate |
 | `sawbuck trace` · `sawbuck doctor` · `detach --verify` | show the footprint; check the attachment resolves; prove a clean removal |
+| `sawbuck where` · `sawbuck statusline` | list every repo it is attached to; a one-line status-line segment (🐴 watching / N caught) |
+
+## Give your agent the contract
+
+`sawbuck attach --claude` enforces this every turn automatically. For an agent or loop that is not wired to the hook, paste this into your `AGENTS.md` / `CLAUDE.md` so it knows the rules it is held to:
+
+    This repo is under a Sawbuck contract: a change is done only when the win survives verification
+    from the source alone. Before finishing, run `sawbuck check`. If it reads `gamed`, the green came
+    from editing a test, config, or grader, not the source, so undo that and earn it in the source.
+    Run `sawbuck context` first to see what broke in these files before (reverts, weakened tests,
+    fragile spots). Never skip, weaken, or delete a test to go green.
 
 Each repo needs a `promptwheel.config.json` saying what to measure (your tests, lint, coverage, or an eval).
 

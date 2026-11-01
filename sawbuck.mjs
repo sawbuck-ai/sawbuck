@@ -125,8 +125,13 @@ switch (cmd) {
     // zero-config (the engine auto-detects your test command), and say plainly whether the win was
     // earned. No attach, no hook, no record. The try-it-first on-ramp.
     const repo = repoArg();
-    const g = (...a) => { try { return execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim(); } catch { return ''; } };
+    // stderr ignored so a benign failing probe (e.g. rev-parse HEAD~1 on a one-commit repo) does not
+    // leak a scary "fatal:" line before sawbuck's own message.
+    const g = (...a) => { try { return execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; } };
     const dirty = g('status', '--porcelain').length > 0;
+    // nothing to verify yet: a clean tree with no previous commit to diff against (a fresh repo). Say so
+    // plainly instead of the generic "could not run" below, so the first run is not a dead end.
+    if (!dirty && !g('rev-parse', '--verify', 'HEAD~1')) { out('🐴 sawbuck: nothing to verify yet, the working tree is clean and this is the only commit. Make a change (or add one more commit), then `sawbuck check` re-proves the win from your source edits alone.'); process.exit(2); }
     const where = dirty ? 'working' : 'last';
     const { rep, code } = gateReport(repo, dirty ? ['run', '--working'] : ['run', '--base', 'HEAD~1', '--head', 'HEAD']);
     if (!rep || !rep.verdict) { out('🐴 sawbuck: could not run the check here. Make sure this is a git repo with a commit, and a test command (or run `sawbuck init`).'); process.exit(2); }
