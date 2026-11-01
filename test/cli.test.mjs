@@ -13,7 +13,8 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', 'sawbuck.mjs');
-const OBSIDIAN = join(HERE, '..', 'providers', 'obsidian.mjs');   // the reference non-git memory provider
+const OBSIDIAN = join(HERE, '..', 'providers', 'obsidian.mjs');   // reference local-notes memory provider
+const MEM0 = join(HERE, '..', 'providers', 'mem0.mjs');           // reference semantic (networked) memory provider
 // isolate HOME so the global registry (~/.sawbuck) never touches the real home.
 const TMP_HOME = mkdtempSync(join(tmpdir(), 'sawbuck-home-'));
 after(() => rmSync(TMP_HOME, { recursive: true, force: true }));
@@ -125,6 +126,18 @@ test('memory-conformance: the obsidian reference provider conforms (recall array
     const o = sawbuck(['memory-conformance', OBSIDIAN], d);
     assert.match(o, /recall: ok/, 'recall returns a JSON array');
     assert.match(o, /debt:\s+unsupported/, 'a note vault signals debt unsupported (nonzero), not a bare []');
+    assert.match(o, /conforms to the Memory Contract/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('memory-conformance: the mem0 reference provider conforms offline (recall [], debt unsupported, no crash)', () => {
+  const { d } = tmpRepo();
+  try {
+    // no MEM0_API_KEY: recall degrades to [] (clean, not an error), debt exits unsupported. A networked
+    // semantic provider must still conform without a key, so it never crashes a read.
+    const o = sawbuck(['memory-conformance', MEM0], d, { MEM0_API_KEY: '' });
+    assert.match(o, /recall: ok/, 'recall returns a JSON array even with no key');
+    assert.match(o, /debt:\s+unsupported/, 'a semantic store signals debt unsupported, not a bare []');
     assert.match(o, /conforms to the Memory Contract/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
