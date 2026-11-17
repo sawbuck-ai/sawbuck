@@ -793,7 +793,9 @@ test('claim: a turn that puts back what you had undone ends with a line that say
   assert.match(m, /put back/); assert.match(m, /src\/add\.js/); assert.match(m, /2 of the 2 lines/); assert.match(m, /const cache=new Map\(\)/, 'it names the first line that is back');
   assert.equal(redone(d).length, 1); assert.doesNotMatch(JSON.stringify(redone(d)), /make add faster/, 'nothing typed is kept with it');
   w.prompt('thanks'); assert.doesNotMatch(said(w.stop()), /put back/, 'said once');
-  assert.match(w.prompt('make src/add.js faster'), /undone here at your request \([^)]*\), put back \([^)]*\)/, 'a later prompt that names the file is told both');
+  assert.match(w.prompt('make src/add.js faster'), /undone here at your request \([^)]*\), and in the file again now: 2 lines/, 'a later prompt that names the file is told both');
+  git(d, 'checkout', '--', 'src/add.js');   // taken out again, by hand, with no word to the agent
+  { const p = w.prompt('make src/add.js faster'); assert.match(p, /undone here at your request \([^)]*\): 2 lines/); assert.doesNotMatch(p, /in the file again/, 'read from the file each time: it is not said once the lines are gone'); }
   // the same when a shell command wrote it back, and in another session
   const e = signed(true); const x = wired(e, 'one');
   x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
@@ -807,8 +809,8 @@ test('claim: no redo line when you put it back yourself between turns, when one 
   w.prompt('undo that'); git(d, 'checkout', '--', 'src/add.js'); w.stop();
   edit(d, 'src/add.js', (s) => s + CACHE1);   // the person, by hand, between turns
   w.prompt('run the tests'); assert.doesNotMatch(said(w.stop()), /put back/, 'it was there when the person spoke');
-  assert.deepEqual(redone(d).map((r) => !!r.quiet), [true], 'on record as put back, and not as something to tell');
-  assert.match(w.prompt('make src/add.js faster'), /undone here at your request \([^)]*\), put back \([^)]*\)/, 'so a later prompt does not read the undo as still standing');
+  assert.equal(redone(d).length, 0, 'the record holds only what the person was told');
+  assert.match(w.prompt('make src/add.js faster'), /undone here at your request \([^)]*\), and in the file again now/, 'and a later prompt does not read the undo as still standing');
   const f = signed(true); const y = wired(f);
   y.prompt('add a small cache to add in src/add.js'); y.agentEdit('src/add.js', (s) => s + CACHE1); y.stop();
   y.prompt('undo that'); git(f, 'checkout', '--', 'src/add.js'); y.stop();
@@ -884,6 +886,9 @@ test('claim: a turn that changes branch is not read as an undo, and what the oth
   x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
   x.prompt('undo that'); git(e, 'checkout', '--', 'src/add.js'); x.stop(); assert.equal(undos(e).length, 1);
   x.prompt('show me the feat branch'); git(e, 'checkout', '-q', 'feat'); assert.doesNotMatch(said(x.stop()), /put back/, 'a change of branch put nothing back');
+  assert.match(x.prompt('what is in src/add.js'), /in the file again now/, 'on that branch the lines are in the file'); assert.doesNotMatch(said(x.stop()), /put back/, 'and no later turn there is told for it');
+  x.prompt('back to the first branch'); git(e, 'checkout', '-q', em); x.stop();
+  { const p = x.prompt('make src/add.js faster'); assert.match(p, /undone here at your request/); assert.doesNotMatch(p, /in the file again/, 'back on the first branch the undo stands as it did'); }
 });
 test('claim: the redo line is not lost when the turn is sent back first, and a turn cut short is told at the next end of turn', () => {
   const d = signed(false); const w = wired(d);

@@ -24,7 +24,9 @@
 // THE REDO LINE (0.2.0). An undo is kept with a mark for each line that was taken out (a hash; the first line was
 // always kept as text, nothing more is). When a later turn leaves at least three quarters of those lines, and two or
 // more, in the file again, redoJudge records it and the end of the turn tells the person. Told, never sent back: they may have
-// asked. Lines that are back when the person speaks were put back between turns, by them: recorded, and not told.
+// asked. Lines that are back when the person speaks were put back between turns, by them: noted for that turn, and not
+// told. The record (.sawbuck/redone.jsonl) holds only what the person was told; whether an undone change is "in the
+// file again" is read from the file each time, so it stops being said when the lines go again or the branch changes.
 // Deterministic. No model. Stores a diff summary, and the person's own prompt only where the repo is attached with --words.
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { join, relative, isAbsolute } from 'node:path';
@@ -146,9 +148,8 @@ export function undoMark(repo, session) {
       if (rec.atPrompt && typeof rec.atPrompt.hash === 'string') rec.seen = [...new Set([...(Array.isArray(rec.seen) ? rec.seen : []), rec.atPrompt.hash])].slice(-12);
       rec.atPrompt = picture(rec, readText(join(repo, rec.file)), now); delete rec.recordedFor; writeFileSync(p, JSON.stringify(rec));
     }
-    for (const b of backNow(repo)) appendFileSync(redonePath(repo), JSON.stringify({ at: now, id: b.id, file: b.e.file, undoneAt: b.e.at, back: b.back, of: b.of, first: b.first, quiet: true, session: sess }) + '\n');
     mkdirSync(join(repo, '.sawbuck', 'snap', sess), { recursive: true });
-    writeFileSync(turnPath(repo, sess), JSON.stringify({ at: now, ...whereGit(repo) }));
+    writeFileSync(turnPath(repo, sess), JSON.stringify({ at: now, ...whereGit(repo), back: backNow(repo).map((b) => b.id) }));
   } catch { /* the ledger never fails a prompt */ }
 }
 
@@ -194,15 +195,15 @@ const saidPath = (repo) => join(repo, '.sawbuck', 'redone.said');
 export function readRedone(repo) {
   try { return readFileSync(redonePath(repo), 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((e) => e && e.id); } catch { return []; }
 }
-// the undos, newest fifty, whose lines are in their file as it stands and that are not on record as put back: at least
+// the undos, newest fifty, whose lines are in their file as it stands: at least
 // three quarters of the marked lines, and two or more. (Half was the first rule. Held against 81 real runs it fired on
 // one that had not redone anything: four of seven lines that any code for the job holds, an import and a try/catch.
 // proof-bench/undo-words, 2026-11-17.) An undo with fewer than two marks is not watched (one line can come back by
 // chance), and one an older version recorded has none.
 function backNow(repo) {
-  const done = new Set(readRedone(repo).map((r) => r.id)); const out = []; const texts = new Map(); const seen = new Set();
+  const out = []; const texts = new Map(); const seen = new Set();
   for (const e of readUndone(repo).reverse().slice(0, 50)) {
-    if (!Array.isArray(e.lines) || e.lines.length < 2 || done.has(idOf(e))) continue;
+    if (!Array.isArray(e.lines) || e.lines.length < 2) continue;
     const same = `${e.file}\n${e.lines.join()}`; if (seen.has(same)) continue; seen.add(same);   // the same change undone twice: the newest record speaks
     if (!texts.has(e.file)) { const t = readText(join(repo, e.file)); const firstOf = new Map(); for (const l of String(t || '').split('\n')) { const x = l.trim(); if (x) { const m = markOf(x); if (!firstOf.has(m)) firstOf.set(m, x); } } texts.set(e.file, firstOf); }
     const firstOf = texts.get(e.file); const back = e.lines.filter((m) => firstOf.has(m));
@@ -220,7 +221,9 @@ export function redoJudge(repo, session, { end = false } = {}) {
     if (!end && turn.ended) return out;   // an end of turn has looked already: what is back now, the person put back
     const now = new Date().toISOString();
     if (!setAside(repo, turn)) {
-      for (const b of backNow(repo)) { const entry = { at: now, id: b.id, file: b.e.file, undoneAt: b.e.at, back: b.back, of: b.of, first: b.first, turnAt: turn.at, session: sess }; appendFileSync(redonePath(repo), JSON.stringify(entry) + '\n'); out.push(entry); }
+      const had = new Set(Array.isArray(turn.back) ? turn.back : []); const told = new Set(readRedone(repo).map((r) => r.id));
+      for (const b of backNow(repo)) { if (had.has(b.id) || told.has(b.id)) continue;   // there when the person spoke (their doing), or told already
+        const entry = { at: now, id: b.id, file: b.e.file, undoneAt: b.e.at, back: b.back, of: b.of, first: b.first, turnAt: turn.at, session: sess }; appendFileSync(redonePath(repo), JSON.stringify(entry) + '\n'); out.push(entry); }
     }
     if (end && !turn.ended) writeFileSync(turnPath(repo, sess), JSON.stringify({ ...turn, ended: now }));
   } catch { /* the ledger never fails a turn */ }
@@ -229,7 +232,7 @@ export function redoJudge(repo, session, { end = false } = {}) {
 // what the person has not been told yet, and the line that tells it. redoTold is called when the line is written out.
 export function redoDue(repo) {
   let said = ''; try { said = readFileSync(saidPath(repo), 'utf8').trim(); } catch {}
-  return readRedone(repo).filter((r) => !r.quiet && String(r.at) > said);
+  return readRedone(repo).filter((r) => String(r.at) > said);
 }
 export function redoTold(repo) { try { writeFileSync(saidPath(repo), new Date().toISOString() + '\n'); } catch {} }
 export function redoLine(repo, session, due) {
@@ -274,12 +277,12 @@ export function undoCursor(body, repo) {
 // the lines the prompt hook and `context` add for the paths in hand: newest first, one per file and change, three at most
 export function undoneLines(repo, changed) {
   const touched = new Set(changed || []);
-  const seen = new Set(); const out = []; const back = new Map(readRedone(repo).map((r) => [r.id, r]));
+  const seen = new Set(); const out = []; const back = new Set(backNow(repo).map((b) => b.id));
   for (const e of readUndone(repo).reverse()) {
     if (!touched.has(e.file)) continue;
     const k = `${e.file}\n${e.first}`; if (seen.has(k)) continue; seen.add(k);
-    const r = back.get(idOf(e));   // it is in the file again: say both, so nobody reads the undo as still standing
-    out.push(`    - ${e.kind === 'part' ? 'partly undone' : 'undone'} here at your request (${localDay(e.at)})${r ? `, put back (${localDay(r.at)})` : ''}: ${e.added} line${e.added === 1 ? '' : 's'} starting \`${e.first}\` in ${e.file}${e.why ? `. Your words: "${e.why}"` : ''}`);
+    const again = back.has(idOf(e));   // read from the file as it stands: say both, so nobody reads the undo as still standing
+    out.push(`    - ${e.kind === 'part' ? 'partly undone' : 'undone'} here at your request (${localDay(e.at)})${again ? ', and in the file again now' : ''}: ${e.added} line${e.added === 1 ? '' : 's'} starting \`${e.first}\` in ${e.file}${e.why ? `. Your words: "${e.why}"` : ''}`);
     if (out.length === 3) break;
   }
   return out;
