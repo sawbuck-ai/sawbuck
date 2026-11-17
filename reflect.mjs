@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { record as memRecord } from './memory.mjs';
+import { keptOnTree } from './allowed.mjs';
 import { PW } from './bins.mjs';
 
 // Logbook is reached only through memory.mjs, never resolved or shelled directly here.
@@ -84,6 +85,23 @@ delete rec.settled;   // this run's own answer about a standing verdict (below):
 let baseSha = ''; try { baseSha = git('rev-parse', `${base}^{commit}`); } catch {}
 const standing = !!(rec.latest && rec.latest.kind === 'gamed' && rec.latest.base && rec.latest.base === baseSha);
 const writeRec = () => { try { mkdirSync(recDir, { recursive: true }); writeFileSync(recPath, JSON.stringify(rec, null, 2) + '\n'); } catch {} };
+// A person's reason for this very change, given on the working tree before it was committed (allowed.mjs): the commit
+// is theirs to have let through. Not where a protected path is in the change (the wall's), and not over a verdict that
+// already stands. What needs a reason here is the gamed win, or with nothing gamed the count that got worse.
+if (!standing && !protectedHere && (gamedHere || (verdict === 'fail' && failedGuards.length))) {
+  const needs = gamedHere ? metrics.filter((m) => m.gamed === true).map((m) => m.name) : failedGuards;
+  let headSha = ''; try { headSha = git('rev-parse', `${head}^{commit}`); } catch {}
+  let touched = []; try { touched = git('diff', '--name-only', '-z', base, head).split('\0').filter(Boolean); } catch {}
+  const posts = goalposts ? goalposts.filter((f) => touched.includes(f)) : touched.filter((f) => /(\.test\.|\.spec\.|__tests__|(^|\/)tests?\/|\.config\.|golden|fixture|snapshot)/i.test(f));
+  const kept = headSha ? keptOnTree(repo, { base: baseSha, head: headSha, goalposts: posts, needs }) : null;
+  if (kept) {
+    const at = new Date().toISOString(); const why = `a person let this through before it was committed: ${kept.reason}`;
+    rec.latest = { sha: headSha.slice(0, 8), kind: 'allowed', base: baseSha || null, file: posts[0] || '', reason: why.slice(0, 200), at, by: by || null, allowed: { reason: kept.reason, at: kept.at } };
+    writeRec(); appendActivity(verdict, report, false, { kind: 'allowed', file: posts[0] || '', reason: why });
+    process.stderr.write(`sawbuck: let through by a person's reason, given before the commit (${posts[0] || 'this change'})\n`);
+    process.exit(0);
+  }
+}
 appendActivity(verdict, report, standing);   // the event feed logs EVERY measurable check, so you can watch it work (verified too, not only catches)
 if (standing) {
   let headSha = ''; try { headSha = git('rev-parse', head); } catch {}
@@ -186,10 +204,12 @@ function protectedHit(rep) {
 // --- the activity feed: one line per check so you can watch it work, verified
 // included, not only catches. Capped, lives in the git-excluded .sawbuck/, opt
 // out with SAWBUCK_NO_LOG=1. `sawbuck status --log` reads it.
-function appendActivity(v, rep, standing = false) {
+function appendActivity(v, rep, standing = false, as = null) {
   if (process.env.SAWBUCK_NO_LOG) return;
   const map = { pass: 'verified', gamed: 'gamed', fail: 'regression', inconclusive: 'inconclusive' };
-  const k = gamedHere ? 'gamed' : map[v];   // no hook passes --allow and a trailer clears nothing, so there is no "allowed" to log here
+  // no hook passes --allow and a trailer clears nothing; "allowed" is logged only for a reason a person gave on the
+  // working tree before the commit (`as`, from the caller)
+  const k = as ? as.kind : gamedHere ? 'gamed' : map[v];
   if (!k) return;
   let sha = '', file = '';
   try { sha = git('rev-parse', head).slice(0, 8); } catch {}
@@ -202,7 +222,7 @@ function appendActivity(v, rep, standing = false) {
     : k === 'verified' ? 'the check passed'
     : 'could not certify a pass';
   // `standing`: this check re-proved the span of a gamed verdict that is still up, not a new catch
-  const ev = { at: new Date().toISOString(), kind: k, sha, file, reason: String(why).slice(0, 160), by: by || null, ...(standing ? { standing: true } : {}) };
+  const ev = { at: new Date().toISOString(), kind: k, sha, file: (as && as.file) || file, reason: String((as && as.reason) || why).slice(0, 160), by: by || null, ...(standing ? { standing: true } : {}) };
   const dir = join(repo, '.sawbuck');
   const p = join(dir, 'activity.jsonl');
   try {

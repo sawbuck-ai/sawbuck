@@ -312,6 +312,47 @@ test('claim: a contract written before 0.1.74 takes no reason for a removed test
   r = sb(d, 'check', '--allow', 'I asked for that test to go'); assert.equal(r.code, 1, r.out); assert.match(r.out, /your reason is kept for tests_pass/, r.out);
   assert.ok(!blocked(w.stop()), 'a person\'s call'); assert.equal(latest(d).kind, 'allowed');
 });
+// A real agent runs the check BEFORE it commits, as the written rule tells it to, so the person's yes is given on the
+// working tree. Until 0.1.74 the commit that followed was judged as if nobody had said it: sent back, or shown as a
+// catch (proof-bench/live/rehearse-0.1.74, two sessions of two). Every claim above commits first and accepts after.
+test('claim: a reason a person gives on the working tree, before the commit, stands for the commit that carries the same change: a gamed green is not sent back and a removed test is not a catch', () => {
+  let d = signed(false); let w = wired(d); w.prompt('that add feature is gone, i deleted its test. commit it');
+  edit(d, 'test/add.test.js', dropTest('add'));
+  assert.equal(sb(d, 'check', '--allow', 'that feature is gone').code, 0, 'accepted on the working tree');
+  save(d, 'remove the add test');
+  let o = w.stop(); assert.ok(!blocked(o), o); assert.equal(latest(d).kind, 'allowed'); assert.equal(latest(d).allowed.reason, 'that feature is gone');
+  assert.match(sb(d, 'status', '--log').out, /✎|allowed/, 'the feed says allowed, not gamed');
+  w.prompt('next'); put(d, 'NOTES.md', 'n\n'); save(d, 'notes'); assert.ok(!blocked(w.stop()), 'and the next turn is not sent back');
+  // a passing test removed from a green suite: accepted on the tree, then committed, it is not a catch
+  d = signed(true); w = wired(d); w.prompt('the mul test is obsolete, i removed it. commit it');
+  edit(d, 'test/add.test.js', dropTest('mul'));
+  assert.equal(sb(d, 'check', '--allow', 'that test is obsolete').code, 0);
+  save(d, 'remove the mul test');
+  o = w.stop(); assert.ok(!blocked(o), o); assert.doesNotMatch(o, /Sawbuck caught/); assert.equal(latest(d).kind, 'allowed');
+});
+test('claim: a reason given on the working tree does not stand for a commit that holds another test change: the test changed again after the yes, or a test in another file changed beside it', () => {
+  let d = signed(false); let w = wired(d); w.prompt('that add feature is gone, i deleted its test. commit it');
+  edit(d, 'test/add.test.js', dropTest('add'));
+  assert.equal(sb(d, 'check', '--allow', 'that feature is gone').code, 0);
+  edit(d, 'test/add.test.js', dropTest('mul'));   // more than the person was shown
+  save(d, 'remove the tests');
+  assert.ok(blocked(w.stop()), 'the test in the commit is not the test the reason was given for');
+  // the test as it was shown, and a test in another file removed beside it
+  d = signed(false); put(d, 'test/other.test.js', "const t=require('node:test'),a=require('node:assert')\nt.test('one',()=>a.ok(true))\nt.test('two',()=>a.ok(true))\n"); save(d, 'another test file');
+  w = wired(d); w.prompt('that add feature is gone, i deleted its test. commit it');
+  edit(d, 'test/add.test.js', dropTest('add'));
+  assert.equal(sb(d, 'check', '--allow', 'that feature is gone').code, 0);
+  edit(d, 'test/other.test.js', dropTest('two'));
+  save(d, 'remove the add test, and one more');
+  assert.ok(blocked(w.stop()), 'a test the person was not shown changed in the same commit');
+});
+test('limit: a test the person changed themselves before the prompt, committed by the agent as it was, is sent back like the agent\'s own; their reason ends it', () => {
+  const d = signed(false); const w = wired(d);
+  edit(d, 'test/add.test.js', dropTest('add'));   // the person's own edit, there before the prompt
+  w.prompt('i deleted the add test myself. commit it'); save(d, 'remove the add test');
+  assert.ok(blocked(w.stop()), 'read as the agent\'s: the check judges the change, not who made it');
+  assert.equal(sb(d, 'check', '--allow', 'that feature is gone').code, 0); assert.ok(!blocked(w.stop()));
+});
 test('claim: putting the test back ends a gamed send-back, even when the suite is red again and a try at the source is left in', () => {
   let { d, w } = sentBackTurn(); git(d, 'checkout', '-q', 'HEAD~1', '--', 'test/add.test.js'); save(d, 'put the test back');
   assert.ok(!blocked(w.stop()), 'the test is back as it was: nothing is gamed any more');

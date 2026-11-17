@@ -66,13 +66,34 @@ export function recordAllowed(repo, rep, { dirty = false, base = 'HEAD~1', head 
     const files = [...new Set(things.flatMap((t) => t.files))].slice(0, 20);
     // `base` (0.1.73 on): where the span the reason was given for begins, so a reason for the last commit is not
     // read as one for a longer span a verdict stands on
-    const entry = { at: new Date().toISOString(), sha: dirty ? '' : g(repo, 'rev-parse', head).slice(0, 12), ...(dirty ? {} : { base: g(repo, 'rev-parse', `${base}^{commit}`) }), reason, cleared, what: [...new Set(things.map((t) => t.what))], files };
+    // A reason given on the working tree (0.1.74 on) says where the tree stood (`base`) and how each goalpost it was
+    // shown read there (`asWas`), so the commit that carries the same change can be known for it (keptOnTree, below).
+    const seen = dirty ? [...new Set([...files, ...changed.filter((f) => TESTISH.test(f))])].slice(0, 50) : [];
+    const asWas = Object.fromEntries(seen.map((f) => [f, existsSync(join(repo, f)) ? (g(repo, 'hash-object', '--', f) || 'unreadable') : 'deleted']));
+    const entry = { at: new Date().toISOString(), sha: dirty ? '' : g(repo, 'rev-parse', head).slice(0, 12), ...(dirty ? { base: g(repo, 'rev-parse', 'HEAD^{commit}'), asWas } : { base: g(repo, 'rev-parse', `${base}^{commit}`) }), reason, cleared, what: [...new Set(things.map((t) => t.what))], files };
     const same = (e) => e.sha === entry.sha && e.reason === reason && JSON.stringify(e.cleared) === JSON.stringify(cleared) && JSON.stringify(e.files) === JSON.stringify(files);
     const had = readAllowed(repo); const already = had.find(same);
     if (already) return already;
     if (had.length >= MAX) writeFileSync(allowedPath(repo), had.slice(-(MAX - 1)).map((e) => JSON.stringify(e)).join('\n') + '\n');
     appendFileSync(allowedPath(repo), JSON.stringify(entry) + '\n');
     return entry;
+  } catch { return null; }
+}
+
+// A reason a person gave on their working tree, before the change was committed, stands for the commit that carries
+// the same change. A real agent runs the check before it commits, as the written rule tells it to, so that is where
+// the person's yes is given; until 0.1.74 the commit that followed was judged as if nobody had said it (two of two
+// sessions in proof-bench/live/rehearse-0.1.74). It stands only when all of this is so: the tree stood on the commit
+// the span begins at; the reason let through everything that now needs one (`needs`, by name); and every goalpost
+// the commit moved was one the person was shown, and reads in the commit as it read in their tree. Anything else,
+// a test changed again after the yes, another test or a config touched besides, is not what they accepted.
+export function keptOnTree(repo, { base = '', head = 'HEAD', goalposts = [], needs = [] } = {}) {
+  try {
+    if (!base || !goalposts.length || !needs.length) return null;
+    const at = (f) => g(repo, 'rev-parse', '--verify', '-q', `${head}:${f}`) || 'deleted';
+    return readAllowed(repo).reverse().find((e) => e && e.sha === '' && e.base === base && e.asWas && typeof e.asWas === 'object'
+      && needs.every((l) => (e.cleared || []).includes(l))
+      && goalposts.every((f) => typeof e.asWas[f] === 'string' && e.asWas[f] !== 'unreadable' && e.asWas[f] === at(f))) || null;
   } catch { return null; }
 }
 
