@@ -4,7 +4,7 @@
 // real ~/.sawbuck/registry.json, and one run of the suite left about 330 folders in /tmp.
 import { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,7 +13,10 @@ import { join } from 'node:path';
 const account = (() => { try { return userInfo().homedir; } catch { return ''; } })();
 const wasClean = [...new Set([process.env.HOME, account])].filter((h) => h && !existsSync(join(h, '.sawbuck')));
 
-export const ROOT = mkdtempSync(join(tmpdir(), 'sawbuck-test-'));
+// By its real path: git names a repo that way, Claude Code feeds a hook that way (proof-bench/live/probe-linked-cwd), and
+// a Mac's temp folder is reached through a symlink. Named the linked way, 15 tests failed on the suite's first run on a
+// Mac (2026-11-16). The two claims about a symlink make their own.
+export const ROOT = realpathSync(mkdtempSync(join(tmpdir(), 'sawbuck-test-')));
 export const TMP_HOME = join(ROOT, 'home');
 mkdirSync(TMP_HOME);
 process.env.TMPDIR = ROOT;     // tmpdir() here and in every child this file starts

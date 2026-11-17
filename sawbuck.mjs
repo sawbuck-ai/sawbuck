@@ -319,7 +319,11 @@ switch (cmd) {
     // --allow as a person should type it here: one thing needs no name; with more than one, the reason names each one
     // it covers, so a reason written about one change cannot wave through another
     const bare = (l) => l.replace(/^mandate:/, '');
-    const allowNames = (rep.allowable || []).length > 1 ? rep.allowable.map(bare).join(', ') + ': ' : '';
+    // The checks on the tests themselves are one thing to a reason (the engine's rule since 0.8.13): removing a test
+    // moves the green, the count of tests and the count of assertions in one act.
+    const TEST_KIND = new Set(['tests_pass', 'test_count', 'skipped_tests', 'assertions']);
+    const kinds = new Set((rep.allowable || []).map((l) => (TEST_KIND.has(l) ? 'the tests' : l))).size;
+    const allowNames = kinds > 1 ? rep.allowable.map(bare).join(', ') + ': ' : '';
     const allowHow = `--allow "${allowNames}<reason>"`;
     // what a reason given here did not let through, and what each name is, so the line to copy explains itself
     const left = rep.allowed ? (rep.allowable || []).filter((l) => !(rep.allowed.cleared || []).includes(l)) : [];
@@ -363,7 +367,7 @@ switch (cmd) {
     if (standingHint) out(standingHint);
     if (rep.verdict !== 'inconclusive' && setupFailure(rep)) out(`⚠ the setup command failed ${setupFailure(rep)}. The check still ran, so see whether "setup" in promptwheel.config.json is still right.`);
     if ((rep.metrics || []).some((x) => x.heldByTestEdit)) out('⚠ your tests changed too, and the old tests fail on this source. Fine for an intended change. Otherwise check the tests were not weakened: a green that stays green is not proved.');
-    for (const x of rep.explained || []) out(`sawbuck: ${x.noted ? 'note' : 'needs a look'}: ${x.what}${x.items ? ': ' + x.items.join(', ') : ''}${!x.noted && x.allowable ? `. If you meant this: ${allowHow}, or on a pull request someone who did not open it comments sawbuck-allow: ${allowNames}<reason>` : ''}`);
+    for (const x of rep.explained || []) out(`sawbuck: ${x.noted ? 'note' : 'needs a look'}: ${x.what}${x.items ? ': ' + x.items.join(', ') : ''}${!x.noted && x.allowable ? `. If you meant this: ${allowHow}, or on a pull request someone who did not open it comments sawbuck-allow: ${allowNames}<reason>` : ''}${!x.noted && !x.allowable && TEST_KIND.has(x.metric) && x.metric !== 'tests_pass' ? `. This contract takes no reason for it: add "allowable": "flag" to "${x.metric}" in promptwheel.config.json (a contract written from 0.1.74 on has it), or undo the change` : ''}`);
     if (rep.gate && rep.gate.changed) out(`⚠ the gate definition changed in this change (fingerprint ${rep.gate.fingerprint.base} -> ${rep.gate.fingerprint.head}): a metric, guard, evaluatorPath or mandate was added, removed or edited.`);
     process.exit(code);
   }

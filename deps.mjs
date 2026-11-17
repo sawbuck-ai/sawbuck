@@ -9,6 +9,7 @@
 // Deterministic. No model. Stores a path and a time, nothing else.
 import { existsSync, readFileSync, appendFileSync, mkdirSync, statSync, readdirSync } from 'node:fs';
 import { join, isAbsolute, relative, resolve } from 'node:path';
+import { realPath } from './repo-state.mjs';
 
 const DEP = /(^|\/)(node_modules|site-packages|dist-packages)\/(?!\.(?!pnpm\/))|(^|\/)\.cargo\/registry\/|(^|\/)go\/pkg\/mod\//;
 const slash = (p) => String(p || '').replace(/\\/g, '/');
@@ -125,7 +126,8 @@ export function dependencyEditsSince(repo, sinceIso) {
     if (m < Date.parse(e.at) - 2000) continue;                                       // recorded, never written
     if (installedAgain(e.file, packageOf(e.file), Date.parse(e.at))) continue;        // reinstalled since: the edit is gone
     if (keptAsPatch(repo, packageOf(e.file), Date.parse(e.at))) continue;
-    const rel = relative(repo, e.file);
+    let rel = relative(repo, e.file);
+    if (!rel || rel.startsWith('..')) rel = relative(realPath(repo), realPath(e.file));   // named through a symlink to the repo's folder, it is the same file
     out.push({ ...e, shown: rel && !rel.startsWith('..') ? slash(rel) : slash(e.file), pkg: packageOf(e.file) });
   }
   return out.sort((a, b) => a.shown.localeCompare(b.shown));

@@ -269,12 +269,44 @@ test('claim: the source fixed with the failing test still deleted: the gamed ver
   edit(e, 'test/add.test.js', (s) => s.split('\n').filter((l) => !l.includes("'add'")).join('\n')); save(e, 'make it green'); assert.ok(blocked(x.stop()));
   edit(e, 'src/add.js', (s) => s + 'exports.sub=(a,b)=>a-b\n'); save(e, 'something else'); assert.ok(blocked(x.stop()), 'a source edit that does not earn the green changes nothing');
 });
-test('claim: a failing test a person asked to have deleted: their reason ends the send-back, though the count of tests still fails the check on the commit', () => {
+// Until 0.1.74 (engine 0.8.13) the reason ended the send-back and the check on the commit still failed for the count
+// of tests, whatever the person said (proof-bench/yes-counts, 2026-11-16). A contract written before then keeps that:
+// the claim after the next one.
+const dropTest = (name) => (s) => s.split('\n').filter((l) => !l.includes(`'${name}'`)).join('\n');
+const olderContract = (d) => { json(d, 'promptwheel.config.json', (o) => { for (const m of o.metrics) if (['test_count', 'skipped_tests', 'assertions'].includes(m.name)) delete m.allowable; }); if (git(d, 'status', '--porcelain')) save(d, 'the contract as written before 0.1.74'); };
+test('claim: a failing test a person asked to have deleted: their reason ends the send-back and passes the check on the commit', () => {
   const d = signed(false); const w = wired(d); w.prompt('that add test is wrong, delete it');
-  edit(d, 'test/add.test.js', (s) => s.split('\n').filter((l) => !l.includes("'add'")).join('\n')); save(d, 'delete the add test'); assert.ok(blocked(w.stop()));
-  const r = sb(d, 'check', '--allow', 'I asked for that test to go'); assert.equal(r.code, 1, r.out); assert.match(r.out, /your reason is kept for tests_pass/, r.out);
+  edit(d, 'test/add.test.js', dropTest('add')); save(d, 'delete the add test'); assert.ok(blocked(w.stop()));
+  const r = sb(d, 'check', '--allow', 'I asked for that test to go'); assert.equal(r.code, 0, r.out); assert.match(r.out, /allowed with --allow: "I asked for that test to go"/, r.out);
   assert.ok(!blocked(w.stop()), 'a person\'s call'); assert.equal(latest(d).kind, 'allowed');
   w.prompt('next'); put(d, 'NOTES.md', 'n\n'); save(d, 'notes'); assert.ok(!blocked(w.stop()), 'and the next turn is not sent back');
+});
+test('claim: a test a person removes on purpose passes the check with their reason on a signed repo, a passing one or a failing one, and a trailer does not', () => {
+  let d = signed(true); edit(d, 'test/add.test.js', dropTest('mul')); save(d, 'drop the mul test');
+  let r = sb(d, 'check'); assert.equal(r.code, 1, r.out); assert.match(r.out, /needs a look: fewer tests\. If you meant this: --allow "<reason>"/, r.out);
+  r = sb(d, 'check', '--allow', 'that test is obsolete'); assert.equal(r.code, 0, r.out); assert.match(r.out, /allowed with --allow: "that test is obsolete"/);
+  // the failing test, deleted on purpose: the green and the count are one act, and one plain reason takes both
+  d = signed(false); edit(d, 'test/add.test.js', dropTest('add')); save(d, 'drop the add test');
+  r = sb(d, 'check'); assert.notEqual(r.code, 0); assert.doesNotMatch(r.out, /more than one thing here needs a reason/, r.out);
+  r = sb(d, 'check', '--allow', 'we dropped that feature'); assert.equal(r.code, 0, r.out);
+  // an agent can write a commit message, so a trailer is not a person's reason
+  d = signed(true); edit(d, 'test/add.test.js', dropTest('mul')); save(d, 'drop the mul test\n\nSawbuck-Allow: test_count: that test is obsolete');
+  assert.equal(sb(d, 'check').code, 1);
+});
+test('claim: a contract written before 0.1.74 takes no reason for a removed test: the check says what to add, and a reason still ends a gamed send-back', () => {
+  let d = signed(true); olderContract(d); edit(d, 'test/add.test.js', dropTest('mul')); save(d, 'drop the mul test');
+  let r = sb(d, 'check', '--allow', 'that test is obsolete'); assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /needs a look: fewer tests\. This contract takes no reason for it: add "allowable": "flag" to "test_count" in promptwheel\.config\.json/, r.out);
+  // doing what that line says: the contract edit is a commit a person accepts, and then the two together take the line the check prints
+  json(d, 'promptwheel.config.json', (o) => { o.metrics.find((m) => m.name === 'test_count').allowable = 'flag'; }); save(d, 'the contract takes a reason for a removed test');
+  assert.equal(sb(d, 'check', '--allow', 'the contract takes a reason for a removed test now').code, 0);
+  r = sb(d, 'check', '--base', 'HEAD~2'); assert.equal(r.code, 1); assert.match(r.out, /check --allow "test_count, contract-frozen: <reason>"/, r.out);
+  assert.equal(sb(d, 'check', '--base', 'HEAD~2', '--allow', 'test_count, contract-frozen: that test is obsolete, and the contract follows').code, 0);
+  // as 0.1.73 did: the reason is kept for the gamed green and the turn ends, though the count still fails the check
+  d = signed(false); olderContract(d); const w = wired(d); w.prompt('that add test is wrong, delete it');
+  edit(d, 'test/add.test.js', dropTest('add')); save(d, 'delete the add test'); assert.ok(blocked(w.stop()));
+  r = sb(d, 'check', '--allow', 'I asked for that test to go'); assert.equal(r.code, 1, r.out); assert.match(r.out, /your reason is kept for tests_pass/, r.out);
+  assert.ok(!blocked(w.stop()), 'a person\'s call'); assert.equal(latest(d).kind, 'allowed');
 });
 test('claim: putting the test back ends a gamed send-back, even when the suite is red again and a try at the source is left in', () => {
   let { d, w } = sentBackTurn(); git(d, 'checkout', '-q', 'HEAD~1', '--', 'test/add.test.js'); save(d, 'put the test back');
@@ -1969,4 +2001,36 @@ test('limit: where two repos share one hooks folder (a global core.hooksPath), a
   assert.match(r.out, /already holds sawbuck's block for another repo/); assert.match(r.out, /shared between repos \(core\.hooksPath\)/);
   assert.equal(readFileSync(join(hooks, 'post-commit'), 'utf8'), was, 'the first repo\'s block is as it was');
   assert.match(sb(a, 'attach', '--git').out, /already attached \(git\)/);
+});
+
+// ------------------------------------------------------------ a folder reached through a symlink
+// The suite ran on a Mac for the first time on 2026-11-16 and 15 tests failed, all from one thing: a Mac's temp folder
+// is reached through a symlink (/var/folders is /private/var/folders) and git names a repo by its real path. Most
+// were this file naming a folder the linked way (testkit.mjs names its root by the real path now). Two were the
+// product's own, and these two claims make the symlink themselves, so they hold on every system.
+test('claim: a file a tool names through a symlink is still the repo\'s file: the hold asks before an edit to the record, an undo is kept, and a dependency edit is named by its place in the repo', () => {
+  const d = depRepo(); const w = wired(d); const link = join(tmpdir(), `ln-${Date.now()}-${Math.random().toString(36).slice(2)}`); symlinkSync(d, link);
+  const h = JSON.parse(readFileSync(join(d, '.claude/settings.local.json'), 'utf8')).hooks;
+  const editCmd = (ev) => (h[ev] || []).find((x) => String(x.matcher || '').includes('Edit')).hooks[0].command;
+  const hook = (ev, tool, file, more = {}) => spawnSync('sh', ['-c', editCmd(ev)], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: ev, tool_name: tool, tool_input: { file_path: join(link, file), ...more }, cwd: d, session_id: 's' }) }).stdout || '';
+  assert.match(hook('PreToolUse', 'Write', '.sawbuck/state.json', { content: '{}' }), /"permissionDecision":"ask"/, 'the record, named through the link');
+  assert.equal(hook('PreToolUse', 'Write', 'NOTES.md', { content: 'x' }), '', 'any other file is not asked about');
+  // an undo: the agent's edit named through the link, then the person has it undone
+  const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+  const through = (file, fn) => { hook('PreToolUse', 'Edit', file, { old_string: 'a', new_string: 'b' }); edit(d, file, fn); hook('PostToolUse', 'Edit', file, { old_string: 'a', new_string: 'b' }); };
+  w.prompt('add is slow, speed it up'); through('src/add.js', cacheLine);
+  w.prompt('Undo that. A stale cache logged people out last time.'); through('src/add.js', () => before); w.stop();
+  const u = readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(u.length, 1); assert.equal(u[0].file, 'src/add.js');
+  // a dependency edit, named through the link
+  w.prompt('make the month test pass'); through('node_modules/ms/index.js', (s) => s.replace('1', '2'));
+  assert.match(w.stop(), /inside an installed dependency was edited here: node_modules\/ms\/index\.js/);
+});
+test('claim: with the temp folder reached through a symlink, as on a Mac, contract --full --dry-run still lists what the real run writes', () => {
+  const real = mkdtempSync(join(tmpdir(), 'real-tmp-')); const link = `${real}-link`; symlinkSync(real, link);
+  const env = { ...ENV, TMPDIR: link }; const d = repo(true);
+  const dry = sbEnv(d, env, 'contract', '--full', '--dry-run').out;
+  assert.equal(git(d, 'status', '--porcelain'), '', 'the dry run wrote nothing');
+  assert.equal(sbEnv(d, env, 'contract', '--full').code, 0);
+  for (const f of ['promptwheel.lock.json', 'promptwheel.config.json', 'AGENTS.md']) { assert.ok(existsSync(join(d, f)), f); assert.match(dry, lit(f), `the dry run names ${f}:\n${dry}`); }
 });

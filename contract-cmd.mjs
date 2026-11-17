@@ -7,7 +7,7 @@ import './pipe.mjs';
 import { ensureExcluded } from './exclude.mjs';
 import { writeAgentBlock } from './agent-block.mjs';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, cpSync, mkdirSync, readdirSync, statSync, symlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, cpSync, mkdirSync, readdirSync, statSync, symlinkSync, realpathSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -74,7 +74,9 @@ const addByName = (files, root) => (templateOss(root)
 const run = (args, cwd, stdio = ['ignore', 'pipe', 'pipe']) => execFileSync(process.execPath, args, { cwd, encoding: 'utf8', stdio });
 
 // the preset as the engine writes it, in a scratch repo, so the contract and the engine cannot drift apart
-const scratch = mkdtempSync(join(tmpdir(), 'sawbuck-contract-'));
+// realpathSync: a Mac's temp folder is reached through a symlink, and a script started by a path through one does not
+// know itself as the main script (the engine's lock.mjs then writes nothing, and the dry run left the lock off its list)
+const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'sawbuck-contract-')));
 try {
   execFileSync('git', ['init', '-q'], { cwd: scratch, stdio: 'ignore' });
   writeFileSync(join(scratch, 'package.json'), '{"name":"scratch"}\n');
@@ -90,7 +92,7 @@ try {
   if (dry) {
     // The preview is the real run, done in a throwaway copy of what signing reads, so the two cannot drift apart:
     // the files in the repo's top folder, an existing workflow, the scanners, the remote and the exclude file.
-    const shadow = mkdtempSync(join(tmpdir(), 'sawbuck-preview-'));
+    const shadow = realpathSync(mkdtempSync(join(tmpdir(), 'sawbuck-preview-')));
     try {
       // the preview's commit is Sawbuck's own, in a throwaway copy: it asks nothing of the person's gpg (commit.gpgsign,
       // where a key that wants a passphrase has no terminal to ask at) and runs none of their git hooks

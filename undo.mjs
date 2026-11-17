@@ -9,6 +9,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } fr
 import { join, relative, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { localDay } from './day.mjs';
+import { realPath } from './repo-state.mjs';
 
 export const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 export const EDIT_MATCHER = EDIT_TOOLS.join('|');
@@ -19,7 +20,13 @@ export function readUndone(repo) {
   try { return readFileSync(undonePath(repo), 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((e) => e && e.file); } catch { return []; }
 }
 
-const relFile = (repo, p) => { if (!p) return ''; const r = relative(repo, isAbsolute(p) ? p : join(repo, p)); return !r || r.startsWith('..') ? '' : r; };
+// As typed first. A path that reads as outside the repo is tried again by real paths: a tool may name a file through a
+// symlink to the repo's folder (on a Mac /tmp is one), and it is the same file.
+const relFile = (repo, p) => {
+  if (!p) return ''; const abs = isAbsolute(p) ? p : join(repo, p);
+  let r = relative(repo, abs); if (!r || r.startsWith('..')) r = relative(realPath(repo), realPath(abs));
+  return !r || r.startsWith('..') ? '' : r;
+};
 const readText = (p) => { try { return readFileSync(p, 'utf8'); } catch { return null; } };
 const state = (repo) => { try { return JSON.parse(readFileSync(join(repo, '.sawbuck', 'state.json'), 'utf8')); } catch { return {}; } };
 

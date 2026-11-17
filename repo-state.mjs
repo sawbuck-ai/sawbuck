@@ -1,10 +1,20 @@
 // One read of what Sawbuck has here, shared by the statusline and `sawbuck status`. Files only, no git and no model.
 // state: watching (hooks wired for this repo), ready (checkable, not wired), memory (history only), or empty.
-import { readFileSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync, existsSync, realpathSync } from 'node:fs';
+import { join, resolve, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 
 const WEEK = 7 * 864e5;
+// A path the way git names it: through the real folders, not through a symlink someone walked in by. On a Mac the temp
+// folder and /tmp are both reached through one, and a tool call may name a file either way. A file that does not exist
+// yet is resolved from the nearest folder that does. Found when the suite first ran on a Mac (2026-11-16).
+export function realPath(p) {
+  const asked = resolve(String(p || '')); let cur = asked; const tail = [];
+  for (;;) {
+    try { const real = realpathSync(cur); return tail.length ? join(real, ...tail) : real; }
+    catch { const up = dirname(cur); if (up === cur) return asked; tail.unshift(basename(cur)); cur = up; }
+  }
+}
 export const OURS = /sawbuck\.mjs|npx (?:--\S+ )*-y sawbuck@/;   // a hook of ours: the baked path, or the portable form --shared writes
 export const S_START = '# >>> sawbuck >>>';
 const text = (f) => { try { return readFileSync(f, 'utf8'); } catch { return ''; } };

@@ -7,6 +7,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { guardPath } from './guard.mjs';
+import { realPath } from './repo-state.mjs';
 
 export const ALLOW = /\b(sawbuck|promptwheel)(\.mjs)?\b[^|;&]*\s--allow\b/;
 // Sawbuck's own record (.sawbuck/) and the second copy its hooks keep (.git/sawbuck/) are what the end of a turn is
@@ -37,9 +38,13 @@ export function ownRecordEdit(hookJson, repo) {
   let h = {}; try { h = JSON.parse(hookJson || '{}'); } catch {}
   if (h.hook_event_name !== 'PreToolUse' || !h.tool_input || typeof h.tool_input !== 'object' || !repo) return null;
   const f = String(h.tool_input.file_path || h.tool_input.notebook_path || ''); if (!f) return null;
-  const abs = resolve(repo, f); const gp = guardPath(repo);
-  const under = (dir) => !!dir && (abs === dir || abs.startsWith(dir + sep));
-  return (under(join(resolve(repo), '.sawbuck')) || under(gp ? dirname(gp) : '')) ? askOwn() : null;
+  // as typed, and by real paths: a file named through a symlink (the repo's folder by another name, or a link that
+  // points into the record) is the same file
+  const gp = guardPath(repo);
+  const under = (abs, dir) => !!dir && (abs === dir || abs.startsWith(dir + sep));
+  const typed = resolve(repo, f), real = realPath(typed);
+  return (under(typed, join(resolve(repo), '.sawbuck')) || under(typed, gp ? dirname(gp) : '')
+    || under(real, realPath(join(resolve(repo), '.sawbuck'))) || under(real, gp ? realPath(dirname(gp)) : '')) ? askOwn() : null;
 }
 export const OUTWARD = [
   ['npm publish', /\bnpm\s+publish\b/], ['pnpm publish', /\bpnpm\s+publish\b/], ['yarn publish', /\byarn\s+(npm\s+)?publish\b/],
