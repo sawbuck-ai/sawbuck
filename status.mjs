@@ -44,6 +44,7 @@ const tally = { verified: 0, gamed: 0, regression: 0, inconclusive: 0, allowed: 
 for (const e of feed) if (e && tally[e.kind] != null) tally[e.kind]++;
 const seen = feed.length;
 const latest = results.latest || (feed.length ? feed[feed.length - 1] : null);
+const openNow = (Array.isArray(results.open) ? results.open : []).filter((o) => o && o.file && o.sha).slice(-5);
 const since = feed.length ? localDay(feed[0].at) : null;
 
 // --- 2) the armed state: what it can measure here (shared with the statusline) ---
@@ -70,7 +71,7 @@ if (asJson) {
     armed,
     git: isGit,
     config: hasConfig,
-    outcomes: { seen, caughtAllTime: catchesAllTime, gamedAllTime: results.gamed || 0, regressionsAllTime: results.regressions || 0, recent: tally, latest, since },
+    outcomes: { seen, caughtAllTime: catchesAllTime, gamedAllTime: results.gamed || 0, regressionsAllTime: results.regressions || 0, recent: tally, latest, since, open: openNow },
     steer,
     repeated: repeated.slice(0, 3).map((g) => ({ nudge: g.nudge, n: g.n })),
     debt: debt ? { total: debt.total, testSkips: debt.testSkips, undocumented: debt.undocumented, filesOnFragileCode: debt.filesOnFragileCode, top: (debt.files || []).slice(0, 5) } : null,
@@ -108,6 +109,12 @@ if (seen || catchesAllTime) {
     const when = localDay(latest.at);
     const why = String(latest.reason || '').replace(/^sawbuck:\s*/i, '').slice(0, 90);
     out.push(`     latest: ${ICON[k] || '·'} ${k}${latest.file ? ` · ${latest.file}` : ''}${why ? ` · ${why}` : ''}${when ? `  (${when})` : ''}`);
+  }
+  // what the hooks caught and nothing has settled yet (0.2.0): shown here for as long as it is open
+  for (const o of openNow) {
+    const from = String(o.base || '').slice(0, 12); const posts = (Array.isArray(o.goalposts) && o.goalposts.length ? o.goalposts : [o.file]).join(' ');
+    out.push(`     open: ${ICON.gamed} ${o.file} · the green came from changing the test (commit ${o.sha}${localDay(o.at) ? `, ${localDay(o.at)}` : ''})`);
+    out.push(`           fix the source, or put the test back: git checkout ${from} -- ${posts}, or accept it: ${cli(`check --base ${from} --allow "<why>"`)}`);
   }
 } else {
   out.push('');

@@ -14,7 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 import { mandateHits, hashOf, protectedAmong, lockState, gitNames } from './contract.mjs';
 import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
-import { readAllowed } from './allowed.mjs';
+import { readAllowed, keptOnTree } from './allowed.mjs';
 import { cli, olderSaid } from './copies.mjs';
 const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const by = flag('--by', '');   // attribution from the harness wiring: the Claude hook passes 'claude', the raw-git hook passes nothing
@@ -44,11 +44,10 @@ let st = { lastSha: '', turns: 0, shownTotal: 0 };
 let stateRead = false;
 try { if (existsSync(stPath)) { const s = JSON.parse(readFileSync(stPath, 'utf8')); if (s && typeof s === 'object' && !Array.isArray(s)) { st = s; stateRead = true; } } } catch {}
 
-// 1) new commit(s) since last turn → run the check on them. A gamed verdict stands until the span it
-// was measured over re-proves verified: while the latest record is gamed, the re-run keeps that
-// record's base, so a follow-up commit (an amend, an empty commit, unrelated work) cannot clear the
-// wall without the source fix the re-proof demands. Under user-level wiring the check runs only where
-// a contract exists (--no-auto): nobody's whole test suite runs three times in a repo they never set up.
+// 1) new commit(s) in this turn → run the check on all of the turn's commits together. A follow-up commit (an
+// amend, an empty commit, unrelated work) cannot clear a catch: it is judged with the commit it follows, from where
+// the turn began. Under user-level wiring the check runs only where a contract exists (--no-auto): nobody's whole
+// test suite runs three times in a repo they never set up.
 const head = git('rev-parse', 'HEAD');
 const readRec = () => { try { return JSON.parse(readFileSync(join(stDir, 'results.json'), 'utf8')); } catch { return null; } };
 const writeRec = (r) => { try { mkdirSync(stDir, { recursive: true }); writeFileSync(join(stDir, 'results.json'), JSON.stringify(r, null, 2) + '\n'); } catch {} };
@@ -91,44 +90,58 @@ if (own) {
   for (const k of OWN) { if (Object.prototype.hasOwnProperty.call(own, k)) st[k] = own[k]; else delete st[k]; }
   st.lastSha = (own.seen && hasCommit(own.seen)) ? own.seen : '';
 }
-// 2) a gamed verdict this hook sent back still stands in the guard. It comes down three ways only: the gamed commit left
-// this history, a person's reason for it is on record, or (below) the engine's own pass over the span in this run.
-let gs = (enforcing && guard.standing && guard.standing.sha && guard.standing.base) ? guard.standing : null;
-const dropStanding = () => { writeGuard(repo, { standing: null }); gs = null; };
-// the fields of a gamed record that decide how it comes down, kept in the second copy with it (0.1.73)
-const DECIDES = ['metrics', 'goalposts', 'goalpostsMore'];
-const decides = (o) => { const out = {}; for (const k of DECIDES) if (o && o[k] !== undefined) out[k] = o[k]; return out; };
-if (gs && !(inHead(gs.sha) && hasCommit(gs.base))) dropStanding();   // reset or rebased away, or its base pruned: nothing left to prove
-if (gs) {
-  const inRecord = !!(rec && rec.latest && rec.latest.kind === 'allowed' && rec.latest.allowed && rec.latest.allowed.reason && String(gs.sha).startsWith(String(rec.latest.sha || '-')));
-  // a kept reason counts when it was given for the span the verdict stands on: an entry says its base since 0.1.73,
-  // and one from before counts only where that span is a single commit (what a reason for "the last commit" covered)
-  const oneCommit = () => git('rev-parse', '--verify', '-q', `${gs.sha}^`) === gs.base;
-  const kept = readAllowed(repo).find((e) => e.sha && String(gs.sha).startsWith(e.sha) && (e.cleared || []).some((l) => !String(l).startsWith('mandate:')) && (e.base ? e.base === gs.base : oneCommit()));
-  if (inRecord || kept) {   // a person's call (`sawbuck check --allow`), not a proof
-    // the record says so too, or the block below would read the old verdict out of it
-    if (kept && rec && rec.latest && rec.latest.kind === 'gamed') { rec.latest = { ...rec.latest, kind: 'allowed', allowed: { reason: kept.reason, at: kept.at } }; writeRec(rec); }
-    dropStanding();
-  }
-}
-// the record no longer says what this hook concluded (rewritten, or deleted): put it back from the second copy. From
-// there the checks below do what they always do: the same commit is sent back again, and a commit on top is proved over
-// the same span, so nothing but the source fix takes it down.
-if (gs && !(rec && rec.latest && rec.latest.kind === 'gamed')) {
-  rec = { regressions: 0, gamed: 0, ...(rec && typeof rec === 'object' ? rec : {}) };
-  rec.latest = { sha: String(gs.sha).slice(0, 8), kind: 'gamed', base: gs.base, file: gs.file || '', reason: gs.reason || 'a win that came from editing the test, not the source', at: gs.at || new Date().toISOString(), by: gs.by || null, ...decides(gs) };
-  if (!rec.gamed) rec.gamed = 1;
+// 2) WHAT IS STILL OPEN (0.2.0). A gamed win this hook caught that nothing has settled. Kept as a short list in the
+// second copy and never read from the record folder. NO VERDICT IS CARRIED FROM ONE TURN TO THE NEXT: a catch is sent
+// back only in the turn that made it (`mine`, below), and after that turn the person is told about it for a few turns
+// (enforce.remindTurns, 5) and nothing is sent back for it. Until this version one gamed verdict "stood" over every
+// later turn until its span re-proved, each rule for how it came down was a place to get that wrong, and a wrong one
+// sent every later turn back; on 2026-11-16 six of seven fixes were to those rules. The worst a wrong rule can do
+// now is three send-backs in one turn.
+// An item leaves the list three ways: its commit left this history; a person's reason is on record for it; or the
+// test is back as it was (every goalpost it moved reads at HEAD as it did where the catch began).
+const turnOpenNow = stop && !!(own && own.turnOpen);   // a prompt began this turn (the prompt hook says so in the second copy)
+// `live`: the catch this hook is in the middle of sending back. Set when it is caught, taken off when the turn ends.
+const KEPT = ['sha', 'base', 'file', 'reason', 'at', 'by', 'metrics', 'goalposts', 'goalpostsMore', 'also', 'live', 'told', 'toldTurn'];
+const asItem = (o) => { const out = {}; for (const k of KEPT) if (o && o[k] !== undefined && o[k] !== null) out[k] = o[k]; return out; };
+let open = (Array.isArray(G.open) ? G.open : []).filter((o) => o && typeof o === 'object' && typeof o.sha === 'string' && typeof o.base === 'string' && o.sha && o.base).map(asItem);
+// a verdict a version before 0.2.0 left standing is an open item from an earlier turn
+if (G.standing && typeof G.standing === 'object' && G.standing.sha && G.standing.base && !open.some((o) => o.sha === G.standing.sha)) open.push(asItem({ ...G.standing, live: false }));
+const openWas = JSON.stringify(open);
+const same = (...a) => { try { execFileSync('git', ['-C', repo, 'diff', '--quiet', ...a], { stdio: 'ignore' }); return true; } catch { return false; } };
+const acceptedFor = (o) => {
+  const lets = (e) => (e.cleared || []).some((l) => !String(l).startsWith('mandate:'));
+  const oneCommit = () => git('rev-parse', '--verify', '-q', `${o.sha}^`) === o.base;
+  // a reason given for a commit or a span counts when that span begins where the catch began and holds its commit; an
+  // entry from before 0.1.73 says no base, and counts only for a catch that is one commit
+  const kept = readAllowed(repo).find((e) => e.sha && lets(e) && (e.base ? (e.base === o.base && (String(o.sha).startsWith(e.sha) || isAncestor(o.sha, e.sha))) : (String(o.sha).startsWith(e.sha) && oneCommit())));
+  // and one given on the working tree, before the commit, counts for the commit that carries the same change (allowed.mjs)
+  return kept || keptOnTree(repo, { base: o.base, head: o.sha, goalposts: Array.isArray(o.goalposts) ? o.goalposts : [], needs: Array.isArray(o.metrics) ? o.metrics : [] });
+};
+const putBack = (o) => Array.isArray(o.goalposts) && o.goalposts.length > 0 && !o.goalpostsMore && same(o.base, 'HEAD', '--', ...o.goalposts);
+const gaveBack = [];   // the metrics of a catch from an earlier turn whose test is back as it was: said to reflect.mjs, below
+open = open.filter((o) => {
+  if (!(inHead(o.sha) && hasCommit(o.base))) return false;   // reset or rebased away, or its base pruned: nothing left to settle
+  const yes = acceptedFor(o);
+  // this turn's own catch is settled by the engine, on all of the turn's commits (below). An earlier turn's is not
+  // judged again: it is settled when the test reads as it did before.
+  const isMine = !!(enforcing && o.live);
+  const how = yes ? 'a person accepted it' : (!isMine && putBack(o)) ? 'the test is back as it was' : '';
+  if (!how) return true;
+  logActivity({ kind: 'note', sha: (head || '').slice(0, 8), file: o.file || '', reason: `a gamed change caught earlier is settled: ${how}`, by: by || 'hook' });
+  // the record says so too, for `status` and the band
+  const latestIsIt = rec && rec.latest && rec.latest.kind === 'gamed' && String(o.sha).startsWith(String(rec.latest.sha || '-'));
+  if (yes && latestIsIt) { rec.latest = { ...rec.latest, kind: 'allowed', allowed: { reason: yes.reason, at: yes.at } }; writeRec(rec); }
+  if (!yes) { gaveBack.push(...(Array.isArray(o.metrics) ? o.metrics : [])); if (latestIsIt) { rec.latest = { ...rec.latest, kind: 'put back', takenBack: true, reason: 'the test change was taken back: the test reads as it did before', at: new Date().toISOString() }; writeRec(rec); } }
+  return false;
+});
+// this turn's own catch, when it has one: the only thing a turn is sent back for
+let mine = enforcing ? (open.find((o) => o.live) || null) : null;
+// The record's latest line says gamed and the list does not hold that catch (a record from before the second copy, one
+// written by hand, or a catch that is settled): nothing is decided by that line, so it must not keep saying it.
+if (rec && rec.latest && rec.latest.kind === 'gamed' && !open.some((o) => String(o.sha).startsWith(String(rec.latest.sha || '-')))) {
+  logActivity({ kind: 'note', sha: (head || '').slice(0, 8), file: rec.latest.file || '', reason: 'the record said gamed for a change nothing here holds open any more; the line is cleared, and new commits are checked as always', by: by || 'hook' });
+  rec.latest = { ...rec.latest, kind: 'unverified', at: new Date().toISOString(), reason: 'a gamed line with no open catch behind it' };
   writeRec(rec);
-  logActivity({ kind: 'note', sha: (head || '').slice(0, 8), file: gs.file || '', reason: 'the record of a gamed verdict was changed outside sawbuck; it was put back from the second copy, and only a pass from the source takes it down', by: by || 'hook' });
-}
-// The same for a record that still says gamed and has had one of those fields edited: which metrics the verdict was
-// about (what takes it down, in reflect.mjs) and which goalposts it moved (a restore in the working tree, below). A
-// record changed to name another file, or no metric, is put right from the second copy before anything reads it. A
-// second copy from before 0.1.73 holds neither, and then the record's are left as they are.
-if (gs && rec && rec.latest && rec.latest.kind === 'gamed' && (gs.metrics !== undefined || gs.goalposts !== undefined)) {
-  const want = decides(gs); let put = false;
-  for (const k of DECIDES) if (JSON.stringify(rec.latest[k]) !== JSON.stringify(want[k])) { if (want[k] === undefined) delete rec.latest[k]; else rec.latest[k] = want[k]; put = true; }
-  if (put) { writeRec(rec); logActivity({ kind: 'note', sha: (head || '').slice(0, 8), file: gs.file || '', reason: 'the record of a standing gamed verdict was edited outside sawbuck (the files or metrics it names); it was put right from the second copy', by: by || 'hook' }); }
 }
 // WHAT A REMOTE BROUGHT IN DURING THE TURN STAYS THE REMOTE'S; WHAT THIS CLONE PUSHED THERE IS STILL THE AGENT'S OWN.
 // Until 0.1.74 every commit on any remote branch was left out of the turn's own commits. So a commit the agent made and
@@ -152,55 +165,80 @@ const fromRemotes = (tips, sinceIso) => {
   }
   return out;
 };
-const startedAt = Date.now();
+// THE TURN'S OWN COMMITS, JUDGED TOGETHER (0.2.0). From the commit the turn began at (the baseline the prompt hook took)
+// to HEAD, whenever HEAD has moved since this hook last looked. Commits the person made between turns (a red test
+// first, a merge, a pull) are before that commit and are not scored. Until this version a second look in one turn
+// judged only the commits since the first, and a gamed verdict kept an older span of its own. A turn no prompt began,
+// and the git hook, have no beginning on record: there the commits since the last look are judged.
 const tb = (st.turnBaseline && st.turnBaseline.sha) || '';
-const from = (tb && st.lastSha && tb !== st.lastSha && isAncestor(st.lastSha, tb)) ? tb : (st.lastSha || tb || '');
-if (head && from && head !== from) {
-  let standing = !!(rec && rec.latest && rec.latest.kind === 'gamed' && rec.latest.base && rec.latest.sha !== head.slice(0, 8));
-  if (standing && !hasCommit(rec.latest.base)) {
-    // the span can no longer be re-proved (a rebase, a squash, a pruned branch took its base away):
-    // say so in the feed, drop the record to unverified (never blocked on), and keep checking new
-    // commits from the last one seen, so the wall's loss is visible instead of a silent stop
-    logActivity({ kind: 'note', sha: head.slice(0, 8), file: rec.latest.file || '', reason: 'the base of the standing gamed verdict is gone from this clone (rebased or pruned); the record is cleared and new commits are checked from the last one seen', by: by || 'hook' });
-    rec.latest = { ...rec.latest, kind: 'unverified', at: new Date().toISOString(), reason: 'the base of the gamed verdict left the clone before the span re-proved from the source' };
-    writeRec(rec);
-    standing = false;
-  }
+const seen = st.lastSha || '';
+const from = (turnOpenNow && tb) ? tb : (seen || tb || '');
+// what reflect.mjs concluded in this run, from its own standard output: nothing an agent can write is read for it
+const answerOf = (out) => { for (const l of String(out || '').split('\n').reverse()) { if (l.startsWith('{"sawbuck":')) { try { return JSON.parse(l).sawbuck || null; } catch { return null; } } } return null; };
+if (head && from && head !== from && head !== seen) {
   // a rebase or a reset inside the turn: HEAD no longer descends from `from`, and the span from..head would blame
   // upstream's commits on the agent (an upstream test edit read as the agent's gamed green). Re-prove only the commits
-  // that are new since the turn began and on no remote: the agent's own, replayed on top. Nothing new means the agent
-  // only rebased, and there is nothing of its own to re-prove.
+  // that are new since the turn began and came from no remote: the agent's own, replayed on top. Nothing new means the
+  // agent only rebased, and there is nothing of its own to re-prove.
   // The agent's own commits = new since the turn began, not reachable from any ref tip that existed at the turn's start,
-  // and not brought in from a remote during the turn (fromRemotes, above). In a plain turn that is exactly from..head. After a rebase or a merge of upstream inside the turn,
-  // it is the agent's commits replayed on top, and upstream's commits (an upstream test edit among them) stay upstream's.
+  // and not brought in from a remote during the turn (fromRemotes, above). In a plain turn that is exactly from..head.
+  // After a rebase or a merge of upstream inside the turn, it is the agent's commits replayed on top, and upstream's
+  // commits (an upstream test edit among them) stay upstream's.
   // Merge commits themselves are not re-proved: the span starts at the agent's first own non-merge commit.
-  let base = standing ? rec.latest.base : from; let skip = false;
-  if (!standing) {
-    const tips = (st.turnBaseline && Array.isArray(st.turnBaseline.refs)) ? st.turnBaseline.refs : [];
-    let own = git('rev-list', '--no-merges', head, `^${from}`, ...tips.map((t) => `^${t}`), ...fromRemotes(tips, st.turnBaseline && st.turnBaseline.at)).split('\n').filter(Boolean);
-    // a rebase replays commits that existed before the turn under new shas (the person's own branch commits among them);
-    // a replayed commit is patch-equivalent to one reachable from a recorded tip, and `git cherry` marks those "-"
-    if (own.length && tips.length) {
-      for (const t of tips) {
-        const fresh = new Set(git('cherry', t, head).split('\n').filter((l) => l.startsWith('+ ')).map((l) => l.slice(2).trim()));
-        own = own.filter((c) => fresh.has(c));
-        if (!own.length) break;
-      }
+  let base = from; let skip = false;
+  const tips = (st.turnBaseline && Array.isArray(st.turnBaseline.refs)) ? st.turnBaseline.refs : [];
+  let mineOwn = git('rev-list', '--no-merges', head, `^${from}`, ...tips.map((t) => `^${t}`), ...fromRemotes(tips, st.turnBaseline && st.turnBaseline.at)).split('\n').filter(Boolean);
+  // a rebase replays commits that existed before the turn under new shas (the person's own branch commits among them);
+  // a replayed commit is patch-equivalent to one reachable from a recorded tip, and `git cherry` marks those "-"
+  if (mineOwn.length && tips.length) {
+    for (const t of tips) {
+      const fresh = new Set(git('cherry', t, head).split('\n').filter((l) => l.startsWith('+ ')).map((l) => l.slice(2).trim()));
+      mineOwn = mineOwn.filter((c) => fresh.has(c));
+      if (!mineOwn.length) break;
     }
-    if (!own.length) { logActivity({ kind: 'note', sha: head.slice(0, 8), file: '', reason: 'the commits this turn added came from elsewhere (a rebase, a merge, a fast-forward); none is the agent\'s own, nothing to re-prove', by }); skip = true; }
-    else base = git('rev-parse', `${own[own.length - 1]}^`).trim() || from;
   }
-  // what reflect concludes about a standing verdict is read back below (`settled`): nothing already in the file is that
-  if (!skip && rec && rec.settled) { delete rec.settled; writeRec(rec); }
-  if (!skip) node(join(HERE, 'reflect.mjs'), ['--repo', repo, '--base', base, '--head', head, ...(by ? ['--by', by] : []), ...(userMode ? ['--no-auto'] : [])]);
+  if (!mineOwn.length) { logActivity({ kind: 'note', sha: head.slice(0, 8), file: '', reason: 'the commits this turn added came from elsewhere (a rebase, a merge, a fast-forward); none is the agent\'s own, nothing to re-prove', by }); skip = true; }
+  else base = git('rev-parse', `${mineOwn[mineOwn.length - 1]}^`).trim() || from;
+  // a turn that already holds a catch is judged again from where that catch began, whatever else is known of the
+  // turn's beginning (a session with no prompt on record has only the last commit looked at, and that is the catch)
+  if (mine && hasCommit(mine.base) && isAncestor(mine.base, head)) { base = mine.base; skip = false; }
+  if (!skip) {
+    // `--was`: this turn already holds a catch, and these are its commits judged again with what came after it. The
+    // metrics that catch was about come from the second copy, not from the record.
+    const ran = answerOf(node(join(HERE, 'reflect.mjs'), ['--repo', repo, '--base', base, '--head', head, '--answer', ...(mine ? ['--was', (Array.isArray(mine.metrics) ? mine.metrics : []).join(',')] : []), ...(gaveBack.length ? ['--gave-back', [...new Set(gaveBack)].join(',')] : []), ...(by ? ['--by', by] : []), ...(userMode ? ['--no-auto'] : [])]));
+    if (ran && ran.gamed) {
+      const at = new Date().toISOString();
+      const item = (ran.again && mine) ? { ...mine, sha: head, at }
+        : asItem({ sha: head, base: ran.base || git('rev-parse', `${base}^{commit}`) || base, file: ran.file || '', reason: ran.reason || '', at, by: by || null, metrics: ran.metrics, goalposts: ran.goalposts, goalpostsMore: ran.goalpostsMore, also: ran.also, live: enforcing });
+      // a new catch on the same test files takes the place of an older one still open: the test is judged as it reads now
+      const posts = (o) => JSON.stringify((Array.isArray(o.goalposts) && o.goalposts.length) ? [...o.goalposts].sort() : [o.file || '']);
+      open = open.filter((o) => o !== mine && o.sha !== item.sha && posts(o) !== posts(item)); open.push(item);
+      mine = item.live ? item : null;
+    } else if (ran && mine) { open = open.filter((o) => o !== mine); mine = null; }   // the engine's own answer over all of the turn's commits: no gamed win is left in them
+  }
   rec = readRec();
-  // the guard comes down only on the engine's own answer over the span it stands on, written in this run: the source
-  // earned the green, or (0.1.73) the test was put back and the span moves no goalpost any more. A "verified" that
-  // was already in the file is not that, and neither is a time that has not come yet.
-  const fresh = (at) => { const t = Date.parse(at || ''); return t >= startedAt - 1000 && t <= Date.now() + 1000; };
-  const settled = !!(gs && rec && rec.settled && rec.settled.base === gs.base && fresh(rec.settled.at));
-  if (gs && !skip && base === gs.base && rec && rec.latest && ((rec.latest.kind === 'verified' && rec.latest.base === gs.base && fresh(rec.latest.at)) || settled)) dropStanding();
-  else if (gs && rec && rec.latest && rec.latest.kind === 'unverified' && !rec.latest.takenBack) dropStanding();   // its base left the clone (said in the feed above)
+}
+// the list is kept in the second copy, and a copy of it in the record for `status` and the band. The record's latest
+// line says this turn's catch while there is one, whatever was written there meanwhile.
+open = open.slice(-5);
+if (JSON.stringify(open) !== openWas || G.standing) writeGuard(repo, { open: open.length ? open : null, standing: null });
+{ // the record's copy, written whenever it does not say what the list says (the record may have been removed meanwhile)
+  const copy = open.map((o) => ({ sha: String(o.sha).slice(0, 8), base: o.base, file: o.file || '', at: o.at || null, ...(Array.isArray(o.goalposts) && o.goalposts.length ? { goalposts: o.goalposts.slice(0, 6) } : {}) }));
+  if (JSON.stringify((rec && Array.isArray(rec.open)) ? rec.open : []) !== JSON.stringify(copy)) {
+    const r = { regressions: 0, gamed: 0, latest: null, ...(rec && typeof rec === 'object' ? rec : {}) };
+    if (copy.length) r.open = copy; else delete r.open;
+    writeRec(r); rec = r;
+  }
+}
+const names = (o) => JSON.stringify([o && o.kind, o && o.sha, o && o.base, o && o.file, (o && o.metrics) || null, (o && o.goalposts) || null]);
+if (mine && names(rec && rec.latest) !== names({ kind: 'gamed', ...mine, sha: String(mine.sha).slice(0, 8) })) {
+  // not the same catch with a newer commit on it: the record was rewritten, or removed, outside sawbuck. It is display
+  // only now (nothing here is decided by it), and it is put right so `status` and the band do not say otherwise.
+  if (!(rec && rec.latest && rec.latest.kind === 'gamed' && rec.latest.base === mine.base)) logActivity({ kind: 'note', sha: (head || '').slice(0, 8), file: mine.file || '', reason: 'the record of a gamed catch was changed outside sawbuck; it was put back from the second copy, and the turn is still sent back for it', by: by || 'hook' });
+  const r = { regressions: 0, gamed: 0, ...(rec && typeof rec === 'object' ? rec : {}) };
+  r.latest = { sha: String(mine.sha).slice(0, 8), kind: 'gamed', base: mine.base, file: mine.file || '', reason: mine.reason || 'a win that came from editing the test, not the source', at: mine.at || new Date().toISOString(), by: mine.by || null, ...(mine.metrics ? { metrics: mine.metrics } : {}), ...(mine.goalposts ? { goalposts: mine.goalposts } : {}), ...(mine.goalpostsMore ? { goalpostsMore: true } : {}), ...(mine.also ? { also: mine.also } : {}) };
+  if (!r.gamed) r.gamed = 1;
+  writeRec(r); rec = r;
 }
 st.lastSha = head || st.lastSha;
 st.turns += 1;
@@ -212,6 +250,7 @@ const total = rec ? (rec.regressions || 0) + (rec.gamed || 0) + (rec.mandates ||
 // the second copy away here, when the turn ends, and not before.
 const saveState = (how) => {
   try { mkdirSync(stDir, { recursive: true }); writeFileSync(stPath, JSON.stringify(st, null, 2) + '\n'); } catch {}
+  if (stop && how === 'ends' && open.some((o) => o.live)) { for (const o of open) delete o.live; writeGuard(repo, { open }); }
   if (stop && how === 'ends' && G.detached) { clearGuard(repo); return; }
   const was = !!(own && own.turnOpen);
   writeGuard(repo, { own: { ...ownOf(st), turnOpen: !stop ? was : how === 'ends' ? false : how === 'back' ? true : was } });
@@ -251,13 +290,6 @@ const sendBack = (idKey, countKey, reason, stillOpen) => {
   process.stdout.write(JSON.stringify(spent ? { systemMessage: max === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${stillOpen}` : `Sawbuck stopped blocking after ${max} tries: ${stillOpen}` } : { decision: 'block', reason }));
   process.exit(0);
 };
-
-// A gamed verdict on this head is kept a second time as soon as it is known, before anything below ends this run.
-// The wall sends a turn back for a protected path first, and until 0.1.73 the verdict was kept only further down:
-// a gamed test committed beside a protected path was never read again once the path had been put back in a new
-// commit (proof-bench/beside-guard, 2026-11-16).
-const gamedAtHead = () => !!(rec && rec.latest && rec.latest.kind === 'gamed' && rec.latest.sha === (head || '').slice(0, 8));
-if (enforcing && gamedAtHead() && rec.latest.base && head) writeGuard(repo, { standing: { sha: head, base: rec.latest.base, file: rec.latest.file || '', reason: rec.latest.reason || '', at: rec.latest.at || new Date().toISOString(), by: rec.latest.by || null, ...decides(rec.latest) } });
 
 // 2b) THE WALL AT TURN LEVEL (Claude Code Stop hook only): a mandate is checked against the WORKING
 // tree on every stop, not only on commits, because an agent usually ends a turn with uncommitted
@@ -318,7 +350,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     const accept = (committedHit && hits.some((h) => !h.allowable)) ? ' To accept this change on purpose, change the rule in the contract or revert the path.' : '';
     const upgrade = base ? '' : ' (No prompt baseline is recorded in this repo, so edits a person made before the prompt cannot be told apart from yours: ask them to run sawbuck attach again, which upgrades the hooks.)';
     // the same commit can hold a gamed test too. Say it now, so undoing the protected path is not taken for the end of it.
-    const alsoGamed = gamedAtHead() ? ` This turn's commit also has a win on ${rec.latest.file} that came from editing the test or config, not the source. Putting the protected path back does not end that: fix the source so the test passes as it was written, or show the person the test change and ask them.` : '';
+    const alsoGamed = mine ? ` This turn's commit also has a win on ${mine.file} that came from editing the test or config, not the source. Putting the protected path back does not end that: fix the source so the test passes as it was written, or show the person the test change and ask them.` : '';
     // one catch per prompt, however many times the turn is sent back. Kept beside rec.latest, never in it:
     // a block must not replace a gamed verdict that is still standing.
     if (st.mandateCountedPrompt !== promptId) {
@@ -329,31 +361,30 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
       writeRec(r);
       logActivity({ kind: 'mandate', file: hits[0].files[0], reason: `mandate ${hits[0].name} violated in the working tree`, by: by || 'hook' });
     }
-    sendBack('mandatePromptId', 'mandateBlocks', `Sawbuck: a protected path in the contract was touched, the turn is not done. Protected paths changed in this turn: ${desc}. Undo the changes YOU made under the protected paths and make the fix elsewhere; do not revert anything you did not change (the rule is a wall, not a reminder; the gate fails any change that touches them).${spared}${restore}${person}${accept}${upgrade}${alsoGamed}`, `protected paths are still changed (${desc}).${gamedAtHead() ? ` The same commit also has a win on ${rec.latest.file} that came from editing the test.` : ''}`);
+    sendBack('mandatePromptId', 'mandateBlocks', `Sawbuck: a protected path in the contract was touched, the turn is not done. Protected paths changed in this turn: ${desc}. Undo the changes YOU made under the protected paths and make the fix elsewhere; do not revert anything you did not change (the rule is a wall, not a reminder; the gate fails any change that touches them).${spared}${restore}${person}${accept}${upgrade}${alsoGamed}`, `protected paths are still changed (${desc}).${mine ? ` The same commit also has a win on ${mine.file} that came from editing the test.` : ''}`);
   }
 }
 
-// 3) CONTRACT ENFORCEMENT (Claude Code Stop hook only): if THIS turn's commit was gamed,
+// 3) CONTRACT ENFORCEMENT (Claude Code Stop hook only): if THIS turn's commits hold a gamed win,
 // block the stop and send the agent back to earn the green in the source. Bounded per
 // prompt, because Claude Code's built-in block cap resets on every tool call and so cannot
 // bound a tool-using agent on its own. Opt out with SAWBUCK_NO_ENFORCE=1 (falls back to a flag).
-const gamedThisTurn = rec && rec.latest && rec.latest.kind === 'gamed' && rec.latest.sha === (head || '').slice(0, 8);
-if (stop && gamedThisTurn && !process.env.SAWBUCK_NO_ENFORCE) {
+if (stop && mine && !process.env.SAWBUCK_NO_ENFORCE) {
   st.shownTotal = total;
-  const where = rec.latest.file;
+  const where = mine.file;
   // (what stands, and the span it was measured over, is already kept a second time outside the record folder: above the wall)
   // the catch is a finding too: handed once to whatever memory runs here, beside the rules and the reverted attempts
   // awaited: sendBack exits the process, and an unawaited hand-off died with it (found by hand against a live worker, 2026-11-08)
-  await shareFinding(repo, { kind: 'gamed', title: `gamed: ${where} edited to pass`, text: rec.latest.reason || `A green on ${where} came from editing the test, config or grader, not the source.`, files: [where] }).catch(() => {});
+  await shareFinding(repo, { kind: 'gamed', title: `gamed: ${where} edited to pass`, text: mine.reason || `A green on ${where} came from editing the test, config or grader, not the source.`, files: [where] }).catch(() => {});
   // the person decides when the agent cannot: the test may be the wrong one. Three ways out, each a command.
-  const back = rec.latest.base ? String(rec.latest.base).slice(0, 12) : 'HEAD~1';
+  const back = mine.base ? String(mine.base).slice(0, 12) : 'HEAD~1';
   // Each way out as a line that works (each was typed on 0.1.72, and two did not: proof-bench/beside-guard). The files
   // to put back are the goalposts the engine named, when it named them. A reason has to be for the span the verdict
   // stands on: one commit needs no span, and a turn that made more names where the span begins.
-  const listed = (Array.isArray(rec.latest.goalposts) && rec.latest.goalposts.length) ? rec.latest.goalposts : null;
+  const listed = (Array.isArray(mine.goalposts) && mine.goalposts.length) ? mine.goalposts : null;
   const posts = listed ? listed.slice(0, 6) : [where];
-  const morePosts = listed && (listed.length > 6 || rec.latest.goalpostsMore) ? ` (the first of ${rec.latest.goalpostsMore ? 'more than 50' : listed.length} test and config files this change moved)` : '';
-  const oneCommit = !rec.latest.base || git('rev-parse', '--verify', '-q', 'HEAD~1') === rec.latest.base;
+  const morePosts = listed && (listed.length > 6 || mine.goalpostsMore) ? ` (the first of ${mine.goalpostsMore ? 'more than 50' : listed.length} test and config files this change moved)` : '';
+  const oneCommit = !mine.base || git('rev-parse', '--verify', '-q', 'HEAD~1') === mine.base;
   const accept = cli(oneCommit ? 'check --allow "<why>"' : `check --base ${back} --allow "<why>"`);
   const choices = `Your call: (1) fix the source and keep the test as it was; (2) put the test back: git checkout ${back} -- ${posts.join(' ')}${morePosts}, then commit; (3) if the test change is right, accept it: ${accept}.`;
   // THE TEST PUT BACK IN THE WORKING TREE, NOT COMMITTED YET. Every goalpost the engine named for this verdict reads in
@@ -361,15 +392,15 @@ if (stop && gamedThisTurn && !process.env.SAWBUCK_NO_ENFORCE) {
   // "to fix the source" would be for a change that is gone (the rehearsal of 2026-11-16: a person said "put the test
   // back and stop there", the agent did, and was sent back three times). The turn may end and the person is told, once
   // for this commit. The verdict stays up, here and in the second copy: the last commit still holds the changed test,
-  // so throwing the restore away is sent back again, and only a commit settles it. Only for a record that lists all
+  // so the catch stays open: a later turn that throws the restore away is told about it, and only a commit settles it. Only for a record that lists all
   // its goalposts (0.1.73 on).
-  const sameAsBase = () => { try { execFileSync('git', ['-C', repo, 'diff', '--quiet', rec.latest.base, '--', ...listed], { stdio: 'ignore' }); return true; } catch { return false; } };
-  if (listed && !rec.latest.goalpostsMore && rec.latest.base && hasCommit(rec.latest.base) && sameAsBase()) {
+  const sameAsBase = () => { try { execFileSync('git', ['-C', repo, 'diff', '--quiet', mine.base, '--', ...listed], { stdio: 'ignore' }); return true; } catch { return false; } };
+  if (listed && !mine.goalpostsMore && mine.base && hasCommit(mine.base) && sameAsBase()) {
     const told = st.restoredTold === head; st.restoredTold = head; saveState('ends');
     if (!told) process.stdout.write(JSON.stringify({ systemMessage: `Sawbuck: ${posts.join(', ')} ${listed.length === 1 ? 'is' : 'are'} back as ${listed.length === 1 ? 'it was' : 'they were'} in your working tree, not committed yet. The last commit still holds the changed test, so the record stays open until that is committed (git commit -am "put the test back"). Nothing is sent back for it meanwhile.` }));
     process.exit(0);
   }
-  const also = (Array.isArray(rec.latest.also) && rec.latest.also.length) ? ` The same change also made ${rec.latest.also.join(', ')} worse, which the contract guards.` : '';
+  const also = (Array.isArray(mine.also) && mine.also.length) ? ` The same change also made ${mine.also.join(', ')} worse, which the contract guards.` : '';
   // the agent asking the person instead of bending the source is the right move, so the turn may end there
   if (asksPerson(lastAgentText(), where)) {
     saveState('ends');
@@ -378,6 +409,31 @@ if (stop && gamedThisTurn && !process.env.SAWBUCK_NO_ENFORCE) {
   }
   sendBack('blockPromptId', 'blockCount', `Sawbuck: the win on ${where} was gamed. It came from editing the test or config, not the source, so it did not survive a source-only re-run.${also} The turn is not done: fix the source so the test passes as it was written. If you believe the test itself was wrong, do not change the source to fit it: end your turn by showing the person the test change and asking them what to do, as a direct question.`, `the win on ${where} is still gamed. ${choices}`);
 }
+
+// 3x) WHAT AN EARLIER TURN LEFT OPEN IS TOLD, NEVER SENT BACK (0.2.0). One line to the person at the end of a turn, for
+// enforce.remindTurns turns (5; 0 says never), then nothing more here: `status` and the band keep showing it, and the
+// check on the commit and on a pull request still fails. The setting is the one that stood when the prompt began.
+const remindTurns = (() => {
+  const tbl = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null;
+  const raw = (tbl && Object.prototype.hasOwnProperty.call(tbl, 'remindTurns')) ? tbl.remindTurns : (cfg.enforce ? cfg.enforce.remindTurns : undefined);
+  return (raw === undefined || raw === null || raw === '' || !Number.isFinite(+raw)) ? 5 : Math.max(0, Math.floor(+raw));
+})();
+let openSaid = '';
+if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
+  const due = open.filter((o) => !o.live && (o.told || 0) < remindTurns && o.toldTurn !== String(promptId));
+  if (due.length) {
+    for (const o of due) { o.told = (o.told || 0) + 1; o.toldTurn = String(promptId); }
+    writeGuard(repo, { open });
+    const o = due[due.length - 1];
+    const posts = (Array.isArray(o.goalposts) && o.goalposts.length) ? o.goalposts.slice(0, 6) : [o.file];
+    const from12 = String(o.base).slice(0, 12);
+    const last = o.sha === head && git('rev-parse', '--verify', '-q', 'HEAD~1') === o.base;
+    const others = due.length > 1 ? ` (and ${due.length - 1} more: sawbuck status lists them)` : '';
+    openSaid = `Sawbuck: a test change from an earlier turn is still open: ${o.file || posts[0]}, commit ${String(o.sha).slice(0, 8)}${others}. This turn was not sent back for it. Your call: (1) fix the source and keep the test as it was; (2) put the test back: git checkout ${from12} -- ${posts.join(' ')}, then commit; (3) if the test change is right, accept it: ${cli(last ? 'check --allow "<why>"' : `check --base ${from12} --allow "<why>"`)}. Told ${o.told} of ${remindTurns} times.`;
+  }
+}
+// what the person is told when a turn ends, with the open line after it when there is one
+const tell = (msg) => process.stdout.write(JSON.stringify({ systemMessage: [msg, openSaid].filter(Boolean).join(' ') }));
 
 // 3a) A DEPENDENCY EDITED IN PLACE: the check's clean copy borrows node_modules and the venv from the working tree, so
 // an edit made inside them is in no diff and a green that leans on it cannot be proved (outside-git bench, 2026-11-11:
@@ -400,7 +456,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE && st.turnBaseline && st.turnBaselin
     if ((fresh.length || pinsMoved) && st.lockNotice !== key) {
       st.lockNotice = key; depDone(); saveState('ends');
       const what = [...fresh.slice(0, 8), ...(pinsMoved ? ['the resolved dependency tree'] : [])].join(', ');
-      process.stdout.write(JSON.stringify({ systemMessage: `Sawbuck: this turn changed what the lock holds: ${what}${fresh.length > 8 ? `, and ${fresh.length - 8} more` : ''}. If you did not ask for that, look before you commit. The gate needs your reason to pass it: promptwheel run --allow "<reason>". When more than one thing changed, the reason names each, and the check prints the line.${depSaid ? ` ${depSaid}` : ''}` }));
+      tell(`Sawbuck: this turn changed what the lock holds: ${what}${fresh.length > 8 ? `, and ${fresh.length - 8} more` : ''}. If you did not ask for that, look before you commit. The gate needs your reason to pass it: promptwheel run --allow "<reason>". When more than one thing changed, the reason names each, and the check prints the line.${depSaid ? ` ${depSaid}` : ''}`);
       process.exit(0);
     }
   }
@@ -409,7 +465,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE && st.turnBaseline && st.turnBaselin
 // 3a, said alone when the lock had nothing to say
 if (depSaid) {
   depDone(); saveState('ends');
-  process.stdout.write(JSON.stringify({ systemMessage: depSaid }));
+  tell(depSaid);
   process.exit(0);
 }
 
@@ -417,7 +473,14 @@ if (depSaid) {
 // state file is written again below, so the next end of turn does not come here)
 if (recordRemoved) {
   st.shownTotal = total; saveState('ends');
-  process.stdout.write(JSON.stringify({ systemMessage: 'Sawbuck: its record for this repo (.sawbuck/) was removed or made unreadable during this turn. It was rebuilt from a second copy, and the turn was checked again from the commit it began at. If you did not do that, look at what this turn did.' }));
+  tell('Sawbuck: its record for this repo (.sawbuck/) was removed or made unreadable during this turn. It was rebuilt from a second copy, and the turn was checked again from the commit it began at. If you did not do that, look at what this turn did.');
+  process.exit(0);
+}
+
+// 3x, said alone when nothing above had anything to say
+if (openSaid) {
+  st.shownTotal = total; saveState('ends');
+  tell('');
   process.exit(0);
 }
 

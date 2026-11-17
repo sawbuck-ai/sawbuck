@@ -286,12 +286,12 @@ switch (cmd) {
     const args = dirty ? ['run', '--working'] : ['run', '--base', base || 'HEAD~1', '--head', head || 'HEAD'];
     const { rep, code, why } = gateReport(repo, [...args, ...pass]);
     if (!rep || !rep.verdict) { out(`sawbuck: could not run the check here: ${why || 'the engine gave no verdict'}`); process.exit(64); }
-    // A person's --allow clears the gamed verdict standing here, so the end of a turn stops sending it back (the hold
-    // asks before an agent can type --allow). Three things changed in 0.1.73, each typed on 0.1.72 first
-    // (proof-bench/beside-guard):
-    // - The reason has to be for the span the verdict stands on: the last commit when that is the span, `--base <where
-    //   it begins>` when the turn made more commits. Before, a reason for the last commit cleared a verdict measured
-    //   over more, and one given with --base cleared nothing.
+    // A person's --allow settles a test change the hooks caught and hold open here, so the end of a turn stops sending
+    // it back or telling about it (the hold asks before an agent can type --allow). Three things changed in 0.1.73,
+    // each typed on 0.1.72 first (proof-bench/beside-guard):
+    // - The reason has to be for the span the catch was made on: the last commit when that is the span, `--base <where
+    //   it begins>` when the turn made more commits, or when later turns have committed on top (0.2.0). Before, a
+    //   reason for the last commit cleared a verdict measured over more, and one given with --base cleared nothing.
     // - It counts when it let the gamed part through, even where something a reason cannot reach still fails this
     //   check (a protected path the person's own file rode in on, a count of tests that went down). That is another
     //   matter, said below, and the end of a turn has its own rule for it.
@@ -304,12 +304,21 @@ switch (cmd) {
     if (!dirty && (!head || g('rev-parse', `${head}^{commit}`) === g('rev-parse', 'HEAD'))) {
       const rp = join(top, '.sawbuck', 'results.json');
       try { const r = JSON.parse(readFileSync(rp, 'utf8')); const sha8 = g('rev-parse', 'HEAD').slice(0, 8);
-        if (r.latest && r.latest.kind === 'gamed' && r.latest.sha === sha8) {
-          const sameSpan = !r.latest.base || r.latest.base === g('rev-parse', `${base || 'HEAD~1'}^{commit}`);
-          if (letGamedThrough && sameSpan) { r.latest = { ...r.latest, kind: 'allowed', allowed: { reason: rep.allowed.reason, at: new Date().toISOString() } }; writeFileSync(rp, JSON.stringify(r, null, 2) + '\n'); cleared = true; }
-          else if (!sameSpan && pass.includes('--allow')) { const from = String(r.latest.base).slice(0, 12); standingHint = `sawbuck: a gamed verdict on ${r.latest.file} stands here over more than ${base ? 'that span' : 'the last commit'} (it begins at ${from}), and a reason covers only the span it is given for. To accept that test change: ${cli(`check --base ${from} --allow "<reason>"`)}`; }
+        const spanBase = g('rev-parse', `${base || 'HEAD~1'}^{commit}`);
+        // what the hooks hold open (the record's copy of their list, 0.2.0), and a catch on this very commit
+        const held = (Array.isArray(r.open) ? r.open : []).filter((o) => o && o.sha && o.base);
+        if (r.latest && r.latest.kind === 'gamed' && r.latest.sha === sha8 && !held.some((o) => o.sha === sha8)) held.push({ sha: sha8, base: r.latest.base, file: r.latest.file });
+        let changed = false;
+        for (const o of held) {
+          const sameSpan = !o.base || o.base === spanBase;
+          if (letGamedThrough && sameSpan) {
+            if (r.latest && r.latest.kind === 'gamed' && r.latest.sha === o.sha) r.latest = { ...r.latest, kind: 'allowed', allowed: { reason: rep.allowed.reason, at: new Date().toISOString() } };
+            if (Array.isArray(r.open)) { r.open = r.open.filter((x) => !(x && x.sha === o.sha)); if (!r.open.length) delete r.open; }
+            changed = true; cleared = true;
+          } else if (!sameSpan && pass.includes('--allow') && !standingHint) { const from = String(o.base).slice(0, 12); standingHint = `sawbuck: a test change the hooks caught on ${o.file} is still open here, and it began at ${from}, not where ${base ? 'that span' : 'the last commit'} begins. A reason covers only the span it is given for. To accept that test change: ${cli(`check --base ${from} --allow "<reason>"`)}`; }
         }
-      } catch { /* not attached here: nothing stands to clear */ }
+        if (changed) writeFileSync(rp, JSON.stringify(r, null, 2) + '\n');
+      } catch { /* not attached here: nothing is open to settle */ }
     }
     // what a person let through, and why, joins the record where sawbuck is attached (allowed.mjs): kept, and shown
     // with the prompt that names the test or path, the way a revert is. Under --json too; the output stays the report.
@@ -452,8 +461,10 @@ switch (cmd) {
             const stillInHead = moved && Object.entries(flagged).some(([f, h]) => { const b = blobAt(repo, sha, f); return h === 'deleted' ? b === '' : (!!h && b === h); });
             const pin = !!(st.lastViolation && st.lastViolation.sha);
             if (moved && !stillInHead && st.lastViolation) delete st.lastViolation.sha;
-            st.turnBaseline = { at: now, sha: ((!moved || stillInHead) && pin && st.lastViolation.sha) || sha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: maxBlocksIn(repo) };
-            writeGuard(repo, { baseline: st.turnBaseline });   // a second copy in the git folder: the record folder is out of git status, so its loss during a turn must not lose the turn's starting point (guard.mjs)
+            st.turnBaseline = { at: now, sha: ((!moved || stillInHead) && pin && st.lastViolation.sha) || sha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: maxBlocksIn(repo), remindTurns: remindTurnsIn(repo) };
+            // a new turn: a catch the last turn was still being sent back for is an open item like any other from here
+            // on (0.2.0: no turn is sent back for what an earlier turn did). An interrupted turn the person typed over is one.
+            { const g0 = readGuard(repo); const was = Array.isArray(g0.open) ? g0.open : []; const patch = { baseline: st.turnBaseline }; if (was.some((o) => o && o.live)) patch.open = was.map((o) => { const c = { ...o }; delete c.live; return c; }); writeGuard(repo, patch); }   // the baseline's second copy in the git folder: the record folder is out of git status, so its loss during a turn must not lose the turn's starting point (guard.mjs)
           }
         }
         // a turn is open from here to an end of turn that lets it end. What that hook counts (the last commit it looked
@@ -987,7 +998,7 @@ function wireClaude(repo, opts) {
       ensureExcluded(repo);
       let sha = ''; try { sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
       const now = new Date().toISOString();
-      st.turnBaseline = { at: now, sha, files: protectedDirty(repo, { store: true }), by: 'attach', refs: refTips(repo), maxBlocks: maxBlocksIn(repo) };
+      st.turnBaseline = { at: now, sha, files: protectedDirty(repo, { store: true }), by: 'attach', refs: refTips(repo), maxBlocks: maxBlocksIn(repo), remindTurns: remindTurnsIn(repo) };
       st.lastPromptAt = now;
       mkdirSync(dirname(stPath), { recursive: true }); writeFileSync(stPath, JSON.stringify(st, null, 2) + '\n');
       // the second copy gets it only when it holds none: a baseline a prompt took is never replaced from here, so
@@ -1072,6 +1083,8 @@ function verifyClean(repo) {
 // the setting that stood when the prompt began, not one written during the turn.
 // (a function declaration, like its neighbours: the command switch above runs before this line is reached)
 function maxBlocksIn(repo) { try { const e = JSON.parse(readFileSync(join(repo, 'sawbuck.config.json'), 'utf8')).enforce; return (e && e.maxBlocks !== undefined) ? e.maxBlocks : null; } catch { return null; } }
+// enforce.remindTurns the same way (0.2.0): for how many later turns a person is told about a test change left open
+function remindTurnsIn(repo) { try { const e = JSON.parse(readFileSync(join(repo, 'sawbuck.config.json'), 'utf8')).enforce; return (e && e.remindTurns !== undefined) ? e.remindTurns : null; } catch { return null; } }
 // every ref tip at the start of a turn, so a rebase inside the turn can tell the agent's own commits from upstream's
 function refTips(repo) {
   try { return [...new Set(execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(objectname)'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter(Boolean))].slice(0, 500); } catch { return []; }

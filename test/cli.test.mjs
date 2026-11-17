@@ -818,8 +818,16 @@ test('the gamed wall\'s block budget is per prompt without prompt_id even in a r
     writeFileSync(join(d, 'calc.test.mjs'), honest.replace('2));', '8));')); g('commit', '-q', '-am', 'make it green');
     for (let i = 0; i < 3; i++) assert.equal(JSON.parse(hook({})).decision, 'block');
     assert.match(JSON.parse(hook({})).systemMessage || '', /stopped blocking/, 'the budget for this prompt is spent');
-    turn();                                                                  // the next prompt writes a new key, mandates or not
-    assert.equal(JSON.parse(hook({})).decision, 'block', 'a fresh budget: the wall is not spent for the repo\'s lifetime');
+    turn();                                                                  // the next prompt: a later turn is told about it, not sent back (0.2.0)
+    const later = JSON.parse(hook({}));
+    assert.notEqual(later.decision, 'block', 'a later turn is not sent back for an earlier turn\'s catch');
+    assert.match(later.systemMessage || '', /from an earlier turn is still open: calc\.test\.mjs/);
+    // a catch of its own in a later turn gets a budget of its own: the key is the prompt, not the repo's lifetime
+    writeFileSync(join(d, 'calc.test.mjs'), honest); g('commit', '-q', '-am', 'the person puts the test back');   // between turns: theirs
+    turn();
+    writeFileSync(join(d, 'calc.test.mjs'), honest.replace('2));', '8));')); g('commit', '-q', '-am', 'make it green again');
+    for (let i = 0; i < 3; i++) assert.equal(JSON.parse(hook({})).decision, 'block', 'a fresh budget for a new prompt');
+    assert.match(JSON.parse(hook({})).systemMessage || '', /stopped blocking/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -835,13 +843,13 @@ test('a standing gamed verdict holds through an inconclusive span, a regression 
     r = JSON.parse(hook({ prompt_id: 'p2' }));
     assert.equal(r.decision, 'block', 'an inconclusive re-proof does not let the turn end');
     assert.equal(rec().latest.kind, 'gamed'); assert.equal(rec().latest.sha, head8(), 'the record follows HEAD');
-    assert.equal(feed().at(-1).kind, 'inconclusive'); assert.equal(feed().at(-1).standing, true);
+    assert.equal(feed().at(-1).kind, 'inconclusive'); assert.equal(feed().at(-1).again, true);
     // (a) a follow-up that regresses a guard on top of the cheat: fail does not outrank the standing verdict
     writeFileSync(join(d, 'calc.test.mjs'), honest.replace('2));', '8));')); writeFileSync(join(d, 'calc.mjs'), 'export const sub = (a, b) => a + b; // BUG TODO\n'); g('commit', '-q', '-am', 'cheat back + a todo');
     r = JSON.parse(hook({ prompt_id: 'p3' }));
     assert.equal(r.decision, 'block', 'a regression over the gamed span keeps the wall up');
     assert.equal(rec().latest.kind, 'gamed', 'the record is not rewritten to a regression');
-    assert.equal(feed().at(-1).kind, 'gamed', 'the feed says gamed for a gamed win under the engine\'s "fail" (0.1.73; it said regression)'); assert.equal(feed().at(-1).standing, true);
+    assert.equal(feed().at(-1).kind, 'gamed', 'the feed says gamed for a gamed win under the engine\'s "fail" (0.1.73; it said regression)'); assert.equal(feed().at(-1).again, true);
     assert.equal(rec().gamed, 1, 'the standing catch is never counted twice'); assert.equal(rec().regressions, 0, 'and the regression over the same span is not a new catch');
     // (c) the person's unrelated commit between turns: the record's file and attribution do not move
     writeFileSync(join(d, 'app.js'), 'export const n = 1;\n'); g('add', '-A'); g('commit', '-q', '-m', 'person: app.js');

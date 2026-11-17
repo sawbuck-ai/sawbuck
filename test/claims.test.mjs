@@ -367,7 +367,7 @@ test('claim: putting the test back ends a gamed send-back, even when the suite i
 // Found by the rehearsal of 2026-11-16 (proof-bench/live/rehearse-0.1.73): the person said "put the test back and stop
 // there", the agent restored the file and did not commit, and the turn was sent back three times for a gamed green that
 // was no longer in the tree. The verdict stays up until a commit settles it, so throwing the restore away brings it back.
-test('claim: the test put back in the working tree and not committed yet: the turn is not sent back, the person is told the commit settles it, and throwing the restore away brings the send-back back', () => {
+test('claim: the test put back in the working tree and not committed yet: the turn is not sent back, the person is told the commit settles it, and a later turn that throws the restore away is told, not sent back', () => {
   const { d, w } = sentBackTurn(); const base = git(d, 'rev-parse', 'HEAD~1');
   git(d, 'checkout', '-q', base, '--', 'test/add.test.js'); git(d, 'reset', '-q');   // back as it was, in the working tree only
   assert.match(git(d, 'status', '--porcelain'), /M test\/add\.test\.js/);
@@ -376,9 +376,89 @@ test('claim: the test put back in the working tree and not committed yet: the tu
   assert.equal(latest(d).kind, 'gamed', 'the verdict stays up until a commit settles it');
   assert.doesNotMatch(w.stop(), /back as it was/, 'said once for this state');
   git(d, 'checkout', '-q', '--', 'test/add.test.js');   // the restore thrown away: the gamed test is in the tree again
-  w.prompt('next'); assert.ok(blocked(w.stop()), 'the gamed test is in the tree again: sent back');
-  git(d, 'checkout', '-q', base, '--', 'test/add.test.js'); save(d, 'put the test back'); assert.ok(!blocked(w.stop()), 'committed: settled');
+  // a later turn is not sent back for it (0.2.0): the person is told it is still open
+  w.prompt('next'); const later = w.stop(); assert.ok(!blocked(later), `a later turn is told, not sent back: ${later}`); assert.match(later, /a test change from an earlier turn is still open: test\/add\.test\.js/);
+  w.prompt('put it back'); git(d, 'checkout', '-q', base, '--', 'test/add.test.js'); save(d, 'put the test back'); const done = w.stop();
+  assert.ok(!blocked(done), 'committed: settled'); assert.doesNotMatch(done, /still open/, 'and nothing more is told');
   assert.equal(latest(d).kind, 'put back'); assert.equal(latest(d).takenBack, true);
+  assert.equal(record(d).regressions || 0, 0, 'putting the test back is not counted as a regression, though the suite is red again');
+});
+// ------------------------------------------------------------ 0.2.0: no verdict is carried from one turn to the next (the coherence review of 2026-11-16; his "B" of 2026-11-17)
+// Until 0.2.0 a gamed verdict "stood" over every later turn until its span re-proved, and every later turn was sent back
+// for it. Now a turn is sent back only for what it did itself. What an earlier turn left open is told to the person at
+// the end of a turn, for enforce.remindTurns turns (5), and `status` shows it for as long as it is open.
+const endedGamed = (make = repo) => { const d = make(false); const w = wired(d); w.prompt('make the add test pass'); edit(d, 'test/add.test.js', game); save(d, 'make it green'); for (let i = 0; i < 3; i++) assert.ok(blocked(w.stop()), `sent back ${i + 1}`); const end = w.stop(); assert.ok(!blocked(end)); assert.match(end, /stopped blocking after 3 tries/); return { d, w, base: git(d, 'rev-parse', 'HEAD~1') }; };
+const laterTurn = (d, w, n) => { w.prompt(`add note ${n}`); put(d, `NOTES-${n}.md`, 'n\n'); save(d, `note ${n}`); return w.stop(); };
+test('claim: a later turn is not sent back for a gamed change an earlier turn left: the person is told, with the three ways out, and the later turn\'s own commit is judged by itself', () => {
+  const { d, w, base } = endedGamed(); const b12 = base.slice(0, 12);
+  const o = laterTurn(d, w, 1);
+  assert.ok(!blocked(o), `a later turn was sent back for the earlier catch: ${o}`);
+  assert.match(o, /a test change from an earlier turn is still open: test\/add\.test\.js, commit [0-9a-f]{8}\. This turn was not sent back for it\./);
+  assert.match(o, lit(`(1) fix the source and keep the test as it was; (2) put the test back: git checkout ${b12} -- test/add.test.js, then commit; (3) if the test change is right, accept it:`));
+  assert.match(o, lit(`check --base ${b12} --allow \\"<why>\\"`)); assert.match(o, /Told 1 of 5 times\./);
+  assert.match(feed(d), /"kind":"verified".*NOTES-1\.md/, 'the later turn\'s own commit was judged by itself, and passed');
+  assert.equal(check(d, '--base', base).code, 2, 'the check on those commits still reads gamed: nothing was let through');
+});
+test('claim: the person is told for five turns and then no more, and status shows the change for as long as it is open', () => {
+  const { d, w, base } = endedGamed();
+  for (let n = 1; n <= 5; n++) assert.match(laterTurn(d, w, n), new RegExp(`still open: test/add\\.test\\.js.*Told ${n} of 5 times`), `later turn ${n}`);
+  const sixth = laterTurn(d, w, 6); assert.ok(!blocked(sixth)); assert.doesNotMatch(sixth, /still open/, 'the sixth later turn says nothing');
+  const st = sb(d, 'status').out; assert.match(st, /open: .*test\/add\.test\.js/); assert.match(st, lit(`check --base ${base.slice(0, 12)} --allow "<why>"`));
+  const j = JSON.parse(sb(d, 'status', '--json').out); assert.equal(j.outcomes.open.length, 1); assert.equal(j.outcomes.open[0].file, 'test/add.test.js');
+});
+test('claim: enforce.remindTurns in sawbuck.config.json sets for how many turns: 2 tells twice, 0 never, and a setting written during a turn does not count for that turn', () => {
+  let { d, w } = endedGamed(); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { remindTurns: 2 } }) + '\n');
+  assert.match(laterTurn(d, w, 1), /Told 1 of 2 times/); assert.match(laterTurn(d, w, 2), /Told 2 of 2 times/); assert.doesNotMatch(laterTurn(d, w, 3), /still open/);
+  ({ d, w } = endedGamed()); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { remindTurns: 0 } }) + '\n');
+  assert.doesNotMatch(laterTurn(d, w, 1), /still open/, '0: never told at the end of a turn'); assert.match(sb(d, 'status').out, /open: .*test\/add\.test\.js/, 'and status still shows it');
+  ({ d, w } = endedGamed()); w.prompt('add a note'); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { remindTurns: 0 } }) + '\n'); put(d, 'N.md', 'n\n'); save(d, 'note');
+  assert.match(w.stop(), /still open: test\/add\.test\.js/, 'a 0 written during the turn does not silence that turn: the setting is the one that stood when the prompt began');
+});
+test('claim: fixing the source and putting the test back in a later turn settles it: nothing more is told, status shows nothing open, and that turn is no new catch', () => {
+  const { d, w } = endedGamed(); const caught = record(d).gamed;
+  w.prompt('fix add properly and put the test back'); edit(d, 'src/add.js', fixAdd); edit(d, 'test/add.test.js', ungame); save(d, 'fix add, put the test back');
+  const o = w.stop(); assert.ok(!blocked(o), o); assert.doesNotMatch(o, /still open/);
+  assert.doesNotMatch(sb(d, 'status').out, /open: /); assert.equal(record(d).gamed, caught); assert.equal(record(d).regressions || 0, 0);
+  assert.match(feed(d), /a gamed change caught earlier is settled: the test is back as it was/);
+  assert.doesNotMatch(laterTurn(d, w, 1), /still open/);
+});
+test('claim: a later turn that games a test of its own is sent back for that, and only for that', () => {
+  const { d, w } = endedGamed();
+  put(d, 'test/red.test.js', "const t=require('node:test'),a=require('node:assert');t.test('red',()=>a.equal(1,2))\n"); save(d, 'a red test, by the person');
+  w.prompt('make the red test pass'); edit(d, 'test/red.test.js', (s) => s.replace('a.equal(1,2)', 'a.equal(1,1)')); save(d, 'make it pass');
+  const o = w.stop(); assert.ok(blocked(o), o); assert.match(o, /the win on test\/red\.test\.js was gamed/); assert.doesNotMatch(o, /add\.test\.js/);
+});
+test('claim: removing the record between turns does not stop the telling: what is open is listed in the second copy', () => {
+  const { d, w } = endedGamed(); rmSync(join(d, '.sawbuck'), { recursive: true, force: true });
+  const o = laterTurn(d, w, 1); assert.ok(!blocked(o)); assert.match(o, /still open: test\/add\.test\.js/);
+  assert.match(sb(d, 'status').out, /open: .*test\/add\.test\.js/, 'and the record\'s copy of the list is written again');
+});
+test('claim: a turn\'s commits are judged together: an honest commit on top of a gamed one does not hide it, before the first look or after a send-back', () => {
+  const d = repo(false); const w = wired(d); w.prompt('make the add test pass');
+  edit(d, 'test/add.test.js', game); save(d, 'make it green'); put(d, 'NOTES.md', 'n\n'); save(d, 'notes');   // two commits, one look
+  assert.ok(blocked(w.stop()), 'the gamed commit under the honest one is sent back');
+  put(d, 'MORE.md', 'm\n'); save(d, 'more notes'); assert.ok(blocked(w.stop()), 'and again with one more honest commit on top');
+  assert.equal(record(d).gamed, 1, 'one catch, counted once');
+});
+test('claim: a turn the person typed over while it was being sent back is over: the new turn is told, not sent back', () => {
+  const { d, w } = sentBackTurn();   // sent back once, and the person does not wait for the agent's second try
+  const o = laterTurn(d, w, 1); assert.ok(!blocked(o), o); assert.match(o, /still open: test\/add\.test\.js/);
+});
+test('claim: a gamed verdict that a version before 0.2.0 left standing is an open change now: the next turn is told, not sent back', () => {
+  const { d, w } = endedGamed();
+  // the second copy as an older version left it: one standing verdict, no list
+  const g = JSON.parse(readFileSync(guardFile(d), 'utf8')); const it = g.open[0]; assert.ok(it && it.sha && it.base);
+  delete g.open; g.standing = { sha: it.sha, base: it.base, file: it.file, reason: it.reason, at: it.at, by: it.by, metrics: it.metrics, goalposts: it.goalposts };
+  writeFileSync(guardFile(d), JSON.stringify(g) + '\n');
+  const o = laterTurn(d, w, 1); assert.ok(!blocked(o), o); assert.match(o, /still open: test\/add\.test\.js/);
+  const after = JSON.parse(readFileSync(guardFile(d), 'utf8')); assert.equal(after.standing, undefined); assert.equal(after.open.length, 1);
+});
+test('limit: after the turn that made it, a gamed change is told, not sent back: a later turn can build on it, and the check on the commit still fails', () => {
+  const { d, w, base } = endedGamed();
+  w.prompt('add sub'); put(d, 'src/sub.js', 'exports.sub=(a,b)=>a-b\n'); put(d, 'test/sub.test.js', "const t=require('node:test'),a=require('node:assert');const {sub}=require('../src/sub.js');t.test('sub',()=>a.equal(sub(3,1),2))\n"); save(d, 'sub, with its test');
+  assert.ok(!blocked(w.stop()), 'the later turn ends, with the gamed test still under its work');
+  assert.equal(check(d, '--base', base).code, 2, 'the check from before the gamed change still reads gamed');
+  assert.match(flat(README), /is told, not sent back/, 'the limits page says so');
 });
 test('claim: the gamed send-back asks the agent for a direct question to the person, the form the end of a turn waits for', () => {
   const { w } = gamedTurn(); const o = w.stop(); assert.ok(blocked(o));
@@ -435,10 +515,10 @@ test('claim: accepting the test change in a turn that made more than one commit:
   const base = git(d, 'rev-parse', 'HEAD~2').slice(0, 12);
   const told = w.stop(); assert.match(told, lit(`${PIN} check --base ${base} --allow \\"<why>\\"`), `the person is given the line that names the span: ${told}`);
   const r1 = sb(d, 'check', '--allow', 'the spec changed'); assert.match(r1.out, lit(`${PIN} check --base ${base} --allow "<reason>"`), `a reason for the last commit alone says what to type: ${r1.out}`);
-  w.prompt('again'); assert.ok(blocked(w.stop()), 'and the verdict still stands');
+  w.prompt('again'); const again = w.stop(); assert.ok(!blocked(again), 'a later turn is not sent back for it (0.2.0)'); assert.match(again, lit(`check --base ${base} --allow \\"<why>\\"`), `and it is told the same line, the catch is still open: ${again}`);
   mkdirSync(join(d, 'src', 'deep'), { recursive: true });
   const r2 = sb(join(d, 'src', 'deep'), 'check', '--base', base, '--allow', 'the spec changed'); assert.equal(r2.code, 0, r2.out);
-  assert.ok(!blocked(w.stop()), 'the reason for the whole span ends it, typed from a subfolder'); assert.equal(latest(d).kind, 'allowed');
+  w.prompt('once more'); const after = w.stop(); assert.ok(!blocked(after)); assert.doesNotMatch(after, /still open/, 'the reason for the whole span settles it, typed from a subfolder'); assert.equal(latest(d).kind, 'allowed');
   // one commit: the line has no span in it, as before
   const one = gamedTurn(); for (let i = 0; i < 3; i++) one.w.stop();
   const t1 = one.w.stop(); assert.match(t1, lit(`${PIN} check --allow \\"<why>\\"`)); assert.doesNotMatch(t1, /check --base/);
