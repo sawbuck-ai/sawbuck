@@ -638,6 +638,50 @@ test('claim: a turn that rebases onto upstream re-proves only the agent\'s own c
   w.prompt('make the red test pass'); edit(d, 'test/red.test.js', (s) => s.replace('a.equal(1,2)', 'a.equal(1,1)')); save(d, 'make it pass');
   assert.ok(blocked(w.stop()), 'the agent\'s own test edit after the rebase still reads gamed');
 });
+// ------------------------------------------------------------ "a commit the agent pushed inside the turn is still its own" (2026-11-17: "commit and push" had never been typed; every version from 0.1.57 skipped such a commit as someone else's)
+const remoteOf = (d) => { const bare = mkdtempSync(join(tmpdir(), 'claims-remote-')); git(bare, 'init', '-q', '--bare', '-b', 'main'); git(d, 'remote', 'add', 'origin', bare); git(d, 'push', '-q', '-u', 'origin', 'main'); return bare; };
+const feed = (d) => { try { return readFileSync(join(d, '.sawbuck', 'activity.jsonl'), 'utf8'); } catch { return ''; } };
+test('claim: a gamed commit the agent pushed inside the turn is still sent back when the turn ends', () => {
+  for (const to of ['main', 'HEAD:refs/heads/agent-work']) {
+    const d = signed(false); remoteOf(d); const w = wired(d);
+    w.prompt('make the add test pass, commit and push');
+    edit(d, 'test/add.test.js', game); save(d, 'make it green'); git(d, 'push', '-q', 'origin', to);
+    const out = w.stop();
+    assert.ok(blocked(out), `pushed to ${to}: the turn ended and the gamed commit was not sent back: ${out} ${feed(d).split('\n').slice(-2).join(' ')}`);
+    assert.equal(latest(d).kind, 'gamed');
+  }
+});
+test('claim: an honest commit the agent pushed inside the turn is checked like any other, and passes', () => {
+  const d = signed(false); remoteOf(d); const w = wired(d);
+  w.prompt('fix add, commit and push'); edit(d, 'src/add.js', fixAdd); save(d, 'fix add'); git(d, 'push', '-q', 'origin', 'main');
+  const out = w.stop();
+  assert.ok(!blocked(out), out);
+  assert.match(feed(d), /"kind":"verified"/, 'the pushed commit was checked, not skipped as someone else\'s');
+});
+test('claim: a commit that came from the remote inside the turn is still not the agent\'s, pushed on or not', () => {
+  for (const pushOn of [false, true]) {
+    const d = signed(false); const bare = remoteOf(d); const w = wired(d);
+    // someone else, in a clone of their own, made the red test pass by editing it, and pushed
+    const other = mkdtempSync(join(tmpdir(), 'claims-other-')); git(other, 'clone', '-q', bare, '.');
+    edit(other, 'test/add.test.js', game); save(other, 'theirs: adjust the add test'); git(other, 'push', '-q', 'origin', 'main');
+    w.prompt('pull, add a note, and push');
+    git(d, 'pull', '-q', '--rebase', 'origin', 'main');   // their commit arrives inside the turn
+    put(d, 'NOTES.md', 'a note\n'); save(d, 'a note');   // the agent's own honest commit
+    if (pushOn) git(d, 'push', '-q', 'origin', 'main');   // and the agent pushes on top of theirs
+    const out = w.stop();
+    assert.ok(!blocked(out), `${pushOn ? 'pushed on' : 'not pushed'}: a commit pulled from the remote was blamed on the agent: ${out}`);
+    assert.ok(!/"kind":"gamed"/.test(feed(d)), `${pushOn ? 'pushed on' : 'not pushed'}: their test edit was read as the agent's gamed green`);
+    assert.match(feed(d), /"kind":"verified".*NOTES\.md/, `${pushOn ? 'pushed on' : 'not pushed'}: the agent's own commit was checked`);
+  }
+});
+test('limit: where git keeps no log of remote branches, a commit the agent pushed in the turn is not checked at its end; the check by hand still reads it', () => {
+  const d = signed(false); git(d, 'config', 'core.logAllRefUpdates', 'false'); remoteOf(d); const w = wired(d);
+  w.prompt('make the add test pass, commit and push');
+  edit(d, 'test/add.test.js', game); save(d, 'make it green'); git(d, 'push', '-q', 'origin', 'main');
+  assert.ok(!blocked(w.stop()), 'with no log to say the push was from here, the pushed commit is left out as before');
+  assert.equal(check(d).code, 2, 'sawbuck check on that commit still reads gamed');
+  assert.match(flat(README), /keeps no log of remote branches/, 'the limits page says so');
+});
 // ------------------------------------------------------------ Codex: the same hooks, Codex's contract (developers.openai.com/codex/hooks)
 test('claim: attach --codex wires Codex: the rules reach the prompt, a gamed commit is sent back in JSON, an outward command is held, detach removes it', () => {
   const d = signed(false); const r = sb(d, 'attach', '--codex'); assert.equal(r.code, 0, r.out); assert.match(r.out, /trust them/);

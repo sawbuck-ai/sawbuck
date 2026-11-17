@@ -130,6 +130,27 @@ if (gs && rec && rec.latest && rec.latest.kind === 'gamed' && (gs.metrics !== un
   for (const k of DECIDES) if (JSON.stringify(rec.latest[k]) !== JSON.stringify(want[k])) { if (want[k] === undefined) delete rec.latest[k]; else rec.latest[k] = want[k]; put = true; }
   if (put) { writeRec(rec); logActivity({ kind: 'note', sha: (head || '').slice(0, 8), file: gs.file || '', reason: 'the record of a standing gamed verdict was edited outside sawbuck (the files or metrics it names); it was put right from the second copy', by: by || 'hook' }); }
 }
+// WHAT A REMOTE BROUGHT IN DURING THE TURN STAYS THE REMOTE'S; WHAT THIS CLONE PUSHED THERE IS STILL THE AGENT'S OWN.
+// Until 0.1.74 every commit on any remote branch was left out of the turn's own commits. So a commit the agent made and
+// pushed in the same turn was read as someone else's, and the turn ended with nothing checked ("commit and push":
+// typed for the first time on 2026-11-17; every version from 0.1.57). git says which it was, in the log it keeps for
+// each remote branch: "update by push" for a push from this clone, "fetch ..." or "pull ..." for what came in.
+// A remote branch that did not move since the turn began is already left out as one of the turn's tips. One that
+// moved and has no log here (a clone that keeps none) is left out whole, as before. Returns arguments for rev-list.
+const fromRemotes = (tips, sinceIso) => {
+  const since = Math.floor(Date.parse(sinceIso || '') / 1000);
+  if (!tips.length || !Number.isFinite(since)) return ['--not', '--remotes'];
+  const had = new Set(tips); const out = [];
+  for (const line of git('for-each-ref', '--format=%(objectname) %(refname)', 'refs/remotes').split('\n').filter(Boolean)) {
+    const sp = line.indexOf(' '); const sha = line.slice(0, sp), ref = line.slice(sp + 1);
+    if (had.has(sha)) continue;
+    const moves = git('log', '-g', '--date=unix', '--format=%H %gd %gs', ref, '--').split('\n')
+      .map((l) => /^([0-9a-f]+) .*@\{(\d+)\} (.*)$/.exec(l)).filter(Boolean).map((m) => ({ sha: m[1], at: +m[2], how: m[3] })).filter((e) => e.at >= since);
+    if (!moves.length) { out.push(`^${sha}`); continue; }
+    for (const e of moves) if (!e.how.startsWith('update by push')) out.push(`^${e.sha}`);
+  }
+  return out;
+};
 const startedAt = Date.now();
 const tb = (st.turnBaseline && st.turnBaseline.sha) || '';
 const from = (tb && st.lastSha && tb !== st.lastSha && isAncestor(st.lastSha, tb)) ? tb : (st.lastSha || tb || '');
@@ -149,13 +170,13 @@ if (head && from && head !== from) {
   // that are new since the turn began and on no remote: the agent's own, replayed on top. Nothing new means the agent
   // only rebased, and there is nothing of its own to re-prove.
   // The agent's own commits = new since the turn began, not reachable from any ref tip that existed at the turn's start,
-  // and on no remote. In a plain turn that is exactly from..head. After a rebase or a merge of upstream inside the turn,
+  // and not brought in from a remote during the turn (fromRemotes, above). In a plain turn that is exactly from..head. After a rebase or a merge of upstream inside the turn,
   // it is the agent's commits replayed on top, and upstream's commits (an upstream test edit among them) stay upstream's.
   // Merge commits themselves are not re-proved: the span starts at the agent's first own non-merge commit.
   let base = standing ? rec.latest.base : from; let skip = false;
   if (!standing) {
     const tips = (st.turnBaseline && Array.isArray(st.turnBaseline.refs)) ? st.turnBaseline.refs : [];
-    let own = git('rev-list', '--no-merges', head, `^${from}`, ...tips.map((t) => `^${t}`), '--not', '--remotes').split('\n').filter(Boolean);
+    let own = git('rev-list', '--no-merges', head, `^${from}`, ...tips.map((t) => `^${t}`), ...fromRemotes(tips, st.turnBaseline && st.turnBaseline.at)).split('\n').filter(Boolean);
     // a rebase replays commits that existed before the turn under new shas (the person's own branch commits among them);
     // a replayed commit is patch-equivalent to one reachable from a recorded tip, and `git cherry` marks those "-"
     if (own.length && tips.length) {
