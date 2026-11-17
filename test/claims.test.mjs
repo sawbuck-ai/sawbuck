@@ -460,6 +460,18 @@ test('limit: after the turn that made it, a gamed change is told, not sent back:
   assert.equal(check(d, '--base', base).code, 2, 'the check from before the gamed change still reads gamed');
   assert.match(flat(README), /is told, not sent back/, 'the limits page says so');
 });
+// Tools that run agents with nobody watching have each run work in a clone of its own, so the person's checkout is never
+// touched (read 2026-11-17: ~/IdeaProjects/always-on-quarterdeck-2026-11-17.md). The hooks watch the session's repo.
+test('limit: an agent that works in a clone of its own is not seen by the hooks; the check run in that clone still reads it', () => {
+  const d = signed(false); const w = wired(d);
+  w.prompt('make the add test pass, in a clone of your own');
+  const c = mkdtempSync(join(tmpdir(), 'claims-clone-')); git(c, 'clone', '-q', d, '.');
+  edit(c, 'test/add.test.js', game); save(c, 'make it green');   // the agent's work, in its own clone
+  assert.ok(!blocked(w.stop()), 'a commit in another clone is not seen at the end of the turn');
+  assert.ok(!/"kind":"gamed"/.test(feed(d)), 'and nothing about it is in this repo\'s feed');
+  assert.equal(check(c).code, 2, 'the check run in that clone reads gamed');
+  assert.match(flat(README), /An agent that works in a clone of its own/, 'the limits page says so');
+});
 test('claim: the gamed send-back asks the agent for a direct question to the person, the form the end of a turn waits for', () => {
   const { w } = gamedTurn(); const o = w.stop(); assert.ok(blocked(o));
   assert.match(o, /end your turn by showing the person the test change and asking them what to do, as a direct question/);
