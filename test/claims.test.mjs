@@ -733,11 +733,190 @@ test('claim: a rewrite the person asks for is not an undo: the lines are replace
   x.prompt('write that cache another way, with a size limit'); x.agentEdit('src/add.js', () => eb); x.agentEdit('src/add.js', () => eb + CACHE2); x.stop();   // taken out, then written again, inside one turn
   assert.equal(undos(e).length, 0, 'taken out and written again in the same turn: judged when the turn ends, not at each edit');
 });
-test('limit: a change the agent makes and takes back with shell commands alone is not recorded: no edit tool touched the file, so there is nothing to compare it with', () => {
-  const d = signed(true); const w = wiredWords(d);
+// Found by the undo-words bench on 2026-11-17 (proof-bench/undo-words): in two of three real first sessions the agent
+// wrote its change with a shell command (`cat > file`), so no edit hook ran, there was no snapshot, and the undo it then
+// made was not recorded. Until that day this was a stated limit. Since 0.2.0 a file that is not as the last commit holds
+// it when the person speaks gets its base from git, so it does not matter which tool wrote the change either.
+test('claim: an undo is recorded when the agent wrote the change with a shell command: what the last commit holds is the base', () => {
+  const d = signed(true); const w = wired(d);
   w.prompt('add a small cache to add in src/add.js'); edit(d, 'src/add.js', (s) => s + CACHE1); w.stop();   // written by a shell command: no edit hook runs
   w.prompt('undo that, all of it'); git(d, 'checkout', '--', 'src/add.js'); w.stop();
-  assert.equal(undos(d).length, 0); assert.match(flat(README), /made and taken back with shell commands alone/, 'the limits page says so');
+  let u = undos(d); assert.equal(u.length, 1, 'recorded'); assert.equal(u[0].kind, 'whole'); assert.match(u[0].first, /cache/); assert.equal(u[0].why, '');
+  assert.match(w.prompt('make src/add.js faster'), /undone here at your request .*src\/add\.js/);
+  // taken back by writing the file again, and only in part
+  const e = signed(true); const x = wired(e); const eb = readFileSync(join(e, 'src/add.js'), 'utf8');
+  x.prompt('add a cache and a counter to src/add.js'); put(e, 'src/add.js', eb + CACHE2); x.stop();
+  x.prompt('take the cache out but keep the hits counter'); put(e, 'src/add.js', eb + COUNTER); x.stop();
+  u = undos(e); assert.equal(u.length, 1, 'a partial undo of a change a shell command wrote'); assert.equal(u[0].kind, 'part');
+  // a new file made with a shell command, and removed again
+  const f = signed(true); const y = wired(f);
+  y.prompt('put the cache in a file of its own'); put(f, 'src/cache.js', CACHE1); y.stop();
+  y.prompt('undo that'); rmSync(join(f, 'src/cache.js')); y.stop();
+  u = undos(f); assert.equal(u.length, 1, 'a new file removed again'); assert.equal(u[0].file, 'src/cache.js'); assert.equal(u[0].kind, 'whole');
+  // the next day, in a new session: the change is still uncommitted, and the person has it undone
+  const g = signed(true); const z1 = wired(g, 'monday');
+  z1.prompt('add a small cache to add in src/add.js'); z1.agentEdit('src/add.js', (s) => s + CACHE1); z1.stop();
+  const z2 = wired(g, 'tuesday'); z2.prompt('undo the cache from yesterday'); git(g, 'checkout', '--', 'src/add.js'); z2.stop();
+  u = undos(g); assert.equal(u.length, 1, 'undone in a later session'); assert.equal(u[0].kind, 'whole');
+});
+test('claim: a change that is committed or stashed in the turn is not an undo, and neither is your own work that the turn left alone', () => {
+  const d = signed(true); const w = wired(d);
+  w.prompt('add a small cache to add in src/add.js'); edit(d, 'src/add.js', (s) => s + CACHE1); w.stop();
+  w.prompt('commit it'); save(d, 'cache'); w.stop();
+  assert.equal(undos(d).length, 0, 'committed: the file is as the new commit holds it, and nothing was taken out');
+  for (const how of ['shell', 'edit']) {
+    const e = signed(true); const x = wired(e);
+    x.prompt('add a small cache to add in src/add.js'); if (how === 'edit') x.agentEdit('src/add.js', (s) => s + CACHE1); else edit(e, 'src/add.js', (s) => s + CACHE1); x.stop();
+    x.prompt('stash that for now'); git(e, 'stash'); x.stop();
+    assert.equal(undos(e).length, 0, `stashed (${how}): set aside, not undone`);
+  }
+  const f = signed(true); const y = wired(f);
+  edit(f, 'src/add.js', (s) => s + CACHE1);   // the person's own work, before any prompt
+  y.prompt('what does src/add.js do'); y.stop(); y.prompt('and the tests'); y.stop();
+  assert.equal(undos(f).length, 0);
+});
+// THE REDO LINE (0.2.0). His words on 2026-11-17: rely on Claude for what was said, and have Sawbuck check what it can
+// judge itself. An undo is kept with a mark for each line that was taken out (a hash, no text). When a later turn leaves
+// most of those lines in the file again, the person is told when that turn ends. Told, never sent back: they may have
+// asked for it. No prompt text is needed for any of it.
+const said = (out) => { try { return String(JSON.parse(out).systemMessage || ''); } catch { return ''; } };
+const redone = (d) => { try { return readFileSync(join(d, '.sawbuck', 'redone.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+test('claim: a turn that puts back what you had undone ends with a line that says so, once, and the turn is not sent back', () => {
+  const d = signed(true); const w = wired(d);
+  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE1); w.stop();
+  w.prompt('undo that, all of it'); git(d, 'checkout', '--', 'src/add.js'); assert.doesNotMatch(said(w.stop()), /put back/);
+  const u = undos(d); assert.equal(u.length, 1);
+  assert.ok(Array.isArray(u[0].lines) && u[0].lines.length === 2 && u[0].lines.every((h) => /^[0-9a-f]{10}$/.test(h)), 'the undo keeps a mark for each line taken out, not the line');
+  assert.doesNotMatch(JSON.stringify(u[0]), /exports\.cached/, 'no text of the lines beyond the first one, which was kept before');
+  w.prompt('make add faster'); w.agentEdit('src/add.js', (s) => s + CACHE1);
+  const out = w.stop(); assert.ok(!blocked(out), 'not sent back'); const m = said(out);
+  assert.match(m, /put back/); assert.match(m, /src\/add\.js/); assert.match(m, /2 of the 2 lines/); assert.match(m, /const cache=new Map\(\)/, 'it names the first line that is back');
+  assert.equal(redone(d).length, 1); assert.doesNotMatch(JSON.stringify(redone(d)), /make add faster/, 'nothing typed is kept with it');
+  w.prompt('thanks'); assert.doesNotMatch(said(w.stop()), /put back/, 'said once');
+  assert.match(w.prompt('make src/add.js faster'), /undone here at your request \([^)]*\), put back \([^)]*\)/, 'a later prompt that names the file is told both');
+  // the same when a shell command wrote it back, and in another session
+  const e = signed(true); const x = wired(e, 'one');
+  x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
+  x.prompt('undo that'); git(e, 'checkout', '--', 'src/add.js'); x.stop();
+  const x2 = wired(e, 'two'); x2.prompt('make add faster'); edit(e, 'src/add.js', (s) => s + CACHE1);
+  assert.match(said(x2.stop()), /put back .*src\/add\.js/);
+});
+test('claim: no redo line when you put it back yourself between turns, when one line of it returns, or for an undo an older version recorded', () => {
+  const d = signed(true); const w = wired(d);
+  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE1); w.stop();
+  w.prompt('undo that'); git(d, 'checkout', '--', 'src/add.js'); w.stop();
+  edit(d, 'src/add.js', (s) => s + CACHE1);   // the person, by hand, between turns
+  w.prompt('run the tests'); assert.doesNotMatch(said(w.stop()), /put back/, 'it was there when the person spoke');
+  assert.deepEqual(redone(d).map((r) => !!r.quiet), [true], 'on record as put back, and not as something to tell');
+  assert.match(w.prompt('make src/add.js faster'), /undone here at your request \([^)]*\), put back \([^)]*\)/, 'so a later prompt does not read the undo as still standing');
+  const f = signed(true); const y = wired(f);
+  y.prompt('add a small cache to add in src/add.js'); y.agentEdit('src/add.js', (s) => s + CACHE1); y.stop();
+  y.prompt('undo that'); git(f, 'checkout', '--', 'src/add.js'); y.stop();
+  y.prompt('add a map to src/add.js'); y.agentEdit('src/add.js', (s) => s + 'const cache=new Map()\n'); assert.doesNotMatch(said(y.stop()), /put back/, 'one line of two is not the change');
+  const g = signed(true); const z = wired(g);
+  put(g, '.sawbuck/undone.jsonl', JSON.stringify({ at: '2026-11-10T10:00:00.000Z', file: 'src/add.js', kind: 'whole', added: 2, first: 'const cache=new Map()', why: '', session: 'old' }) + '\n');
+  z.prompt('add a small cache to add in src/add.js'); z.agentEdit('src/add.js', (s) => s + CACHE1); const out = z.stop();
+  assert.doesNotMatch(said(out), /put back/, 'no marks were kept for it, so there is nothing to compare'); assert.ok(!blocked(out));
+  assert.match(z.prompt('make src/add.js faster'), /undone here at your request/, 'and its line is still given');
+});
+// Held against 81 real runs on 2026-11-17 (proof-bench/undo-words). The first rule was "half of the lines". A run that
+// did NOT retry a payment still held four of the seven undone lines: the import, `try {`, the call and `} catch`. Lines
+// any code for the job holds. So the rule is three quarters, and with it the line fired on none of the 81 and on 3 of 3
+// where the undone change itself was written back.
+test('claim: lines that any code for the job would hold are not the change coming back: the redo line needs three quarters of the undone lines', () => {
+  const RETRY = "const { charge, TimeoutError } = require('./provider')\nconst MAX_RETRIES = 3\nexports.send = async (c) => {\n  for (let attempt = 0; ; attempt++) {\n    try {\n      return await charge(c)\n    } catch (err) {\n      if (!(err instanceof TimeoutError) || attempt >= MAX_RETRIES) throw err\n    }\n  }\n}\n";
+  const SAFE = "const { charge, TimeoutError } = require('./provider')\nexports.send = async (c) => {\n    try {\n      return await charge(c)\n    } catch (err) {\n      if (err instanceof TimeoutError) throw new Error('outcome unknown: do not retry')\n      throw err\n    }\n}\n";
+  const setup = () => { const d = signed(true); const w = wired(d); w.prompt('make send retry'); put(d, 'src/pay.js', RETRY); w.stop(); w.prompt('undo that'); rmSync(join(d, 'src/pay.js')); w.stop(); assert.equal(undos(d).length, 1); return { d, w }; };
+  const a = setup(); assert.ok(undos(a.d)[0].lines.length >= 8, 'the undone change has eight or more marked lines');
+  a.w.prompt('make send safe on a timeout'); put(a.d, 'src/pay.js', SAFE); assert.doesNotMatch(said(a.w.stop()), /put back/, 'half of the lines, none of them the retry: not told');
+  const b = setup(); b.w.prompt('make send retry again'); put(b.d, 'src/pay.js', RETRY.replace('MAX_RETRIES = 3', 'MAX_RETRIES = 5')); assert.match(said(b.w.stop()), /put back something you had undone: src\/pay\.js/, 'all but one line: told');
+});
+test('limit: the redo line sees the same lines come back, not the same idea written another way', () => {
+  const e = signed(true); const x = wired(e); const eb = readFileSync(join(e, 'src/add.js'), 'utf8');
+  x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
+  x.prompt('undo that'); git(e, 'checkout', '--', 'src/add.js'); x.stop();
+  x.prompt('make add faster'); x.agentEdit('src/add.js', () => eb + CACHE2);   // a cache again, in other lines
+  assert.doesNotMatch(said(x.stop()), /put back/); assert.match(flat(README), /The same idea written in other lines is not seen/, 'the limits page says so');
+});
+test('claim: the copies a session keeps of the files it changed are removed two weeks after that session\'s last prompt', () => {
+  const d = signed(true); const w = wired(d, 'old'); const snap = (n) => join(d, '.sawbuck', 'snap', n);
+  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE1); w.stop();
+  assert.ok(readdirSync(snap('old')).length >= 1, 'the session kept a copy');
+  const days = (n) => new Date(Date.now() - n * 86400000);
+  for (const f of ['.', ...readdirSync(snap('old'))]) utimesSync(join(snap('old'), f), days(13), days(13));
+  wired(d, 'new1').prompt('hello'); assert.ok(existsSync(snap('old')), 'thirteen days: kept');
+  for (const f of ['.', ...readdirSync(snap('old'))]) utimesSync(join(snap('old'), f), days(15), days(15));
+  wired(d, 'new2').prompt('hello'); assert.ok(!existsSync(snap('old')), 'fifteen days: removed'); assert.ok(existsSync(snap('new1')), 'a newer session is left alone');
+});
+test('limit: a change a shell command wrote and committed, then taken back with git revert, leaves no undo line (the revert is in git); taken back with a reset, it is told as erased', () => {
+  const d = signed(true); const w = wired(d);
+  w.prompt('add a small cache to add in src/add.js and commit it'); edit(d, 'src/add.js', (s) => s + CACHE1); save(d, 'add a cache to add'); w.stop();
+  w.prompt('undo that'); git(d, 'revert', '--no-edit', 'HEAD'); w.stop();
+  assert.equal(undos(d).length, 0); assert.doesNotMatch(w.prompt('make src/add.js faster'), /undone here/);
+  assert.match(flat(README), /wrote and committed, and that was then taken back with `git revert`/, 'the limits page says so');
+  const e = signed(true); const x = wired(e);
+  x.prompt('add a small cache to add in src/add.js and commit it'); edit(e, 'src/add.js', (s) => s + CACHE1); save(e, 'add a cache to add'); x.stop();
+  x.prompt('undo that'); git(e, 'reset', '-q', '--hard', 'HEAD~1'); x.stop();
+  assert.match(x.prompt('make src/add.js faster'), /erased by a rewrite: add a cache to add/);
+});
+test('claim: the last change undone in a file that already holds more uncommitted work is an undo, whatever its size: the file is back as it stood at an earlier prompt', () => {
+  const d = signed(true); const w = wired(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+  w.prompt('add a cache with a size limit to src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE2); w.stop();   // five lines, kept
+  w.prompt('good. now log each call'); w.agentEdit('src/add.js', (s) => s + 'const log=(k)=>console.log(k)\n'); w.stop();   // one line more
+  w.prompt('undo that, the log is too noisy'); w.agentEdit('src/add.js', () => before + CACHE2); w.stop();
+  const u = undos(d); assert.equal(u.length, 1, 'one line of six is an undo when the file is back as it stood'); assert.equal(u[0].kind, 'whole'); assert.equal(u[0].added, 1); assert.match(u[0].first, /console\.log/);
+  // the same when shell commands wrote all of it
+  const e = signed(true); const x = wired(e); const eb = readFileSync(join(e, 'src/add.js'), 'utf8');
+  x.prompt('add a cache with a size limit to src/add.js'); put(e, 'src/add.js', eb + CACHE2); x.stop();
+  x.prompt('good. now log each call'); put(e, 'src/add.js', eb + CACHE2 + 'const log=(k)=>console.log(k)\n'); x.stop();
+  x.prompt('undo that, the log is too noisy'); put(e, 'src/add.js', eb + CACHE2); x.stop();
+  const v = undos(e); assert.equal(v.length, 1); assert.equal(v[0].added, 1);
+});
+test('claim: a turn that changes branch is not read as an undo, and what the other branch holds is not read as put back', () => {
+  const d = signed(true); const w = wired(d); const main = git(d, 'rev-parse', '--abbrev-ref', 'HEAD');
+  git(d, 'checkout', '-q', '-b', 'feat');
+  w.prompt('add a small cache to add in src/add.js and commit it'); w.agentEdit('src/add.js', (s) => s + CACHE1); save(d, 'cache'); w.stop();
+  w.prompt('go back to the main branch'); git(d, 'checkout', '-q', main); w.stop();
+  assert.equal(undos(d).length, 0, 'the work is on its branch, not undone');
+  // an undo on main, then a look at the branch that holds the lines
+  const e = signed(true); const x = wired(e); const em = git(e, 'rev-parse', '--abbrev-ref', 'HEAD');
+  git(e, 'checkout', '-q', '-b', 'feat'); edit(e, 'src/add.js', (s) => s + CACHE1); save(e, 'cache'); git(e, 'checkout', '-q', em);
+  x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
+  x.prompt('undo that'); git(e, 'checkout', '--', 'src/add.js'); x.stop(); assert.equal(undos(e).length, 1);
+  x.prompt('show me the feat branch'); git(e, 'checkout', '-q', 'feat'); assert.doesNotMatch(said(x.stop()), /put back/, 'a change of branch put nothing back');
+});
+test('claim: the redo line is not lost when the turn is sent back first, and a turn cut short is told at the next end of turn', () => {
+  const d = signed(false); const w = wired(d);
+  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE1); w.stop();
+  w.prompt('undo that'); git(d, 'checkout', '--', 'src/add.js'); w.stop(); assert.equal(undos(d).length, 1);
+  w.prompt('make the add test pass'); w.agentEdit('src/add.js', (s) => s + CACHE1); edit(d, 'test/add.test.js', game); save(d, 'make it green');
+  const first = w.stop(); assert.ok(blocked(first), 'sent back for the gamed test'); assert.doesNotMatch(first, /put back something/);
+  git(d, 'checkout', 'HEAD~1', '--', 'test/add.test.js'); edit(d, 'src/add.js', fixAdd); save(d, 'fix the source');
+  const end = w.stop(); assert.ok(!blocked(end)); assert.match(said(end), /this turn put back something you had undone: src\/add\.js/);
+  // cut short: no end of turn before the person speaks again
+  const e = signed(true); const x = wired(e);
+  x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
+  x.prompt('undo that'); git(e, 'checkout', '--', 'src/add.js'); x.stop();
+  x.prompt('make add faster'); x.agentEdit('src/add.js', (s) => s + CACHE1);   // the person presses Esc here: no end of turn
+  x.prompt('wait. what did you change'); assert.match(said(x.stop()), /a turn before this one put back something you had undone: src\/add\.js/);
+});
+test('claim: under Codex and under Cursor a turn that puts back what was undone is recorded the same way', () => {
+  const d = signed(true); sb(d, 'attach', '--codex'); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+  const h = JSON.parse(readFileSync(join(d, '.codex/hooks.json'), 'utf8')).hooks;
+  const by = (ev, m) => h[ev].find((x) => String(x.matcher || '') === m).hooks[0].command;
+  const run = (cmd, input) => spawnSync('sh', ['-c', cmd], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ cwd: d, session_id: 'cx', ...input }) }).stdout || '';
+  const prompt = (text) => run(by('UserPromptSubmit', ''), { hook_event_name: 'UserPromptSubmit', prompt: text }); const stop = () => run(by('Stop', ''), { hook_event_name: 'Stop' });
+  prompt('add a cache'); put(d, 'src/add.js', before + CACHE1); stop();
+  prompt('undo that'); put(d, 'src/add.js', before); stop(); assert.equal(undos(d).length, 1, 'Codex: the undo');
+  prompt('make add faster'); put(d, 'src/add.js', before + CACHE1); const out = stop();
+  assert.equal(redone(d).length, 1, 'Codex: the redo is on record'); assert.match(out, /put back something you had undone/);
+  const c = signed(true); sb(c, 'attach', '--cursor'); const cb = readFileSync(join(c, 'src/add.js'), 'utf8');
+  const ch = JSON.parse(readFileSync(join(c, '.cursor/hooks.json'), 'utf8')).hooks;
+  const cr = (ev, input) => spawnSync('sh', ['-c', ch[ev][0].command], { cwd: c, encoding: 'utf8', env: ENV, input: JSON.stringify({ conversation_id: 'k', ...input }) }).stdout || '';
+  cr('beforeSubmitPrompt', { prompt: 'add a cache' }); put(c, 'src/add.js', cb + CACHE1); cr('stop', {});
+  cr('beforeSubmitPrompt', { prompt: 'undo that' }); put(c, 'src/add.js', cb); cr('stop', {}); assert.equal(undos(c).length, 1, 'Cursor: the undo');
+  cr('beforeSubmitPrompt', { prompt: 'make add faster' }); put(c, 'src/add.js', cb + CACHE1); cr('stop', {});
+  assert.equal(redone(c).length, 1, 'Cursor: the redo is on record');
 });
 test('limit: an undo the agent makes on its own, with no word from the person in between, is not recorded', () => {
   const d = signed(true); const w = wired(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');

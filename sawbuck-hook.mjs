@@ -16,7 +16,7 @@ import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { readAllowed, keptOnTree } from './allowed.mjs';
 import { cli, olderSaid } from './copies.mjs';
-import { undoJudge } from './undo.mjs';
+import { undoJudge, redoJudge, redoDue, redoTold, redoLine } from './undo.mjs';
 const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const by = flag('--by', '');   // attribution from the harness wiring: the Claude hook passes 'claude', the raw-git hook passes nothing
 // nothing this hook finds is handed on to any notes unless the repo is attached with --words (share.mjs reads this)
@@ -100,6 +100,8 @@ if (stop) {
   for (const e of undoJudge(repo, hookInput.session_id, st.lastPrompt || '')) {
     await shareFinding(repo, { kind: 'undone', title: `${e.kind === 'part' ? 'partly undone' : 'undone'}: ${e.first || e.file} in ${e.file}`, text: e.why || `An edit to ${e.file} was undone at the person's request.`, files: [e.file] }).catch(() => {});
   }
+  // and what was undone before and is in its file again since the person spoke: recorded here, told below
+  redoJudge(repo, hookInput.session_id, { end: true });
 }
 
 // 2) WHAT IS STILL OPEN (0.2.0). A gamed win this hook caught that nothing has settled. Kept as a short list in the
@@ -444,8 +446,12 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     openSaid = `Sawbuck: a test change from an earlier turn is still open: ${o.file || posts[0]}, commit ${String(o.sha).slice(0, 8)}${others}. This turn was not sent back for it. Your call: (1) fix the source and keep the test as it was; (2) put the test back: git checkout ${from12} -- ${posts.join(' ')}, then commit; (3) if the test change is right, accept it: ${cli(last ? 'check --allow "<why>"' : `check --base ${from12} --allow "<why>"`)}. Told ${o.told} of ${remindTurns} times.`;
   }
 }
-// what the person is told when a turn ends, with the open line after it when there is one
-const tell = (msg) => process.stdout.write(JSON.stringify({ systemMessage: [msg, openSaid].filter(Boolean).join(' ') }));
+// THE REDO LINE (undo.mjs): something the person had undone is in its file again, and they have not been told. It
+// waits for an end of turn that tells, so a turn that ends on a send-back loses nothing. Never a block: they may have
+// asked for it.
+const redoSaid = (stop && !process.env.SAWBUCK_NO_ENFORCE) ? redoLine(repo, hookInput.session_id, redoDue(repo)) : '';
+// what the person is told when a turn ends, with the open line and the redo line after it when there are any
+const tell = (msg) => { if (redoSaid) redoTold(repo); process.stdout.write(JSON.stringify({ systemMessage: [msg, openSaid, redoSaid].filter(Boolean).join(' ') })); };
 
 // 3a) A DEPENDENCY EDITED IN PLACE: the check's clean copy borrows node_modules and the venv from the working tree, so
 // an edit made inside them is in no diff and a green that leans on it cannot be proved (outside-git bench, 2026-11-11:
@@ -498,7 +504,7 @@ if (stop && st.wordsRemoved && !st.wordsRemovedTold) {
 }
 
 // 3x, said alone when nothing above had anything to say
-if (openSaid) {
+if (openSaid || redoSaid) {
   st.shownTotal = total; saveState('ends');
   tell('');
   process.exit(0);

@@ -16,7 +16,7 @@ import { recordAllowed, allowedBlock } from './allowed.mjs';
 import { readGuard, writeGuard, detachGuard, ownOf, guardPath, turnOpen } from './guard.mjs';
 import { ripplesReport } from './ripples.mjs';
 import { profileCli } from './profile.mjs';
-import { undoHook, undoCodex, undoCursor, undoMark, undoJudge, EDIT_MATCHER } from './undo.mjs';
+import { undoHook, undoCodex, undoCursor, undoMark, undoJudge, redoJudge, EDIT_MATCHER } from './undo.mjs';
 import { dependencyEditFromHook } from './deps.mjs';
 import { holdDecision, ownRecordEdit } from './hold.mjs';
 import { steersReport } from './steers.mjs';
@@ -481,6 +481,7 @@ switch (cmd) {
         // from a background task is not the person speaking: the turn it belongs to goes on with the picture it has.
         if (!/^\s*<task-notification>/.test(promptText)) {
           for (const e of undoJudge(repo, session, st.lastPrompt || '')) shareFinding(repo, undoFinding(e)).catch(() => {});
+          redoJudge(repo, session);   // the same for what such a turn put back: the next end of turn tells it
           undoMark(repo, session);
         }
         framed = !!session && st.framedSession === session;
