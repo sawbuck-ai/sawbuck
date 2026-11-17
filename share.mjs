@@ -4,7 +4,7 @@
 // "<dir>"}}). A sink that is not there is skipped in silence; nothing is read back. Measured, twin bench 2026-11-08: a
 // correction that lived only in the person's words came back 18 of 36 times through a memory layer's own notes and 0 to 2
 // of 36 as a written rule, so the CLAUDE.md line stays the carrier and this adds reach. The check is not pluggable; this is.
-import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { homedir, userInfo } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -63,6 +63,25 @@ const sinks = {
   },
 };
 
+// The notes this file wrote for a repo, for `detach --purge`: each carries `source: sawbuck` in its front matter, in
+// Claude Code's notes folder for the repo and in the Markdown folder the repo names. A note a person wrote there, and a
+// line of theirs in the index, is not ours. What a claude-mem worker was sent is in that tool, not in a file here.
+const oursNote = (f) => { try { const m = /^---\n([\s\S]*?)\n---/.exec(readFileSync(f, 'utf8')); return !!m && /^\s*source: sawbuck\s*$/m.test(m[1]); } catch { return false; } };
+export function handedOnNotes(repo, { home = homedir() } = {}) {
+  const c = config(repo); const dirs = [projectMemoryDir(repo, home)];
+  if (c.markdown) dirs.push(isAbsolute(c.markdown) ? c.markdown : join(repo, c.markdown));
+  const files = [];
+  for (const d of dirs) { let names = []; try { names = readdirSync(d); } catch {} for (const n of names) if (n.endsWith('.md') && oursNote(join(d, n))) files.push(join(d, n)); }
+  // the index Claude Code loads: our lines are the ones that link a note of ours
+  const idx = join(dirs[0], 'MEMORY.md'); let index = null;
+  try { const had = readFileSync(idx, 'utf8'); const gone = new Set(files.filter((f) => f.startsWith(dirs[0])).map((f) => f.slice(dirs[0].length + 1))); const kept = had.split('\n').filter((l) => ![...gone].some((n) => l.includes(`](${n})`))); if (kept.length !== had.split('\n').length) index = { file: idx, text: kept.join('\n') }; } catch {}
+  // and where the record says a note went (0.1.74 on), for a note in a folder the config no longer names. Only a file
+  // that still carries our mark: the record is a file anyone can write, and this list is deleted from.
+  let toWorker = 0;
+  try { for (const l of readFileSync(join(repo, '.sawbuck', 'shared.jsonl'), 'utf8').split('\n').filter(Boolean)) { let e; try { e = JSON.parse(l); } catch { continue; } if (e.sink === 'claude-mem') toWorker++; else if (typeof e.where === 'string' && e.where.endsWith('.md') && !files.includes(e.where) && oursNote(e.where)) files.push(e.where); } } catch {}
+  return { files, index, toWorker };
+}
+
 // finding = { kind: rule | revert | gamed, title, text?, files? }. Returns one entry per sink tried.
 export async function shareFinding(repo, finding, { home = homedir(), to = null, timeoutMs = 800 } = {}) {
   const f = { kind: KINDS.includes(finding.kind) ? finding.kind : 'rule', title: String(finding.title || '').trim(), text: String(finding.text || '').trim(), files: finding.files || [] };
@@ -76,7 +95,7 @@ export async function shareFinding(repo, finding, { home = homedir(), to = null,
     const key = createHash('sha256').update(`${name}\n${f.title}\n${f.text}`).digest('hex').slice(0, 16);
     if (seen.includes(`"key":"${key}"`)) { out.push({ sink: name, skipped: 'already shared' }); continue; }
     let r; try { r = await sinks[name](repo, f, { home, timeoutMs }); } catch (e) { r = { skipped: String(e.message || e) }; }
-    if (r.where) { try { mkdirSync(join(repo, '.sawbuck'), { recursive: true }); appendFileSync(log, JSON.stringify({ key, sink: name, kind: f.kind, title: f.title, at: new Date().toISOString() }) + '\n'); } catch {} }
+    if (r.where) { try { mkdirSync(join(repo, '.sawbuck'), { recursive: true }); appendFileSync(log, JSON.stringify({ key, sink: name, kind: f.kind, title: f.title, at: new Date().toISOString(), ...(name === 'claude-mem' ? {} : { where: r.where }) }) + '\n'); } catch {} }
     out.push({ sink: name, ...r });
   }
   return out;

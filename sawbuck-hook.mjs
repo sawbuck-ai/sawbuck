@@ -18,6 +18,8 @@ import { readAllowed, keptOnTree } from './allowed.mjs';
 import { cli, olderSaid } from './copies.mjs';
 const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const by = flag('--by', '');   // attribution from the harness wiring: the Claude hook passes 'claude', the raw-git hook passes nothing
+// nothing this hook finds is handed on to any notes unless the repo is attached with --words (share.mjs reads this)
+if (!process.argv.includes('--words')) process.env.SAWBUCK_SHARE = 'none';
 const stop = process.argv.includes('--stop');   // wired as the Claude Code Stop hook: enforce the contract on a gamed turn
 // user-level wiring passes no --repo: the hook runs in whatever cwd the session has, so it resolves the
 // repository root itself (a subdirectory belongs to its repo) and leaves a non-repository alone: no
@@ -474,6 +476,14 @@ if (depSaid) {
 if (recordRemoved) {
   st.shownTotal = total; saveState('ends');
   tell('Sawbuck: its record for this repo (.sawbuck/) was removed or made unreadable during this turn. It was rebuilt from a second copy, and the turn was checked again from the commit it began at. If you did not do that, look at what this turn did.');
+  process.exit(0);
+}
+
+// 3w) WORDS A VERSION BEFORE 0.2.0 KEPT HERE WERE TAKEN OUT. The prompt hook did it, when it found this repo attached
+// without --words (sawbuck.mjs). The person is told, once.
+if (stop && st.wordsRemoved && !st.wordsRemovedTold) {
+  st.wordsRemovedTold = true; saveState('ends');
+  tell(`Sawbuck: from 0.2.0 it keeps none of what you type in this repo. What an older version kept was removed from its record (.sawbuck/): the start of your last prompt, and your words saved with an undo (${st.wordsRemoved} ${st.wordsRemoved === 1 ? 'place' : 'places'}; the undo itself is kept). To keep your words as before: ${cli('attach --words')}. The sawbuck-reins plugin attaches that way.`);
   process.exit(0);
 }
 

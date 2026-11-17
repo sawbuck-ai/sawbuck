@@ -10,7 +10,7 @@
 import './pipe.mjs';
 import { execFileSync } from 'node:child_process';
 import { erasedBlock, erasedCommits } from './rewrites.mjs';
-import { shareFinding } from './share.mjs';
+import { shareFinding, handedOnNotes } from './share.mjs';
 import { ledgerCli } from './ledger.mjs';
 import { recordAllowed, allowedBlock } from './allowed.mjs';
 import { readGuard, writeGuard, detachGuard, ownOf, guardPath, turnOpen } from './guard.mjs';
@@ -23,7 +23,7 @@ import { steersReport } from './steers.mjs';
 import { rulesCli } from './rules.mjs';
 import { shapeCli } from './shape.mjs';
 import { ensureExcluded, clearExcluded, EXCLUDED, RECORD_DIRS } from './exclude.mjs';
-import { repoState, hooksIn, OURS, S_START } from './repo-state.mjs';
+import { repoState, hooksIn, OURS, S_START, WORDS, wordsIn } from './repo-state.mjs';
 import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, rmdirSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -127,14 +127,18 @@ Usage:
                             notes from what your git history shows actually breaks, plus a short guide in
                             AGENTS.md (--no-agent-block to skip). Wizard in a terminal, non-interactive in
                             a pipe/CI (or --yes). An existing config needs --force.
-  sawbuck attach [repo] [--user | --shared | --git | --codex | --cursor] [--dry-run]
+  sawbuck attach [repo] [--user | --shared | --git | --codex | --cursor] [--words | --no-words] [--dry-run]
                             Watch every Claude Code turn in this repo: protected paths at the end of each
                             turn, a source-only re-run on each commit. --user: every repo that has a
                             promptwheel.config.json. --shared: a tracked settings file a team commits.
                             --git: a post-commit hook, for any other agent or none (commits in a linked
                             worktree are not checked). --codex: the same hooks for Codex in
                             .codex/hooks.json (trust them once in Codex's /hooks). --cursor: the check and
-                            the hold for Cursor in .cursor/hooks.json. --dry-run prints every file it would write
+                            the hold for Cursor in .cursor/hooks.json. --dry-run prints every file it would write.
+                            These hooks keep none of what you type. --words turns that on: the start of
+                            your latest prompt in the record, your words saved with an undo, findings handed
+                            on to the notes on this machine. It stays on until --no-words. For the Claude
+                            Code hooks; the sawbuck-reins plugin attaches with --words
   sawbuck detach [repo] [--user] [--all] [--verify] [--purge] [--dry-run]
                             Remove the hooks (no flag: whatever is wired here; --all: every repo). The
                             record stays, kept out of git status; --purge deletes it. --verify proves the
@@ -223,10 +227,10 @@ if (rest.includes('--help') || rest.includes('-h')) {
 const KNOWN = {
   contract: ['--dry-run', '--full', '--strict'],
   init: ['--yes', '-y', '--wizard', '--no-investigate', '--no-agent-block', '--force', '--preset'],
-  attach: ['--user', '--shared', '--git', '--dry-run', '--claude', '--codex', '--cursor'],
+  attach: ['--user', '--shared', '--git', '--dry-run', '--claude', '--codex', '--cursor', '--no-words', '--words'],
   detach: ['--user', '--all', '--verify', '--purge', '--dry-run', '--claude', '--codex', '--cursor'],
   doctor: ['--all'],
-  status: ['--json', '--log', '-n'],
+  status: ['--json', '--log', '-n', '--words'],
   steering: ['--json', '--all'],
 };
 if (KNOWN[cmd]) { const bad = rest.filter((a) => a.startsWith('-') && !KNOWN[cmd].includes(a)); if (bad.length) usage(`unknown flag ${bad.join(' ')} for ${cmd} (it takes ${KNOWN[cmd].filter((f) => f !== '--claude').join(', ')})`); }
@@ -408,6 +412,7 @@ switch (cmd) {
     break;
   }
   case 'turn': {
+    if (!flags.has(WORDS)) process.env.SAWBUCK_SHARE = 'none';   // not attached with --words: a reverted attempt this hook recovers is not handed on to any notes
     // the ONE per-prompt hook. The agent gets the contract frame once a session and again after a compaction: one
     // written statement held in every bench, so saying it on each prompt only spends context. The relevant history
     // is on demand (`sawbuck context`), and per turn only with {"turn":{"context":true}} in sawbuck.config.json.
@@ -473,7 +478,11 @@ switch (cmd) {
         { const g = readGuard(repo); writeGuard(repo, { own: { ...((g.own && typeof g.own === 'object' && !Array.isArray(g.own)) ? g.own : ownOf(st)), turnOpen: true } }); }
         framed = !!session && st.framedSession === session;
         if (session) st.framedSession = session;
-        st.lastPrompt = promptText.replace(/\s+/g, ' ').trim().slice(0, 240);   // the person's words, for an undo record (local, git-excluded)
+        // the person's words, for an undo record (local, git-excluded): only where the repo is attached with --words.
+        // Without it nothing typed is kept, and words a version before 0.2.0 kept here are taken out once: the prompt
+        // text now, the words saved with each undo (the undo itself stays). The end of the turn says so, once.
+        if (flags.has(WORDS)) { st.lastPrompt = promptText.replace(/\s+/g, ' ').trim().slice(0, 240); delete st.wordsOff; }
+        else { const had = (st.lastPrompt !== undefined ? 1 : 0) + (st.wordsOff ? 0 : scrubUndoWords(repo)); delete st.lastPrompt; st.wordsOff = true; if (had) st.wordsRemoved = (st.wordsRemoved || 0) + had; }
         st.lastPromptAt = now;   // every prompt, mandates or not: the walls key their block budgets on it when the harness sends no prompt_id
         mkdirSync(stDir, { recursive: true }); writeFileSync(stPath, JSON.stringify(st, null, 2) + '\n');
       } catch { /* the frame never fails a prompt */ }
@@ -515,9 +524,13 @@ switch (cmd) {
     const top = gitTop(repoArg());
     if (!top && !user) usage(gitRefuses(repoArg()) || `${repoArg()} is not a git repository (attach wires one; run it inside your project, or name its path)`);
     const repo = top || repoArg();
+    const words = flags.has(WORDS), noWords = flags.has('--no-words');
+    if (noWords && words) usage('attach takes --words or --no-words, not both');
+    // the switch is written into the Claude Code hook lines; a mode it does not reach says so, never a silent no-op
+    if ((noWords || words) && (git || codex || cursor)) usage(`${words ? WORDS : '--no-words'} is for the Claude Code hooks (attach, attach --shared, attach --user). The ${git ? 'git hook keeps' : 'Codex and Cursor hooks keep'} no prompt text and hand nothing on.`);
     if (codex) { wireCodex(repo); break; }
     if (cursor) { wireCursor(repo); break; }
-    if (git) wireGit(repo); else wireClaude(repo, { user, shared });
+    if (git) wireGit(repo); else wireClaude(repo, { user, shared, noWords, words });
     if (!dry) verifyAttach(repo);
     break;
   }
@@ -598,6 +611,7 @@ switch (cmd) {
     break;
   }
   case 'undo': {
+    if (!flags.has(WORDS)) process.env.SAWBUCK_SHARE = 'none';   // not attached with --words: an undo is recorded here and handed on nowhere
     // the undo ledger's hook, wired by attach on PreToolUse and PostToolUse for the edit tools. Before an edit: snapshot
     // the file once per session. After one: a file back at its snapshot, after a change and after a word from the person,
     // is an undo; it is recorded with what the change had added and the person's words, and handed to the memory sinks.
@@ -943,10 +957,17 @@ function wireClaude(repo, opts) {
   // that hook before the first prompt's), one line asks npm for the pinned version, without --prefer-offline
   const warm = `${NPX_ASK} sawbuck@${version} __warm`;
   const WARM_AT = ['startup', 'resume'];
-  const ctx = run(here ? 'turn --hook' : `turn --hook ${JSON.stringify(repo)}`);
-  const chk = run(here ? '__hook --by claude --stop' : `__hook --repo ${JSON.stringify(repo)} --by claude --stop`);
+  // --words (0.2.0): keep what a person types, for the undo and the notes. Off unless asked for. The switch is a word on
+  // the three hook lines that could keep or hand on such words, because the lines are the one thing every way of
+  // attaching has: a team file carries it to each clone. Once on it stays on through a plain attach (an update, the
+  // other plugin's contract command) until --no-words.
+  const hadWords = fileExisted && wordsIn(f);
+  const keep = !!opts.words || (hadWords && !opts.noWords);
+  const q = keep ? ` ${WORDS}` : '';
+  const ctx = run((here ? 'turn --hook' : `turn --hook ${JSON.stringify(repo)}`) + q);
+  const chk = run((here ? '__hook --by claude --stop' : `__hook --repo ${JSON.stringify(repo)} --by claude --stop`) + q);
   const hold = run(here ? 'hold --hook' : `hold --hook ${JSON.stringify(repo)}`);
-  const undo = run(here ? 'undo --hook' : `undo --hook ${JSON.stringify(repo)}`);
+  const undo = run((here ? 'undo --hook' : `undo --hook ${JSON.stringify(repo)}`) + q);
   // attached already? "already attached" only when every hook of THIS version is present; an older
   // attachment (say, without the SessionStart[compact] hook) is upgraded in place, never left stale.
   let upgrading = false;
@@ -971,6 +992,7 @@ function wireClaude(repo, opts) {
       baseline ? `write   ${stPath}  (the turn baseline, so this turn's own signing is not read as the agent's)` : null,
       baseline && !readGuard(repo).baseline ? `write   ${guardPath(repo)}  (the same baseline a second time, in the git folder: what the end of a turn is checked from)` : null,
       `write   ${regPath()}  (the list of attached repos, for detach --all)`,
+      keep ? `${WORDS}: the hook lines carry it` : 'these hooks keep none of what you type; words a version before 0.2.0 kept under .sawbuck/ would be removed',
     ].filter(Boolean)));
     return;
   }
@@ -1015,10 +1037,34 @@ function wireClaude(repo, opts) {
   regAdd(repo, mode);
   const kind = user ? 'USER-LEVEL' : shared ? 'shared project' : 'project';
   out(upgrading ? `sawbuck: updated the ${kind} Claude Code hooks in ${f} to this version` : `sawbuck: wired ${kind} Claude Code hooks in ${f}`);
+  if (keep) out(`  ${WORDS}: these hooks keep the first 240 characters of your latest prompt, save your words with an undo, and hand findings on to the notes on this machine. It stays on until attach --no-words.`);
+  else {
+    const n = user ? 0 : scrubWords(repo);
+    out(`  These hooks keep none of what you type: no prompt text in the record, an undo recorded without your words, nothing handed on to notes.${n ? ` Removed the words already kept here (${n} ${n === 1 ? 'place' : 'places'}).` : ''} attach --words turns that on.`);
+  }
   if (shared) out(`  commit ${relative(repo, f)} so the team gets the check. It runs sawbuck ${version} through npx on every machine, and asks npm for that version once where a session starts.`);
   if (shared && protectedAmong(repo, [relative(repo, f)]).length) out(`  That file is a protected path in this repo, so the check on its commit reads "sent back" unless a person passes --allow "team hooks" (on a pull request: a comment from someone who did not open it, sawbuck-allow: team hooks).`);
   if (!user && !existsSync(join(repo, 'AGENTS.md')) && !existsSync(join(repo, 'CLAUDE.md'))) out('  no written rule here yet, and that is what changes the agent: run sawbuck contract.');
   if (user) out('  profile-switches by cwd: memory in any git repo, the check where a promptwheel.config.json exists.');
+}
+// The words already kept in a repo's record, removed where it is attached without --words: the prompt text in the state
+// file, and the words saved with each undo (the undo itself stays: the file, the time, the line that was undone).
+// Returns how many places held some. A reason given with --allow stays: the person handed it to the command on
+// purpose. Notes already handed on are not touched here: `detach --purge` removes those.
+function scrubUndoWords(repo) {
+  const up = join(repo, '.sawbuck', 'undone.jsonl');
+  try {
+    let hit = 0;
+    const lines = readFileSync(up, 'utf8').split('\n').filter(Boolean).map((l) => { try { const e = JSON.parse(l); if (e && e.why) { e.why = ''; hit++; } return JSON.stringify(e); } catch { return l; } });
+    if (hit) writeFileSync(up, lines.join('\n') + '\n');
+    return hit;
+  } catch { return 0; /* no undo recorded */ }
+}
+function scrubWords(repo) {
+  let n = 0;
+  const sp = join(repo, '.sawbuck', 'state.json');
+  try { const st = JSON.parse(readFileSync(sp, 'utf8')); if (st.lastPrompt !== undefined) { delete st.lastPrompt; st.wordsOff = true; writeFileSync(sp, JSON.stringify(st, null, 2) + '\n'); n++; } } catch { /* no record yet */ }
+  return n + scrubUndoWords(repo);
 }
 function unwireClaude(repo, { user }) {
   const mp = user ? userManifestPath() : manifestPath(repo);
@@ -1169,6 +1215,15 @@ function unwireCursor(repo, { quiet } = {}) {
 function purgeRecord(repo) {
   let n = 0;
   const purge = (p) => { if (!there(p)) return; dropFile(p, 'the record'); n++; say(`sawbuck: purged ${p}`); };
+  // The notes sawbuck handed on for this repo go with the record (0.1.74). Until then a purge left them where they
+  // were put, the person's own typed words in the undo note among them (proof-bench/privacy-words, 2026-11-16). Read
+  // before the record goes: it says how many were also sent to a claude-mem worker, which no file here holds.
+  try {
+    const notes = handedOnNotes(repo);
+    for (const f of notes.files) { dropFile(f, 'a note sawbuck handed on'); n++; say(`sawbuck: purged ${f}`); }
+    if (notes.index) { if (notes.index.text.trim()) putFile(notes.index.file, notes.index.text, 'the notes index, without the lines for those notes'); else dropFile(notes.index.file, 'the notes index, which held only those lines'); }
+    if (notes.toWorker) say(`sawbuck: ${notes.toWorker} ${notes.toWorker === 1 ? 'finding was' : 'findings were'} also sent to a claude-mem worker on this machine. Those are kept by that tool, not in a file here: remove them there.`);
+  } catch { /* a notes folder that cannot be read is left as it is */ }
   for (const d of RECORD_DIRS) {
     // a committed LOGBOOK.md or JOURNEY.md is the person's file, not our record
     try { if (execFileSync('git', ['-C', repo, 'ls-files', '--', d], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()) continue; } catch {}

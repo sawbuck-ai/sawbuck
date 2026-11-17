@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { repoState } from './repo-state.mjs';
+import { repoState, keepsWords } from './repo-state.mjs';
 import { readSteers, groupSteers } from './steers.mjs';
 import { ledgerState } from './ledger.mjs';
 import { readUndone } from './undo.mjs';
@@ -35,7 +35,10 @@ const ICON = { verified: '✓', gamed: '🚩', regression: '✗', inconclusive: 
 // results.json holds the all-time catch tally (gamed + regression, never trimmed); activity.jsonl is
 // the recent per-check feed (verified included, capped ~200). We read both and keep each honest.
 const { results, caught: catchesAllTime, state: kind, steer, armed, hasConfig, wired } = repoState(repo);
-const repeatedAll = groupSteers(readSteers().steers).filter((g) => g.n >= 3 && g.sessions >= 2);
+// the steers a plugin's judge kept from past sessions are read only where the repo is attached with --words, or when
+// the caller asks for them (the sawbuck-reins plugin's own status command passes --words)
+const wordsHere = keepsWords(repo);
+const repeatedAll = (wordsHere || process.argv.includes('--words')) ? groupSteers(readSteers().steers).filter((g) => g.n >= 3 && g.sessions >= 2) : [];
 // this repo's own first; one said elsewhere on this machine is listed with the repos it came from, so a fresh repo is not told it said it here
 const sameRepo = (r) => { try { return r === repo || resolve(r) === repo || basename(r) === basename(repo); } catch { return false; } };
 const repeated = [...repeatedAll.filter((g) => g.repos.some(sameRepo)), ...repeatedAll.filter((g) => !g.repos.some(sameRepo))];
@@ -126,6 +129,7 @@ if (steer) {
   out.push('');
   out.push(`   Steer rate  ·  ${steer.rate}% of your recent turns redirected the agent (${steer.scored} scored, recent-window average)`);
 }
+if (wordsHere) { out.push(''); out.push('   Words  ·  kept here (attached with --words): the start of your latest prompt, your words with an undo, notes handed on. `sawbuck attach --no-words` turns it off'); }
 // what you keep saying, across repos: a steer the judge kept 3 times in 2 sessions is a rule waiting to be written
 if (repeated.length) {
   out.push('');

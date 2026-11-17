@@ -31,6 +31,18 @@ export function wiredBy(repo, home = homedir()) {
   return hooksIn(join(home, '.claude', 'settings.json')) ? 'user' : '';
 }
 
+// WHAT A PERSON TYPES IS KEPT ONLY WHERE THE HOOK LINES SAY `--words` (0.2.0). A plain attach keeps none of it: no
+// prompt text in the record, an undo without the person's words, nothing handed on to any notes, no kept steers read.
+// `sawbuck attach --words` writes the word onto the hook lines, and the sawbuck-reins plugin attaches that way: that
+// plugin is the part that is about what a person types. The lines are the one thing every way of attaching has (the
+// project file, a team file a clone brings, the user-level file). Read by `status` and by attach itself.
+export const WORDS = '--words';
+const hookCommands = (f) => { try { return Object.values(JSON.parse(readFileSync(f, 'utf8')).hooks || {}).flat().flatMap((h) => (h && Array.isArray(h.hooks)) ? h.hooks : []).map((x) => String((x && x.command) || '')); } catch { return []; } };
+export const wordsIn = (f) => hookCommands(f).some((c) => OURS.test(c) && /\bturn --hook\b/.test(c) && /(^|\s)--words(\s|;|$)/.test(c));
+export function keepsWords(repo, home = homedir()) {
+  return [join(repo, '.claude', 'settings.local.json'), join(repo, '.claude', 'settings.json'), join(home, '.claude', 'settings.json')].some(wordsIn);
+}
+
 export function repoState(repo) {
   const record = (f) => { try { return JSON.parse(readFileSync(join(repo, '.sawbuck', f), 'utf8')); } catch { return null; } };
   const has = (f) => existsSync(join(repo, f));

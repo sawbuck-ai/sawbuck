@@ -572,13 +572,13 @@ test('claim: attach --shared in a repo that already has its rules says the commi
 test('claim: it sends a turn back up to three times by default, then lets it end', () => { const d = signed(true); const w = wired(d); w.prompt(); put(d, '.npmrc', 'x\n'); const seen = []; for (let i = 0; i < 4; i++) seen.push(blocked(w.stop())); assert.deepEqual(seen, [true, true, true, false]); });
 
 test('claim: a blocked protected path counts as one catch, however many send-backs', () => { const d = signed(true); const w = wired(d); w.prompt(); put(d, '.npmrc', 'x\n'); w.stop(); w.stop(); w.stop(); assert.match(sb(d, 'statusline').out, /1 caught/); assert.match(sb(d, 'status').out, /1 protected path/); assert.equal(readFileSync(join(d, '.sawbuck/activity.jsonl'), 'utf8').trim().split('\n').filter((l) => l.includes('"mandate"')).length, 1); });
-test('claim: a gamed catch is handed to the memory running on this machine before the hook exits', async () => {
+test('claim: a gamed catch is handed to the memory running on this machine before the hook exits, where the repo is attached with --words', async () => {
   // a fake claude-mem worker in this process; the hook must await the hand-off, since it exits the process to block the stop
   const got = []; const srv = createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => { got.push({ url: req.url, body: b }); res.setHeader('content-type', 'application/json'); res.end(req.url === '/api/health' ? '{"status":"ok"}' : '{"success":true,"id":1}'); }); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const home = mkdtempSync(join(tmpdir(), 'claims-mem-home-')); mkdirSync(join(home, '.claude-mem'), { recursive: true }); writeFileSync(join(home, '.claude-mem', '.worker.port'), String(srv.address().port));
   try {
-    const d = signed(false); const w = wired(d); w.prompt();
+    const d = signed(false); const w = wiredWords(d); w.prompt();
     edit(d, 'test/add.test.js', (s) => s.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
     const cmd = JSON.parse(readFileSync(join(d, '.claude/settings.local.json'), 'utf8')).hooks.Stop[0].hooks[0].command;
     const out = await new Promise((res) => { const p = execFile('sh', ['-c', cmd], { cwd: d, encoding: 'utf8', env: { ...ENV, HOME: home } }, (err, stdout) => res(stdout || '')); p.stdin.end(JSON.stringify({ hook_event_name: 'Stop', cwd: d, session_id: 'mem' })); });
@@ -645,8 +645,8 @@ test('claim: after detach the record stays but says detached, so nothing reads i
 });
 // ------------------------------------------------------------ "what it tried and undid comes back, and the record stops it" (attempts bench: 27 of 27 vs 0 of 27)
 const cacheLine = (s) => s.replace('exports.add=(a,b)=>a+b', 'const cache=new Map()\nexports.add=(a,b)=>{const k=a+","+b;if(cache.has(k))return cache.get(k);const v=a+b;cache.set(k,v);return v}');
-test('claim: an edit the person had undone in a session comes back with the prompt that names the file, in their own words', () => {
-  const d = signed(true); const w = wired(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+test('claim: an edit the person had undone in a session comes back with the prompt that names the file, in their own words where the repo is attached with --words', () => {
+  const d = signed(true); const w = wiredWords(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
   w.prompt('add is slow, speed it up'); w.agentEdit('src/add.js', cacheLine);   // the agent adds a cache
   w.prompt('Undo that. A stale cache logged people out after a password reset last time.'); w.agentEdit('src/add.js', () => before);   // the person says undo, the agent restores the file
   w.stop();
@@ -659,14 +659,14 @@ test('claim: an edit the person had undone in a session comes back with the prom
   assert.match(sb(d, 'status').out, /1 undone in a session at your request/);
 });
 test('claim: a partial undo is kept too: the person said no to part of the change and the agent took that part out', () => {
-  const d = signed(true); const w = wired(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+  const d = signed(true); const w = wiredWords(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
   w.prompt('add is slow, add a cache and a log line'); w.agentEdit('src/add.js', (s) => s + 'const cache=new Map()\nconst hits=0\nfunction log(k){console.log(k)}\n');
   w.prompt('Drop the cache, it logged people out before. Keep the log line.'); w.agentEdit('src/add.js', () => before + 'function log(k){console.log(k)}\n');
   const u = readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.equal(u.length, 1); assert.equal(u[0].kind, 'part'); assert.match(u[0].first, /cache/); assert.match(u[0].why, /logged people out/);
   assert.match(w.prompt('make src/add.js faster'), /partly undone here at your request .*cache/);
 });
-test('claim: under Codex the undo ledger reads the files apply_patch names; under Cursor it rebuilds the text before each edit', () => {
+test('claim: under Codex the undo ledger reads the files apply_patch names; under Cursor it rebuilds the text before each edit; neither keeps the person\'s words', () => {
   const d = signed(true); sb(d, 'attach', '--codex'); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
   const h = JSON.parse(readFileSync(join(d, '.codex/hooks.json'), 'utf8')).hooks;
   const by = (ev, m) => h[ev].find((x) => String(x.matcher || '') === m).hooks[0].command;
@@ -676,7 +676,7 @@ test('claim: under Codex the undo ledger reads the files apply_patch names; unde
   run(by('PreToolUse', 'apply_patch'), { hook_event_name: 'PreToolUse', ...patch }); put(d, 'src/add.js', before + 'const cache=new Map()\nconst size=0\n'); run(by('PostToolUse', 'apply_patch'), { hook_event_name: 'PostToolUse', ...patch });
   run(by('UserPromptSubmit', ''), { hook_event_name: 'UserPromptSubmit', prompt: 'Undo that, a stale cache logged people out.' });
   run(by('PreToolUse', 'apply_patch'), { hook_event_name: 'PreToolUse', ...patch }); put(d, 'src/add.js', before); run(by('PostToolUse', 'apply_patch'), { hook_event_name: 'PostToolUse', ...patch });
-  assert.match(readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8'), /"kind":"whole".*logged people out/, 'Codex');
+  { const u = readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8'); assert.match(u, /"kind":"whole"/, 'Codex'); assert.match(u, /const cache/); assert.doesNotMatch(u, /logged people out/, 'the undo is kept without the words: --words is for the Claude Code hooks'); }
   const c = signed(true); sb(c, 'attach', '--cursor'); const cb = readFileSync(join(c, 'src/add.js'), 'utf8');
   const ch = JSON.parse(readFileSync(join(c, '.cursor/hooks.json'), 'utf8')).hooks;
   const cr = (ev, input) => spawnSync('sh', ['-c', ch[ev][0].command], { cwd: c, encoding: 'utf8', env: ENV, input: JSON.stringify({ conversation_id: 'k', ...input }) }).stdout || '';
@@ -684,7 +684,7 @@ test('claim: under Codex the undo ledger reads the files apply_patch names; unde
   put(c, 'src/add.js', cb + added); cr('afterFileEdit', { file_path: join(c, 'src/add.js'), edits: [{ old_string: cb, new_string: cb + added }] });
   cr('beforeSubmitPrompt', { prompt: 'Undo that, a stale cache logged people out.' });
   put(c, 'src/add.js', cb); cr('afterFileEdit', { file_path: join(c, 'src/add.js'), edits: [{ old_string: cb + added, new_string: cb }] });
-  assert.match(readFileSync(join(c, '.sawbuck', 'undone.jsonl'), 'utf8'), /"kind":"whole".*logged people out/, 'Cursor');
+  { const u = readFileSync(join(c, '.sawbuck', 'undone.jsonl'), 'utf8'); assert.match(u, /"kind":"whole"/, 'Cursor'); assert.doesNotMatch(u, /logged people out/); }
 });
 test('limit: an undo the agent makes on its own, with no word from the person in between, is not recorded', () => {
   const d = signed(true); const w = wired(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
@@ -892,11 +892,128 @@ test('claim: an unattached repo gets no files from this', () => { const { d } = 
 test('limit: the ledger is local, so a clone does not get it', () => { const { d } = lessons(true); squash(d); sb(d, 'context'); const c = mkdtempSync(join(tmpdir(), 'claims-')); git(c, 'clone', '-q', d, 'c'); assert.ok(!existsSync(join(c, 'c/.sawbuck'))); });
 test('limit: nothing before the reflog is recovered, and work never committed is not in git at all', () => { const { d } = lessons(false); squash(d); git(d, 'reflog', 'expire', '--expire=now', '--all'); git(d, 'gc', '-q', '--prune=now'); put(d, 'src/cache.js', 'y\n'); assert.doesNotMatch(sb(d, 'context').out, /Revert/); });
 
+// ------------------------------------------------------------ "the check keeps none of what you type" (0.2.0; his "do best practice or safest" of 2026-11-17)
+// What the hooks kept of a person's words until 0.2.0, run sentence by sentence on 2026-11-16 (proof-bench/privacy-words):
+// the first 240 characters of the latest prompt in the state file, those words again with an undo, and a note handed on
+// to Claude Code's own notes folder, a claude-mem worker and a Markdown folder. Anthropic's directory policy (1.G) names
+// that last one almost word for word. From 0.2.0 a plain attach does none of it and `attach --words` does all of it:
+// the sawbuck-reins plugin, the part that is about what a person types, attaches that way. A reason given with --allow
+// is kept either way: the person hands it to the command on purpose.
+const notesDir = (d, home = HOME) => join(home, '.claude', 'projects', d.replace(/\//g, '-'), 'memory');
+const hookLines = (d, f = '.claude/settings.local.json') => Object.values(JSON.parse(readFileSync(join(d, f), 'utf8')).hooks).flat().flatMap((h) => h.hooks.map((x) => x.command));
+const stateOf = (d) => JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8'));
+const SAID = 'Undo that. A stale cache logged people out after a password reset last time.';
+// attached the way the sawbuck-reins plugin attaches; a plain attach afterwards (inside wired) leaves the word on
+const wiredWords = (d, session) => { assert.equal(sb(d, 'attach', '--words').code, 0); return wired(d, session); };
+// the hooks as the file holds them now, with no attach run again
+const hooksAsWritten = (d) => { const h = JSON.parse(readFileSync(join(d, '.claude/settings.local.json'), 'utf8')).hooks; const run = (cmd, ev, text = 'x') => spawnSync('sh', ['-c', cmd], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: ev, cwd: d, session_id: 's', prompt: text }) }).stdout || ''; return { prompt: (t) => run(h.UserPromptSubmit[0].hooks[0].command, 'UserPromptSubmit', t), stop: () => run(h.Stop[0].hooks[0].command, 'Stop') }; };
+// one session: an undo at the person's request, and a gamed commit sent back; the notes folder and a Markdown folder are there to be written to
+const wordsScene = (d, w) => {
+  mkdirSync(join(notesDir(d), '..'), { recursive: true });   // Claude Code has been used in this repo
+  const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+  w.prompt('add is slow, speed it up'); w.agentEdit('src/add.js', (s) => s + 'const cache=new Map()\n'); w.stop();
+  w.prompt(SAID); w.agentEdit('src/add.js', () => before); w.stop();
+  w.prompt('make the add test pass'); edit(d, 'test/add.test.js', game); save(d, 'make it green'); assert.ok(blocked(w.stop()), 'the check itself is the same either way: a gamed commit is sent back');
+};
+const anywhere = (dir, word) => { const hit = []; const walk = (p) => { for (const n of readdirSync(p)) { const f = join(p, n); if (lstatSync(f).isDirectory()) walk(f); else { try { if (readFileSync(f, 'utf8').includes(word)) hit.push(f); } catch {} } } }; if (existsSync(dir)) walk(dir); return hit; };
+const notesOut = (d) => { put(d, 'sawbuck.config.json', JSON.stringify({ share: { markdown: 'notes-out' } }) + '\n'); save(d, 'config'); return d; };
+test('claim: a plain attach keeps none of what you type: no prompt text in the record, an undo without your words, and nothing handed on; attach --words keeps all three', () => {
+  // with --words: all three are there, as they were before 0.2.0
+  { const d = notesOut(repo(false)); const w = wiredWords(d); wordsScene(d, w);
+    for (const c of hookLines(d).filter((x) => /turn --hook|__hook|undo --hook/.test(x))) assert.match(c, / --words/, c);
+    assert.match(stateOf(d).lastPrompt, /make the add test pass/, 'with --words the prompt is kept');
+    assert.ok(anywhere(join(d, '.sawbuck'), 'logged people out').length, 'with --words the undo keeps the words');
+    assert.ok(readdirSync(notesDir(d)).length >= 2, 'with --words notes are handed on'); assert.ok(readdirSync(join(d, 'notes-out')).length >= 1); }
+  const d = notesOut(repo(false));
+  const r = sb(d, 'attach'); assert.equal(r.code, 0, r.out); assert.match(r.out, /keep none of what you type/); assert.match(r.out, /attach --words turns that on/);
+  for (const c of hookLines(d)) assert.doesNotMatch(c, /--words/, c);
+  const w = wired(d); wordsScene(d, w);
+  assert.equal(stateOf(d).lastPrompt, undefined, 'no prompt text in the state file'); assert.ok(stateOf(d).lastPromptAt, 'the time of the prompt is still kept: the turn is counted from it');
+  for (const word of ['logged people out', 'speed it up', 'make the add test pass']) { assert.deepEqual(anywhere(join(d, '.sawbuck'), word), [], `"${word}" is nowhere in the record`); assert.deepEqual(anywhere(join(d, '.git', 'sawbuck'), word), [], 'nor in the second copy'); }
+  const u = readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(u.length, 1, 'the undo is still recorded'); assert.equal(u[0].why, ''); assert.match(u[0].first, /cache/, 'with the line that was undone, which is code and not the person\'s words');
+  assert.ok(!existsSync(notesDir(d)), 'nothing in Claude Code\'s notes folder'); assert.ok(!existsSync(join(d, 'notes-out')), 'nothing in the Markdown folder'); assert.ok(!existsSync(join(d, '.sawbuck', 'shared.jsonl')), 'nothing was handed on');
+  const out = w.prompt('make src/add.js faster'); assert.match(out, /undone here at your request/, 'the undo still comes back with the prompt that names the file'); assert.doesNotMatch(out, /logged people out/);
+});
+test('claim: a reason given with --allow is kept under a plain attach too: you hand it to the command on purpose, and it comes back with the prompt that names the file', () => {
+  const d = repo(false); const w = wired(d);
+  w.prompt('make the add test pass'); edit(d, 'test/add.test.js', game); save(d, 'make it green'); assert.ok(blocked(w.stop()));
+  const r = sb(d, 'check', '--allow', 'the spec changed: add subtracts now'); assert.equal(r.code, 0, r.out); assert.match(r.out, /The reason is kept here/);
+  assert.ok(anywhere(join(d, '.sawbuck'), 'add subtracts now').length, 'the reason is in the record');
+  assert.match(w.prompt('look at test/add.test.js again'), /The reason given: "the spec changed: add subtracts now"/);
+});
+test('claim: status reads the steers a plugin kept only where the repo is attached with --words, or when it is asked with --words', () => {
+  const e = (session, r) => ({ session, repo: r, nudge: 'verify it live first' }); const h = steerHome([e('1', 'a'), e('1', 'a'), e('2', 'b')]);
+  const run = (dir, ...a) => spawnSync(process.execPath, [CLI, 'status', ...a], { cwd: dir, encoding: 'utf8', env: { ...ENV, HOME: h } });
+  const plain = repo(true); assert.equal(sb(plain, 'attach').code, 0);
+  for (const dir of [repo(true), plain]) assert.doesNotMatch(run(dir).stdout, /You keep saying|verify it live first/, 'not attached, or attached without --words: none are read');
+  const asked = run(plain, '--words'); assert.equal(asked.status, 0, asked.stderr); assert.match(asked.stdout, /You keep saying/, 'asked for: the plugin\'s own status command passes --words');
+  const kept = repo(true); assert.equal(sb(kept, 'attach', '--words').code, 0);
+  assert.match(run(kept).stdout, /You keep saying/); assert.match(run(kept).stdout, /Words {2}· {2}kept here \(attached with --words\)/);
+});
+test('claim: the guide says what a plain attach keeps, what --words turns on, that a reason is kept either way, and that a purge takes the handed-on notes with it', () => {
+  const G = readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8'); const P = G.split('\n').find((l) => l.startsWith('**What is kept of what you type.**')) || '';
+  for (const re of [/keeps none of what you type/, /No prompt text is kept/, /An undo is recorded without your words/, /Nothing is handed on to any notes/, /attach --words/, /sawbuck-reins.*attaches that way/, /until `sawbuck attach --no-words`/, /A reason you give with `--allow` is kept either way/, /detach --purge.*notes Sawbuck handed on/, /claude-mem worker/]) assert.match(P, re);
+  assert.match(sb(repo(true), 'attach', '--help').out, /These hooks keep none of what you type\. --words turns that on/);
+});
+test('claim: sawbuck share typed by hand hands a finding on under a plain attach too, and a purge finds a note in a folder the config no longer names', () => {
+  const e = notesOut(repo(true)); wired(e);
+  assert.match(sb(e, 'share', '--title', 'Never mock the database', 'said three times').out, /shared "Never mock the database" with markdown/);
+  assert.equal(readdirSync(join(e, 'notes-out')).length, 1); put(e, 'sawbuck.config.json', '{}\n');
+  assert.equal(sb(e, 'detach', '--purge').code, 0); assert.deepEqual(readdirSync(join(e, 'notes-out')), [], 'the record said where the note went');
+});
+test('claim: attach --no-words removes the words already kept and keeps the undo and any reason; --words turns the keeping on again; and it is for the Claude Code hooks', () => {
+  const d = repo(true); const w = wiredWords(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+  w.prompt('add is slow, speed it up'); w.agentEdit('src/add.js', (s) => s + 'const cache=new Map()\n'); w.prompt(SAID); w.agentEdit('src/add.js', () => before); w.stop();
+  assert.ok(anywhere(join(d, '.sawbuck'), 'logged people out').length >= 2, 'kept: in the state file and with the undo');
+  edit(d, 'test/add.test.js', (t) => t.replace('mul(2,3),6', 'mul(2,3),6,"ok"')); edit(d, 'src/add.js', breakAdd); save(d, 'base goes red'); edit(d, 'test/add.test.js', game); save(d, 'make it green');
+  w.prompt('x'); w.stop(); assert.equal(sb(d, 'check', '--allow', 'zebraquartz: the spec moved').code, 0);
+  const off = sb(d, 'attach', '--no-words'); assert.equal(off.code, 0, off.out); assert.match(off.out, /Removed the words already kept here/); assert.ok(!hookLines(d).some((c) => c.includes('--words')));
+  assert.deepEqual(anywhere(join(d, '.sawbuck'), 'logged people out'), [], 'gone from the record at the switch'); assert.match(readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8'), /"first":"const cache/, 'the undo itself stays');
+  assert.ok(anywhere(join(d, '.sawbuck'), 'zebraquartz').length >= 1, 'a reason given with --allow stays: it was handed over on purpose');
+  const r = sb(d, 'attach', '--words'); assert.equal(r.code, 0, r.out); assert.ok(hookLines(d).some((c) => /turn --hook.* --words/.test(c)));
+  wired(d).prompt('a new prompt'); assert.match(stateOf(d).lastPrompt, /a new prompt/, 'and a plain attach after it leaves the word on');
+  assert.notEqual(sb(d, 'attach', '--git', '--words').code, 0, 'the switch is for the Claude Code hooks: a mode it does not reach says so');
+  assert.notEqual(sb(d, 'attach', '--words', '--no-words').code, 0);
+});
+test('claim: a repo attached before 0.2.0 keeps none of what you type from its next prompt on: the words in its record are taken out, the undo stays, and you are told once', () => {
+  const d = repo(true); const w = wiredWords(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+  w.prompt('add is slow, speed it up'); w.agentEdit('src/add.js', (s) => s + 'const cache=new Map()\n'); w.prompt(SAID); w.agentEdit('src/add.js', () => before); w.stop();
+  assert.ok(anywhere(join(d, '.sawbuck'), 'logged people out').length >= 2);
+  // the hook lines as a version before 0.2.0 wrote them: no word on them, and nobody runs attach again
+  const f = join(d, '.claude/settings.local.json'); writeFileSync(f, readFileSync(f, 'utf8').replaceAll(' --words', '')); assert.ok(!hookLines(d).some((c) => c.includes('--words')));
+  const old = hooksAsWritten(d);
+  old.prompt('carry on with the cache work');
+  assert.equal(stateOf(d).lastPrompt, undefined); assert.deepEqual(anywhere(join(d, '.sawbuck'), 'logged people out'), [], 'the words kept before are gone from the record');
+  assert.match(readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8'), /"first":"const cache/, 'the undo itself stays');
+  const told = old.stop(); assert.match(told, /keeps none of what you type in this repo/); assert.match(told, /attach --words/);
+  old.prompt('next'); assert.doesNotMatch(old.stop(), /keeps none of what you type in this repo/, 'said once');
+});
+test('claim: attach --shared --words writes the word into the team file, and status then shows the steers a plugin kept; a team file without it shows none', () => {
+  const d = repo(true); assert.equal(sb(d, 'attach', '--shared', '--words').code, 0);
+  for (const c of hookLines(d, '.claude/settings.json').filter((x) => /turn --hook|__hook|undo --hook/.test(x))) assert.match(c, / --words$/, c);
+  const e = (session, r) => ({ session, repo: r, nudge: 'verify it live first' }); const h = steerHome([e('1', 'a'), e('1', 'a'), e('2', 'b')]);
+  const run = (dir) => spawnSync(process.execPath, [CLI, 'status'], { cwd: dir, encoding: 'utf8', env: { ...ENV, HOME: h } }).stdout;
+  assert.match(run(d), /You keep saying/); assert.match(run(d), /kept here \(attached with --words\)/);
+  const t = repo(true); assert.equal(sb(t, 'attach', '--shared').code, 0); assert.doesNotMatch(run(t), /You keep saying|verify it live first/, 'a team file without the word');
+});
+test('claim: detach --purge removes the notes sawbuck handed on, from Claude Code\'s notes folder and a Markdown folder, and leaves notes it did not write', () => {
+  const d = notesOut(repo(false)); const w = wiredWords(d); wordsScene(d, w);
+  const nd = notesDir(d); put(nd, 'mine.md', '---\nname: mine\n---\n\nmy own note\n'); writeFileSync(join(nd, 'MEMORY.md'), readFileSync(join(nd, 'MEMORY.md'), 'utf8') + '- [mine](mine.md) — my own\n');
+  put(d, 'notes-out/mine.md', 'my own\n');
+  assert.ok(anywhere(nd, 'logged people out').length, 'before: the person\'s words are in a note there');
+  const r = sb(d, 'detach', '--purge'); assert.equal(r.code, 0, r.out);
+  assert.deepEqual(readdirSync(nd).sort(), ['MEMORY.md', 'mine.md'], 'only the notes sawbuck wrote are gone'); assert.equal(readFileSync(join(nd, 'MEMORY.md'), 'utf8').trim(), '- [mine](mine.md) — my own', 'and only its lines in the index');
+  assert.deepEqual(readdirSync(join(d, 'notes-out')), ['mine.md']);
+  assert.deepEqual(anywhere(join(HOME, '.claude', 'projects', d.replace(/\//g, '-')), 'logged people out'), [], 'the words are nowhere in that folder'); assert.match(r.out, /purged .*memory/);
+  // with nothing of anyone else's there, the index goes too
+  const e = repo(false); const x = wiredWords(e); wordsScene(e, x); assert.equal(sb(e, 'detach', '--purge').code, 0); assert.deepEqual(readdirSync(notesDir(e)), []);
+});
 // ------------------------------------------------------------ the steer scratchpad
 const steerHome = (steers, stats = { scored: steers.length, lost: 0 }) => { const h = mkdtempSync(join(tmpdir(), 'claims-home-')); put(h, '.claude/plugins/store/sawbuck-reins_x.json', JSON.stringify({ steers, steerStats: stats })); return h; };
 const steersOut = (h, ...a) => spawnSync(process.execPath, [CLI, 'steers', ...a], { cwd: h, encoding: 'utf8', env: { ...ENV, HOME: h } }).stdout;
 test('claim: a steer repeated 3 times across 2 sessions is shown, with a pointer to write it down', () => { const e = (session, repo) => ({ session, repo, nudge: 'verify before trusting' }); const o = steersOut(steerHome([e('1', 'a'), e('1', 'b'), e('2', '')])); assert.match(o, /3x {2}verify before trusting {2}\(a, b, no repo\)/); assert.match(o, /write it down/); });
-test('claim: status shows what you keep saying, and says nothing when nothing repeats', () => { const e = (session, repo) => ({ session, repo, nudge: 'verify it live first' }); const d = repo(true); const run = (h) => spawnSync(process.execPath, [CLI, 'status'], { cwd: d, encoding: 'utf8', env: { ...ENV, HOME: h } }).stdout; const o = run(steerHome([e('1', 'a'), e('1', 'a'), e('2', 'b')])); assert.match(o, /You keep saying/); assert.match(o, /3x\s+verify it live first/); assert.doesNotMatch(run(steerHome([e('1', 'a')])), /You keep saying/); });
+test('claim: status shows what you keep saying, and says nothing when nothing repeats (asked with --words, as the full plugin asks)', () => { const e = (session, repo) => ({ session, repo, nudge: 'verify it live first' }); const d = repo(true); const run = (h) => spawnSync(process.execPath, [CLI, 'status', '--words'], { cwd: d, encoding: 'utf8', env: { ...ENV, HOME: h } }).stdout; const o = run(steerHome([e('1', 'a'), e('1', 'a'), e('2', 'b')])); assert.match(o, /You keep saying/); assert.match(o, /3x\s+verify it live first/); assert.doesNotMatch(run(steerHome([e('1', 'a')])), /You keep saying/); });
 test('claim: a steer from one session is not called a pattern', () => { const e = { session: '1', repo: 'a', nudge: 'verify first' }; assert.match(steersOut(steerHome([e, e, e])), /Nothing repeats yet/); });
 test('claim: replies that could not be scored are shown as an undercount', () => { assert.match(steersOut(steerHome([{ session: '1', repo: 'a', nudge: 'x y' }], { scored: 1, lost: 4 })), /4 could not be scored, so this undercounts/); });
 test('claim: stopping the agent twice on a command the hold does not cover suggests the line that makes it ask first', () => {
