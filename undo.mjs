@@ -1,11 +1,21 @@
 // The undo ledger: what the agent tried and the person had undone, inside a session, with nothing left in git.
 // The attempts bench (2026-11-10) measured it: an approach undone at the person's request, never committed, came back
 // in the next session 27 of 27 times; with the record shown at the prompt, 0 of 27. So the ledger that keeps erased
-// reverts also keeps undone attempts. Wired by `attach` on PreToolUse and PostToolUse for the edit tools: before an
-// edit the file's content is snapshotted once per session; after an edit, a file back at its snapshot after a change
-// AND after a word from the person is an undo, recorded with what the change had added and the person's words.
-// Deterministic: a restore is a restore. No model. Stores a diff summary and the person's own prompt, nothing else.
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
+// reverts also keeps undone attempts.
+// AN UNDO IS WHAT WAS THERE WHEN THE PERSON SPOKE AND IS GONE WHEN THAT TURN ENDS (0.2.0). Three moments:
+//   before an edit    the file is snapshotted, once per session (`attach` wires the edit tools for this): what it held
+//                     before the agent first touched it;
+//   at each prompt    undoMark: for each file with a snapshot, what the agent has added to it as it stands now;
+//   at the turn's end undoJudge: the file now against that picture. Back at its snapshot: a whole undo. Most of what
+//                     was there gone, and little new in its place: a partial one. Anything else is not an undo.
+// Until 0.2.0 an undo was judged after each edit, by the edit hooks alone, and a real session showed three faults in
+// one go (proof-bench/undo-by-git, 2026-11-17): an undo the agent made with `git checkout` ran no edit hook and was
+// not recorded; the agent's second try was then read against a state that was no longer in the file, and recorded as a
+// partial undo with that request as the person's words; and the real partial undo after it was not recorded. Judged
+// at the end of the turn, from the file itself, it does not matter which tool took the lines out, and lines replaced
+// by a rewrite are not lines taken out.
+// Deterministic. No model. Stores a diff summary, and the person's own prompt only where the repo is attached with --words.
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, relative, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { localDay } from './day.mjs';
@@ -28,7 +38,6 @@ const relFile = (repo, p) => {
   return !r || r.startsWith('..') ? '' : r;
 };
 const readText = (p) => { try { return readFileSync(p, 'utf8'); } catch { return null; } };
-const state = (repo) => { try { return JSON.parse(readFileSync(join(repo, '.sawbuck', 'state.json'), 'utf8')); } catch { return {}; } };
 
 // what a change added, for the record: the count of new lines and the first one (a set difference of lines)
 export function addedSummary(before, after) {
@@ -37,49 +46,68 @@ export function addedSummary(before, after) {
   return { added: added.length, first: (added[0] || '').trim().slice(0, 80) };
 }
 
-// the core, for any agent: before an edit to `file`, snapshot it once per session; after an edit, an undo at the person's
-// request is recorded. Whole: the file is back at its snapshot after a change and after a word from the person. Partial:
-// after a word from the person, most of what the change added is gone again (at least half its lines, and two or more),
-// the person said no to part of it and the agent took that part out. Returns the entry or null. Never throws.
+// the lines a text holds that its snapshot did not
+const addedLines = (base, text) => { const had = new Set(String(base || '').split('\n')); return String(text || '').split('\n').filter((l) => l.trim() && !had.has(l)); };
+const sessOf = (session) => (String(session || '').replace(/[^\w-]/g, '').slice(0, 40)) || 's';
+const snapsOf = (repo, sess) => {
+  const dir = join(repo, '.sawbuck', 'snap', sess); let names = []; try { names = readdirSync(dir).filter((n) => n.endsWith('.json')); } catch {}
+  return names.map((n) => { try { const rec = JSON.parse(readFileSync(join(dir, n), 'utf8')); return rec && rec.file ? { p: join(dir, n), rec } : null; } catch { return null; } }).filter(Boolean);
+};
+const picture = (rec, t, at) => ({ hash: t === null ? '' : sha(t), lines: addedLines(rec.baseText, t).slice(0, 200), at });
+
+// before an edit to `file`: snapshot it once per session. (After an edit there is nothing to do any more: an undo is
+// judged when the turn ends.) Never throws.
 export function undoObserve(repo, { session = 's', file, event, before = undefined }) {
   try {
     if (!file || file.startsWith('.sawbuck')) return null;
     if (!existsSync(join(repo, '.sawbuck', 'state.json'))) return null;   // never writes in a repo sawbuck is not attached to
-    const sess = (String(session).replace(/[^\w-]/g, '').slice(0, 40)) || 's';
+    if (event !== 'pre') return null;
+    const sess = sessOf(session);
     const dir = join(repo, '.sawbuck', 'snap', sess); const p = join(dir, `${sha(file)}.json`);
-    let rec = null; try { rec = JSON.parse(readFileSync(p, 'utf8')); } catch {}
-    const abs = join(repo, file); const now = new Date().toISOString();
-    if (event === 'pre') {
-      if (!rec) { mkdirSync(dir, { recursive: true }); const t = before !== undefined ? before : readText(abs); writeFileSync(p, JSON.stringify({ file, baseText: t, baseHash: t === null ? '' : sha(t), at: now })); }
-      return null;
-    }
-    if (event !== 'post' || !rec) return null;
-    const t = readText(abs); const hash = t === null ? '' : sha(t);
-    const st = state(repo);
-    const spoke = rec.changedAt && st.lastPromptAt && Date.parse(st.lastPromptAt) > Date.parse(rec.changedAt);
-    const why = String(st.lastPrompt || '').replace(/\s+/g, ' ').trim().slice(0, 240);
-    const record = (kind, gone) => { const entry = { at: now, file, kind, added: gone.length, first: gone[0].trim().slice(0, 80), why, session: sess }; appendFileSync(undonePath(repo), JSON.stringify(entry) + '\n'); return entry; };
-    if (hash === rec.baseHash) {
-      // back at the snapshot: the whole change undone, if the person spoke after it was made
-      let entry = null;
-      if (spoke && rec.change && rec.change.lines && rec.change.lines.length) entry = record('whole', rec.change.lines);
-      rec.changedAt = null; rec.change = null; writeFileSync(p, JSON.stringify(rec));   // the next change starts a new cycle
-      return entry;
-    }
-    if (!rec.changedAt) {
-      // away from the snapshot: the first such change in the session is what a later undo takes back
-      const had = new Set(String(rec.baseText || '').split('\n'));
-      const lines = String(t || '').split('\n').filter((l) => l.trim() && !had.has(l));
-      rec.changedAt = now; rec.change = { ...addedSummary(rec.baseText, t), lines: lines.slice(0, 200) }; writeFileSync(p, JSON.stringify(rec));
-      return null;
-    }
-    if (spoke && rec.change && rec.change.lines && rec.change.lines.length >= 2 && !rec.partialAt) {
-      const now_ = new Set(String(t || '').split('\n'));
-      const gone = rec.change.lines.filter((l) => !now_.has(l));
-      if (gone.length >= 2 && gone.length * 2 >= rec.change.lines.length) { rec.partialAt = now; writeFileSync(p, JSON.stringify(rec)); return record('part', gone); }
-    }
+    if (existsSync(p)) return null;
+    mkdirSync(dir, { recursive: true }); const t = before !== undefined ? before : readText(join(repo, file));
+    // a file the agent first touches inside a turn held nothing of the agent's when the person spoke
+    writeFileSync(p, JSON.stringify({ file, baseText: t, baseHash: t === null ? '' : sha(t), at: new Date().toISOString(), atPrompt: { hash: t === null ? '' : sha(t), lines: [], at: '' } }));
     return null;
   } catch { return null; }
+}
+
+// when the person speaks: for each file the agent has touched in this session, what it has added as it stands now
+export function undoMark(repo, session) {
+  try {
+    const now = new Date().toISOString();
+    for (const { p, rec } of snapsOf(repo, sessOf(session))) { rec.atPrompt = picture(rec, readText(join(repo, rec.file)), now); delete rec.recordedFor; writeFileSync(p, JSON.stringify(rec)); }
+  } catch { /* the ledger never fails a prompt */ }
+}
+
+// when the turn ends: what was there when the person spoke and is gone now, whatever took it out. One record for a
+// file and a prompt at most. `why` is the person's prompt, where the repo keeps such words. Returns the new entries.
+export function undoJudge(repo, session, why = '') {
+  const out = [];
+  try {
+    if (!existsSync(join(repo, '.sawbuck', 'state.json'))) return out;
+    const sess = sessOf(session); const now = new Date().toISOString();
+    for (const { p, rec } of snapsOf(repo, sess)) {
+      const was = rec.atPrompt && Array.isArray(rec.atPrompt.lines) ? rec.atPrompt.lines : [];
+      if (!was.length || rec.recordedFor === rec.atPrompt.at) continue;   // nothing of the agent's was there when the person spoke, or this turn's undo is already recorded
+      const t = readText(join(repo, rec.file)); const hash = t === null ? '' : sha(t);
+      if (hash === rec.atPrompt.hash) continue;   // as it was when the person spoke
+      const has = new Set(String(t || '').split('\n')); const gone = was.filter((l) => !has.has(l));
+      let kind = '';
+      if (hash === rec.baseHash) kind = 'whole';   // back as it was before the agent first touched it
+      else {
+        // most of what was there is gone (at least half its lines, and two or more), and little new stands in its
+        // place: lines replaced by other lines are a rewrite, not an undo
+        const seen = new Set(was); const fresh = addedLines(rec.baseText, t).filter((l) => !seen.has(l));
+        if (gone.length >= 2 && gone.length * 2 >= was.length && fresh.length * 2 <= gone.length) kind = 'part';
+      }
+      if (!kind || !gone.length) continue;
+      const entry = { at: now, file: rec.file, kind, added: gone.length, first: gone[0].trim().slice(0, 80), why: String(why || '').replace(/\s+/g, ' ').trim().slice(0, 240), session: sess };
+      appendFileSync(undonePath(repo), JSON.stringify(entry) + '\n'); out.push(entry);
+      rec.recordedFor = rec.atPrompt.at; writeFileSync(p, JSON.stringify(rec));
+    }
+  } catch { /* the ledger never fails a turn */ }
+  return out;
 }
 
 // Claude Code's PreToolUse / PostToolUse on the edit tools
@@ -110,8 +138,7 @@ export function undoCursor(body, repo) {
   const now = readText(join(repo, file)); if (now === null) return null;
   let before = now; for (const e of [...(h.edits || [])].reverse()) { if (e && typeof e.new_string === 'string' && before.includes(e.new_string)) before = before.replace(e.new_string, String(e.old_string || '')); }
   const session = String(h.conversation_id || h.session_id || 'cursor');
-  undoObserve(repo, { session, file, event: 'pre', before });
-  return undoObserve(repo, { session, file, event: 'post' });
+  return undoObserve(repo, { session, file, event: 'pre', before });   // the snapshot; the undo itself is judged when the turn ends
 }
 
 // the lines the prompt hook and `context` add for the paths in hand: newest first, one per file and change, three at most

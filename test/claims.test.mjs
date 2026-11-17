@@ -673,7 +673,7 @@ test('claim: an edit the person had undone in a session comes back with the prom
 test('claim: a partial undo is kept too: the person said no to part of the change and the agent took that part out', () => {
   const d = signed(true); const w = wiredWords(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
   w.prompt('add is slow, add a cache and a log line'); w.agentEdit('src/add.js', (s) => s + 'const cache=new Map()\nconst hits=0\nfunction log(k){console.log(k)}\n');
-  w.prompt('Drop the cache, it logged people out before. Keep the log line.'); w.agentEdit('src/add.js', () => before + 'function log(k){console.log(k)}\n');
+  w.prompt('Drop the cache, it logged people out before. Keep the log line.'); w.agentEdit('src/add.js', () => before + 'function log(k){console.log(k)}\n'); w.stop();   // an undo is judged when the turn ends (0.2.0)
   const u = readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.equal(u.length, 1); assert.equal(u[0].kind, 'part'); assert.match(u[0].first, /cache/); assert.match(u[0].why, /logged people out/);
   assert.match(w.prompt('make src/add.js faster'), /partly undone here at your request .*cache/);
@@ -687,7 +687,7 @@ test('claim: under Codex the undo ledger reads the files apply_patch names; unde
   run(by('UserPromptSubmit', ''), { hook_event_name: 'UserPromptSubmit', prompt: 'add a cache' });
   run(by('PreToolUse', 'apply_patch'), { hook_event_name: 'PreToolUse', ...patch }); put(d, 'src/add.js', before + 'const cache=new Map()\nconst size=0\n'); run(by('PostToolUse', 'apply_patch'), { hook_event_name: 'PostToolUse', ...patch });
   run(by('UserPromptSubmit', ''), { hook_event_name: 'UserPromptSubmit', prompt: 'Undo that, a stale cache logged people out.' });
-  run(by('PreToolUse', 'apply_patch'), { hook_event_name: 'PreToolUse', ...patch }); put(d, 'src/add.js', before); run(by('PostToolUse', 'apply_patch'), { hook_event_name: 'PostToolUse', ...patch });
+  run(by('PreToolUse', 'apply_patch'), { hook_event_name: 'PreToolUse', ...patch }); put(d, 'src/add.js', before); run(by('PostToolUse', 'apply_patch'), { hook_event_name: 'PostToolUse', ...patch }); run(by('Stop', ''), { hook_event_name: 'Stop' });   // an undo is judged when the turn ends (0.2.0)
   { const u = readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8'); assert.match(u, /"kind":"whole"/, 'Codex'); assert.match(u, /const cache/); assert.doesNotMatch(u, /logged people out/, 'the undo is kept without the words: --words is for the Claude Code hooks'); }
   const c = signed(true); sb(c, 'attach', '--cursor'); const cb = readFileSync(join(c, 'src/add.js'), 'utf8');
   const ch = JSON.parse(readFileSync(join(c, '.cursor/hooks.json'), 'utf8')).hooks;
@@ -695,22 +695,49 @@ test('claim: under Codex the undo ledger reads the files apply_patch names; unde
   cr('beforeSubmitPrompt', { prompt: 'add a cache' }); const added = 'const cache=new Map()\nconst size=0\n';
   put(c, 'src/add.js', cb + added); cr('afterFileEdit', { file_path: join(c, 'src/add.js'), edits: [{ old_string: cb, new_string: cb + added }] });
   cr('beforeSubmitPrompt', { prompt: 'Undo that, a stale cache logged people out.' });
-  put(c, 'src/add.js', cb); cr('afterFileEdit', { file_path: join(c, 'src/add.js'), edits: [{ old_string: cb + added, new_string: cb }] });
+  put(c, 'src/add.js', cb); cr('afterFileEdit', { file_path: join(c, 'src/add.js'), edits: [{ old_string: cb + added, new_string: cb }] }); cr('stop', {});
   { const u = readFileSync(join(c, '.sawbuck', 'undone.jsonl'), 'utf8'); assert.match(u, /"kind":"whole"/, 'Cursor'); assert.doesNotMatch(u, /logged people out/); }
 });
 // Found in a real session on 2026-11-17 (proof-bench/live/rehearse-0.2.0, step 2; proof-bench/undo-by-git, the same on
-// the published 0.1.73): a real agent undid a whole change with `git checkout`, and the undo hooks watch the edit tools
-// only. Its second try at the change was then taken for a partial undo. Not fixed yet.
-test('limit: an undo the agent makes with git is not recorded, and a second try at that change is then recorded as a partial undo with the wrong words', () => {
+// the published 0.1.73): a real agent undid a whole change with `git checkout`, and the undo hooks watched the edit tools
+// only. Nothing was recorded, its second try at the change was recorded as a partial undo with that request as "the
+// person's words", and the real partial undo after it was missed. Since 0.2.0 an undo is judged when the turn ends: what
+// was there when the person spoke and is gone at the end of that turn, whatever took it out.
+const CACHE1 = 'const cache=new Map()\nexports.cached=(a,b)=>{const k=a+","+b;if(!cache.has(k))cache.set(k,a+b);return cache.get(k)}\n';
+const CACHE2 = 'const MAX=100\nconst seen=new Map()\nlet hits=0\nexports.cached=(a,b)=>{hits++;const k=`${a}:${b}`;if(seen.has(k))return seen.get(k);if(seen.size>=MAX)seen.clear();seen.set(k,a+b);return seen.get(k)}\nexports.hits=()=>hits\n';
+const COUNTER = 'let hits=0\nexports.counted=(a,b)=>{hits++;return a+b}\nexports.hits=()=>hits\n';
+const undos = (d) => { try { return readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+test('claim: an undo the agent makes with git is recorded when the turn ends; a second try at the change is not an undo; and the partial undo after it is recorded with its own words', () => {
   const d = signed(true); const w = wiredWords(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
-  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + 'const cache=new Map()\nexports.cached=(a,b)=>{const k=a+","+b;if(!cache.has(k))cache.set(k,a+b);return cache.get(k)}\n'); w.stop();
+  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE1); w.stop();
   w.prompt('undo that, all of it. a stale cache logged people out after a password reset last time'); git(d, 'checkout', '--', 'src/add.js'); w.stop();   // a shell command: no edit hook runs
-  assert.ok(!existsSync(join(d, '.sawbuck', 'undone.jsonl')), 'the undo made with git is not recorded');
-  const again = 'add a small cache to add in src/add.js again, and a hits counter';
-  w.prompt(again); w.agentEdit('src/add.js', () => before + 'const MAX=100\nconst seen=new Map()\nlet hits=0\nexports.cached=(a,b)=>{hits++;const k=`${a}:${b}`;if(seen.has(k))return seen.get(k);if(seen.size>=MAX)seen.clear();seen.set(k,a+b);return seen.get(k)}\nexports.hits=()=>hits\n'); w.stop();
-  const u = readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.equal(u.length, 1); assert.equal(u[0].kind, 'part'); assert.equal(u[0].why, again, 'the second try is taken for a partial undo, and its words are the request for the second try');
-  assert.match(flat(README), /An undo made with git/, 'the limits page says so');
+  let u = undos(d); assert.equal(u.length, 1, 'the undo made with git is recorded'); assert.equal(u[0].kind, 'whole'); assert.match(u[0].first, /cache/); assert.match(u[0].why, /undo that, all of it.*logged people out/);
+  w.prompt('add a small cache to add in src/add.js again, and a hits counter'); w.agentEdit('src/add.js', () => before + CACHE2); w.stop();
+  assert.equal(undos(d).length, 1, 'writing it again another way is not an undo');
+  w.prompt('take the cache out but keep the hits counter. a stale cache logged people out after a password reset last time'); w.agentEdit('src/add.js', () => before + COUNTER); w.stop();
+  u = undos(d); assert.equal(u.length, 2, 'the partial undo is recorded'); assert.equal(u[1].kind, 'part'); assert.match(u[1].why, /take the cache out but keep the hits counter/); assert.match(u[1].first, /MAX|seen/);
+  assert.match(w.prompt('make src/add.js faster'), /partly undone here at your request .*src\/add\.js/);
+  // the same under a plain attach: the undo is recorded, with no words
+  const e = signed(true); const x = wired(e);
+  x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
+  x.prompt('undo that, all of it. a stale cache logged people out'); git(e, 'checkout', '--', 'src/add.js'); x.stop();
+  const v = undos(e); assert.equal(v.length, 1); assert.equal(v[0].kind, 'whole'); assert.equal(v[0].why, '');
+});
+test('claim: a rewrite the person asks for is not an undo: the lines are replaced, not taken out, in one edit or in two', () => {
+  const d = signed(true); const w = wiredWords(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE1); w.stop();
+  w.prompt('write that cache another way, with a size limit'); w.agentEdit('src/add.js', () => before + CACHE2); w.stop();
+  assert.equal(undos(d).length, 0, 'replaced in one edit');
+  const e = signed(true); const x = wiredWords(e); const eb = readFileSync(join(e, 'src/add.js'), 'utf8');
+  x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
+  x.prompt('write that cache another way, with a size limit'); x.agentEdit('src/add.js', () => eb); x.agentEdit('src/add.js', () => eb + CACHE2); x.stop();   // taken out, then written again, inside one turn
+  assert.equal(undos(e).length, 0, 'taken out and written again in the same turn: judged when the turn ends, not at each edit');
+});
+test('limit: a change the agent makes and takes back with shell commands alone is not recorded: no edit tool touched the file, so there is nothing to compare it with', () => {
+  const d = signed(true); const w = wiredWords(d);
+  w.prompt('add a small cache to add in src/add.js'); edit(d, 'src/add.js', (s) => s + CACHE1); w.stop();   // written by a shell command: no edit hook runs
+  w.prompt('undo that, all of it'); git(d, 'checkout', '--', 'src/add.js'); w.stop();
+  assert.equal(undos(d).length, 0); assert.match(flat(README), /made and taken back with shell commands alone/, 'the limits page says so');
 });
 test('limit: an undo the agent makes on its own, with no word from the person in between, is not recorded', () => {
   const d = signed(true); const w = wired(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
@@ -922,14 +949,15 @@ test('limit: nothing before the reflog is recovered, and work never committed is
 // What the hooks kept of a person's words until 0.2.0, run sentence by sentence on 2026-11-16 (proof-bench/privacy-words):
 // the first 240 characters of the latest prompt in the state file, those words again with an undo, and a note handed on
 // to Claude Code's own notes folder, a claude-mem worker and a Markdown folder. Anthropic's directory policy (1.G) names
-// that last one almost word for word. From 0.2.0 a plain attach does none of it and `attach --words` does all of it:
-// the sawbuck-reins plugin, the part that is about what a person types, attaches that way. A reason given with --allow
-// is kept either way: the person hands it to the command on purpose.
+// that last one almost word for word. From 0.2.0 a plain attach does none of it and `attach --words` does all of it.
+// Nothing turns it on for a person: neither plugin's setup passes it (his word of 2026-11-17: storing is never a
+// default; an adapter a person switches on). A reason given with --allow is kept either way: the person hands it to
+// the command on purpose.
 const notesDir = (d, home = HOME) => join(home, '.claude', 'projects', d.replace(/\//g, '-'), 'memory');
 const hookLines = (d, f = '.claude/settings.local.json') => Object.values(JSON.parse(readFileSync(join(d, f), 'utf8')).hooks).flat().flatMap((h) => h.hooks.map((x) => x.command));
 const stateOf = (d) => JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8'));
 const SAID = 'Undo that. A stale cache logged people out after a password reset last time.';
-// attached the way the sawbuck-reins plugin attaches; a plain attach afterwards (inside wired) leaves the word on
+// attached with the switch a person turns on themselves; a plain attach afterwards (inside wired) leaves the word on
 const wiredWords = (d, session) => { assert.equal(sb(d, 'attach', '--words').code, 0); return wired(d, session); };
 // the hooks as the file holds them now, with no attach run again
 const hooksAsWritten = (d) => { const h = JSON.parse(readFileSync(join(d, '.claude/settings.local.json'), 'utf8')).hooks; const run = (cmd, ev, text = 'x') => spawnSync('sh', ['-c', cmd], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: ev, cwd: d, session_id: 's', prompt: text }) }).stdout || ''; return { prompt: (t) => run(h.UserPromptSubmit[0].hooks[0].command, 'UserPromptSubmit', t), stop: () => run(h.Stop[0].hooks[0].command, 'Stop') }; };
@@ -979,7 +1007,7 @@ test('claim: status reads the steers a plugin kept only where the repo is attach
 });
 test('claim: the guide says what a plain attach keeps, what --words turns on, that a reason is kept either way, and that a purge takes the handed-on notes with it', () => {
   const G = readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8'); const P = G.split('\n').find((l) => l.startsWith('**What is kept of what you type.**')) || '';
-  for (const re of [/keeps none of what you type/, /No prompt text is kept/, /An undo is recorded without your words/, /Nothing is handed on to any notes/, /attach --words/, /sawbuck-reins.*attaches that way/, /until `sawbuck attach --no-words`/, /A reason you give with `--allow` is kept either way/, /detach --purge.*notes Sawbuck handed on/, /claude-mem worker/]) assert.match(P, re);
+  for (const re of [/keeps none of what you type/, /No prompt text is kept/, /An undo is recorded without your words/, /Nothing is handed on to any notes/, /attach --words/, /Nothing turns it on for you: neither plugin's setup does/, /until `sawbuck attach --no-words`/, /A reason you give with `--allow` is kept either way/, /detach --purge.*notes Sawbuck handed on/, /claude-mem worker/]) assert.match(P, re);
   assert.match(sb(repo(true), 'attach', '--help').out, /These hooks keep none of what you type\. --words turns that on/);
 });
 test('claim: sawbuck share typed by hand hands a finding on under a plain attach too, and a purge finds a note in a folder the config no longer names', () => {

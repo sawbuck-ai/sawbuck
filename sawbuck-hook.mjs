@@ -16,6 +16,7 @@ import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { readAllowed, keptOnTree } from './allowed.mjs';
 import { cli, olderSaid } from './copies.mjs';
+import { undoJudge } from './undo.mjs';
 const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const by = flag('--by', '');   // attribution from the harness wiring: the Claude hook passes 'claude', the raw-git hook passes nothing
 // nothing this hook finds is handed on to any notes unless the repo is attached with --words (share.mjs reads this)
@@ -92,6 +93,15 @@ if (own) {
   for (const k of OWN) { if (Object.prototype.hasOwnProperty.call(own, k)) st[k] = own[k]; else delete st[k]; }
   st.lastSha = (own.seen && hasCommit(own.seen)) ? own.seen : '';
 }
+// 0) THE UNDO LEDGER, WHEN THE TURN ENDS (undo.mjs). What the agent had added to a file when the person spoke, and is gone
+// now, is an undo at their request, whatever took it out: an edit, `git checkout`, a shell command. Their words go
+// with it only where the repo is attached with --words (the state file holds none otherwise), and so does the note.
+if (stop) {
+  for (const e of undoJudge(repo, hookInput.session_id, st.lastPrompt || '')) {
+    await shareFinding(repo, { kind: 'undone', title: `${e.kind === 'part' ? 'partly undone' : 'undone'}: ${e.first || e.file} in ${e.file}`, text: e.why || `An edit to ${e.file} was undone at the person's request.`, files: [e.file] }).catch(() => {});
+  }
+}
+
 // 2) WHAT IS STILL OPEN (0.2.0). A gamed win this hook caught that nothing has settled. Kept as a short list in the
 // second copy and never read from the record folder. NO VERDICT IS CARRIED FROM ONE TURN TO THE NEXT: a catch is sent
 // back only in the turn that made it (`mine`, below), and after that turn the person is told about it for a few turns
@@ -483,7 +493,7 @@ if (recordRemoved) {
 // without --words (sawbuck.mjs). The person is told, once.
 if (stop && st.wordsRemoved && !st.wordsRemovedTold) {
   st.wordsRemovedTold = true; saveState('ends');
-  tell(`Sawbuck: from 0.2.0 it keeps none of what you type in this repo. What an older version kept was removed from its record (.sawbuck/): the start of your last prompt, and your words saved with an undo (${st.wordsRemoved} ${st.wordsRemoved === 1 ? 'place' : 'places'}; the undo itself is kept). To keep your words as before: ${cli('attach --words')}. The sawbuck-reins plugin attaches that way.`);
+  tell(`Sawbuck: from 0.2.0 it keeps none of what you type in this repo. What an older version kept was removed from its record (.sawbuck/): the start of your last prompt, and your words saved with an undo (${st.wordsRemoved} ${st.wordsRemoved === 1 ? 'place' : 'places'}; the undo itself is kept). To keep your words as before: ${cli('attach --words')}.`);
   process.exit(0);
 }
 

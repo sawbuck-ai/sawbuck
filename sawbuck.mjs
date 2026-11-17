@@ -16,7 +16,7 @@ import { recordAllowed, allowedBlock } from './allowed.mjs';
 import { readGuard, writeGuard, detachGuard, ownOf, guardPath, turnOpen } from './guard.mjs';
 import { ripplesReport } from './ripples.mjs';
 import { profileCli } from './profile.mjs';
-import { undoHook, undoCodex, undoCursor, EDIT_MATCHER } from './undo.mjs';
+import { undoHook, undoCodex, undoCursor, undoMark, undoJudge, EDIT_MATCHER } from './undo.mjs';
 import { dependencyEditFromHook } from './deps.mjs';
 import { holdDecision, ownRecordEdit } from './hold.mjs';
 import { steersReport } from './steers.mjs';
@@ -138,7 +138,7 @@ Usage:
                             These hooks keep none of what you type. --words turns that on: the start of
                             your latest prompt in the record, your words saved with an undo, findings handed
                             on to the notes on this machine. It stays on until --no-words. For the Claude
-                            Code hooks; the sawbuck-reins plugin attaches with --words
+                            Code hooks. Nothing turns it on for you
   sawbuck detach [repo] [--user] [--all] [--verify] [--purge] [--dry-run]
                             Remove the hooks (no flag: whatever is wired here; --all: every repo). The
                             record stays, kept out of git status; --purge deletes it. --verify proves the
@@ -476,6 +476,13 @@ switch (cmd) {
         // at, the send-backs spent) is kept in the second copy and read from there; it is started from the state file
         // once, here, before the turn's first tool call, and never again (guard.mjs).
         { const g = readGuard(repo); writeGuard(repo, { own: { ...((g.own && typeof g.own === 'object' && !Array.isArray(g.own)) ? g.own : ownOf(st)), turnOpen: true } }); }
+        // THE UNDO LEDGER (undo.mjs). A turn that never reached its end is judged now, with the prompt it began with; then
+        // the picture is taken for this prompt: what the agent has added to each file it touched, as it stands. A notice
+        // from a background task is not the person speaking: the turn it belongs to goes on with the picture it has.
+        if (!/^\s*<task-notification>/.test(promptText)) {
+          for (const e of undoJudge(repo, session, st.lastPrompt || '')) shareFinding(repo, undoFinding(e)).catch(() => {});
+          undoMark(repo, session);
+        }
         framed = !!session && st.framedSession === session;
         if (session) st.framedSession = session;
         // the person's words, for an undo record (local, git-excluded): only where the repo is attached with --words.
@@ -590,8 +597,7 @@ switch (cmd) {
     }
     if (ev === 'afterFileEdit') {
       dependencyEditFromHook(JSON.stringify({ file_path: h.file_path, cwd: h.cwd }), r);
-      const e = undoCursor(JSON.stringify(h), r);
-      if (e) shareFinding(r, { kind: 'undone', title: `${e.kind === 'part' ? 'partly undone' : 'undone'}: ${e.first || e.file} in ${e.file}`, text: e.why || '', files: [e.file] }).catch(() => {});
+      undoCursor(JSON.stringify(h), r);
       out('{}'); break;
     }
     out('{}'); break;
@@ -613,14 +619,13 @@ switch (cmd) {
   case 'undo': {
     if (!flags.has(WORDS)) process.env.SAWBUCK_SHARE = 'none';   // not attached with --words: an undo is recorded here and handed on nowhere
     // the undo ledger's hook, wired by attach on PreToolUse and PostToolUse for the edit tools. Before an edit: snapshot
-    // the file once per session. After one: a file back at its snapshot, after a change and after a word from the person,
-    // is an undo; it is recorded with what the change had added and the person's words, and handed to the memory sinks.
+    // the file once per session. The undo itself is judged when the turn ends (sawbuck-hook.mjs) and when the next
+    // prompt arrives (the turn hook), from the file as it is then: undo.mjs says why.
     let body = ''; if (flags.has('--hook') && !process.stdin.isTTY) { try { body = readFileSync(0, 'utf8'); } catch {} }
     const r = gitTop(repoArg()) || repoArg();
     { const q = ownRecordEdit(body, r); if (q) out(JSON.stringify(q)); }   // an edit tool pointed into sawbuck's own record: a person says yes first (hold.mjs)
     dependencyEditFromHook(body, r);   // an edit inside an installed dependency is in no diff: recorded for the notice at the end of the turn
-    const found = flags.has('--codex') ? undoCodex(body, r) : [undoHook(body, r)].filter(Boolean);
-    for (const e of found) shareFinding(r, { kind: 'undone', title: `${e.kind === 'part' ? 'partly undone' : 'undone'}: ${e.first || e.file} in ${e.file}`, text: e.why || `An edit to ${e.file} was undone at the person's request.`, files: [e.file] }).catch(() => {});
+    if (flags.has('--codex')) undoCodex(body, r); else undoHook(body, r);
     break;
   }
   case 'share': {
@@ -1129,6 +1134,8 @@ function verifyClean(repo) {
 // the setting that stood when the prompt began, not one written during the turn.
 // (a function declaration, like its neighbours: the command switch above runs before this line is reached)
 function maxBlocksIn(repo) { try { const e = JSON.parse(readFileSync(join(repo, 'sawbuck.config.json'), 'utf8')).enforce; return (e && e.maxBlocks !== undefined) ? e.maxBlocks : null; } catch { return null; } }
+// an undo as a finding for the notes on this machine (handed on only where the repo is attached with --words)
+function undoFinding(e) { return { kind: 'undone', title: `${e.kind === 'part' ? 'partly undone' : 'undone'}: ${e.first || e.file} in ${e.file}`, text: e.why || `An edit to ${e.file} was undone at the person's request.`, files: [e.file] }; }
 // enforce.remindTurns the same way (0.2.0): for how many later turns a person is told about a test change left open
 function remindTurnsIn(repo) { try { const e = JSON.parse(readFileSync(join(repo, 'sawbuck.config.json'), 'utf8')).enforce; return (e && e.remindTurns !== undefined) ? e.remindTurns : null; } catch { return null; } }
 // every ref tip at the start of a turn, so a rebase inside the turn can tell the agent's own commits from upstream's

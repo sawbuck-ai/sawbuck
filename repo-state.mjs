@@ -33,8 +33,8 @@ export function wiredBy(repo, home = homedir()) {
 
 // WHAT A PERSON TYPES IS KEPT ONLY WHERE THE HOOK LINES SAY `--words` (0.2.0). A plain attach keeps none of it: no
 // prompt text in the record, an undo without the person's words, nothing handed on to any notes, no kept steers read.
-// `sawbuck attach --words` writes the word onto the hook lines, and the sawbuck-reins plugin attaches that way: that
-// plugin is the part that is about what a person types. The lines are the one thing every way of attaching has (the
+// `sawbuck attach --words` writes the word onto the hook lines. Nothing turns it on for a person: neither plugin's
+// setup passes it (his word, 2026-11-17: storing is never a default). The lines are the one thing every way of attaching has (the
 // project file, a team file a clone brings, the user-level file). Read by `status` and by attach itself.
 export const WORDS = '--words';
 const hookCommands = (f) => { try { return Object.values(JSON.parse(readFileSync(f, 'utf8')).hooks || {}).flat().flatMap((h) => (h && Array.isArray(h.hooks)) ? h.hooks : []).map((x) => String((x && x.command) || '')); } catch { return []; } };
