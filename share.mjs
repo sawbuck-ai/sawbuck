@@ -75,7 +75,7 @@ export function handedOnNotes(repo, { home = homedir() } = {}) {
   // the index Claude Code loads: our lines are the ones that link a note of ours
   const idx = join(dirs[0], 'MEMORY.md'); let index = null;
   try { const had = readFileSync(idx, 'utf8'); const gone = new Set(files.filter((f) => f.startsWith(dirs[0])).map((f) => f.slice(dirs[0].length + 1))); const kept = had.split('\n').filter((l) => ![...gone].some((n) => l.includes(`](${n})`))); if (kept.length !== had.split('\n').length) index = { file: idx, text: kept.join('\n') }; } catch {}
-  // and where the record says a note went (0.1.74 on), for a note in a folder the config no longer names. Only a file
+  // and where the record says a note went (0.2.0 on), for a note in a folder the config no longer names. Only a file
   // that still carries our mark: the record is a file anyone can write, and this list is deleted from.
   let toWorker = 0;
   try { for (const l of readFileSync(join(repo, '.sawbuck', 'shared.jsonl'), 'utf8').split('\n').filter(Boolean)) { let e; try { e = JSON.parse(l); } catch { continue; } if (e.sink === 'claude-mem') toWorker++; else if (typeof e.where === 'string' && e.where.endsWith('.md') && !files.includes(e.where) && oursNote(e.where)) files.push(e.where); } } catch {}

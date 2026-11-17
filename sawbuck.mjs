@@ -1215,7 +1215,7 @@ function unwireCursor(repo, { quiet } = {}) {
 function purgeRecord(repo) {
   let n = 0;
   const purge = (p) => { if (!there(p)) return; dropFile(p, 'the record'); n++; say(`sawbuck: purged ${p}`); };
-  // The notes sawbuck handed on for this repo go with the record (0.1.74). Until then a purge left them where they
+  // The notes sawbuck handed on for this repo go with the record (0.2.0). Until then a purge left them where they
   // were put, the person's own typed words in the undo note among them (proof-bench/privacy-words, 2026-11-16). Read
   // before the record goes: it says how many were also sent to a claude-mem worker, which no file here holds.
   try {

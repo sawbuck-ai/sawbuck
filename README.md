@@ -44,7 +44,7 @@ Exit codes: `0` pass (verified, held, or allowed) · `1` sent back (a regression
 ## What it does
 
 - **A normal turn:** you see nothing new.
-- **The agent got to green by changing a test:** the turn is sent back to the agent, up to three times. Then you get three ways out: fix the source, put the test back, or accept the change with a reason.
+- **The agent got to green by changing a test:** the turn is sent back to the agent, up to three times. Then you get three ways out: fix the source, put the test back, or accept the change with a reason. A later turn is not sent back for it: you are told while it is open.
 - **The agent changed a protected path** (a CI workflow, the registry config, the rules file): sent back too. To keep such a change, make it yourself.
 - **Your prompt names a file where something was tried before:** the reverted attempt and its reason are shown to the agent with the prompt.
 
