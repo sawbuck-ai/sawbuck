@@ -137,6 +137,7 @@ if (gs && rec && rec.latest && rec.latest.kind === 'gamed' && (gs.metrics !== un
 // each remote branch: "update by push" for a push from this clone, "fetch ..." or "pull ..." for what came in.
 // A remote branch that did not move since the turn began is already left out as one of the turn's tips. One that
 // moved and has no log here (a clone that keeps none) is left out whole, as before. Returns arguments for rev-list.
+// --no-show-signature: with log.showSignature set, a look at a log starts gpg once for every entry it shows.
 const fromRemotes = (tips, sinceIso) => {
   const since = Math.floor(Date.parse(sinceIso || '') / 1000);
   if (!tips.length || !Number.isFinite(since)) return ['--not', '--remotes'];
@@ -144,7 +145,7 @@ const fromRemotes = (tips, sinceIso) => {
   for (const line of git('for-each-ref', '--format=%(objectname) %(refname)', 'refs/remotes').split('\n').filter(Boolean)) {
     const sp = line.indexOf(' '); const sha = line.slice(0, sp), ref = line.slice(sp + 1);
     if (had.has(sha)) continue;
-    const moves = git('log', '-g', '--date=unix', '--format=%H %gd %gs', ref, '--').split('\n')
+    const moves = git('log', '--no-show-signature', '-g', '--date=unix', '--format=%H %gd %gs', ref, '--').split('\n')
       .map((l) => /^([0-9a-f]+) .*@\{(\d+)\} (.*)$/.exec(l)).filter(Boolean).map((m) => ({ sha: m[1], at: +m[2], how: m[3] })).filter((e) => e.at >= since);
     if (!moves.length) { out.push(`^${sha}`); continue; }
     for (const e of moves) if (!e.how.startsWith('update by push')) out.push(`^${e.sha}`);

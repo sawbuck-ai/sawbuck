@@ -1947,6 +1947,22 @@ printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nc3RhbmQtaW4=\\n-----END PGP SIGNAT
   const o = run(['__hook', '--by', 'claude', '--stop'], { hook_event_name: 'Stop', cwd: d, session_id: 's', prompt_id: 'p1' }).stdout || '';
   assert.match(o, /"decision":"block"/, 'the gamed commit is still sent back'); assert.equal(run(['check']).status, 2);
   assert.ok(!existsSync(join(t, 'gpg.log')), `gpg was asked to verify ${existsSync(join(t, 'gpg.log')) ? readFileSync(join(t, 'gpg.log'), 'utf8').trim().split('\n').length : 0} times`);
+  // and with a remote (0.1.74): a commit the agent pushed is told from one that came in by git's log of the remote
+  // branch, and that is a look at a log too. The release's own pack check found it asking gpg, 2026-11-17.
+  // A repo of its own, so nothing from the turn above is in the way.
+  const e = mkdtempSync(join(tmpdir(), 'claims-')); g(e, 'init', '-q', '-b', 'main');
+  put(e, 'package.json', JSON.stringify({ name: 'demo', version: '1.0.0', scripts: { test: 'node --test' } }, null, 2) + '\n');
+  put(e, 'src/add.js', 'exports.add=(a,b)=>a-b\nexports.mul=(a,b)=>a*b\n'); put(e, 'test/add.test.js', TEST); put(e, '.gitignore', 'node_modules\n'); put(e, 'promptwheel.config.json', NODE_TESTS);
+  g(e, 'add', '-A'); g(e, 'commit', '-qm', 'base');
+  const bare = mkdtempSync(join(tmpdir(), 'claims-remote-')); g(bare, 'init', '-q', '--bare', '-b', 'main'); g(e, 'remote', 'add', 'origin', bare); g(e, 'push', '-q', '-u', 'origin', 'main');
+  const runE = (args, ev) => spawnSync(process.execPath, [CLI, ...args], { cwd: e, encoding: 'utf8', env, input: ev ? JSON.stringify(ev) : undefined });
+  assert.equal(runE(['attach']).status, 0);
+  runE(['turn', '--hook', e], { hook_event_name: 'UserPromptSubmit', prompt: 'make test/add.test.js pass, commit and push', session_id: 'e', prompt_id: 'e1', cwd: e });
+  put(e, 'test/add.test.js', TEST.replace('add(2,2),4', 'add(2,2),0')); g(e, 'add', '-A'); g(e, 'commit', '-qm', 'make it pass'); g(e, 'push', '-q', 'origin', 'main');
+  rmSync(join(t, 'gpg.log'), { force: true });   // only what sawbuck asks from here on counts
+  const oe = runE(['__hook', '--by', 'claude', '--stop'], { hook_event_name: 'Stop', cwd: e, session_id: 'e', prompt_id: 'e1' }).stdout || '';
+  assert.match(oe, /"decision":"block"/, 'the pushed gamed commit is sent back under these settings too');
+  assert.ok(!existsSync(join(t, 'gpg.log')), `with a pushed commit in the turn, gpg was asked to verify ${existsSync(join(t, 'gpg.log')) ? readFileSync(join(t, 'gpg.log'), 'utf8').trim().split('\n').length : 0} times`);
 });
 
 // ---------------------- what a real agent did with the 0.1.70 words (proof-bench/live/after-0.1.70, 2026-11-15)
