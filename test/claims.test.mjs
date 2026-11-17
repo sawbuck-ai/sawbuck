@@ -686,6 +686,20 @@ test('claim: under Codex the undo ledger reads the files apply_patch names; unde
   put(c, 'src/add.js', cb); cr('afterFileEdit', { file_path: join(c, 'src/add.js'), edits: [{ old_string: cb + added, new_string: cb }] });
   { const u = readFileSync(join(c, '.sawbuck', 'undone.jsonl'), 'utf8'); assert.match(u, /"kind":"whole"/, 'Cursor'); assert.doesNotMatch(u, /logged people out/); }
 });
+// Found in a real session on 2026-11-17 (proof-bench/live/rehearse-0.2.0, step 2; proof-bench/undo-by-git, the same on
+// the published 0.1.73): a real agent undid a whole change with `git checkout`, and the undo hooks watch the edit tools
+// only. Its second try at the change was then taken for a partial undo. Not fixed yet.
+test('limit: an undo the agent makes with git is not recorded, and a second try at that change is then recorded as a partial undo with the wrong words', () => {
+  const d = signed(true); const w = wiredWords(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
+  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + 'const cache=new Map()\nexports.cached=(a,b)=>{const k=a+","+b;if(!cache.has(k))cache.set(k,a+b);return cache.get(k)}\n'); w.stop();
+  w.prompt('undo that, all of it. a stale cache logged people out after a password reset last time'); git(d, 'checkout', '--', 'src/add.js'); w.stop();   // a shell command: no edit hook runs
+  assert.ok(!existsSync(join(d, '.sawbuck', 'undone.jsonl')), 'the undo made with git is not recorded');
+  const again = 'add a small cache to add in src/add.js again, and a hits counter';
+  w.prompt(again); w.agentEdit('src/add.js', () => before + 'const MAX=100\nconst seen=new Map()\nlet hits=0\nexports.cached=(a,b)=>{hits++;const k=`${a}:${b}`;if(seen.has(k))return seen.get(k);if(seen.size>=MAX)seen.clear();seen.set(k,a+b);return seen.get(k)}\nexports.hits=()=>hits\n'); w.stop();
+  const u = readFileSync(join(d, '.sawbuck', 'undone.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(u.length, 1); assert.equal(u[0].kind, 'part'); assert.equal(u[0].why, again, 'the second try is taken for a partial undo, and its words are the request for the second try');
+  assert.match(flat(README), /An undo made with git/, 'the limits page says so');
+});
 test('limit: an undo the agent makes on its own, with no word from the person in between, is not recorded', () => {
   const d = signed(true); const w = wired(d); const before = readFileSync(join(d, 'src/add.js'), 'utf8');
   w.prompt('try a cache in src/add.js'); w.agentEdit('src/add.js', cacheLine); w.agentEdit('src/add.js', () => before);
