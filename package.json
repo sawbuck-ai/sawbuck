@@ -39,7 +39,7 @@
   },
   "files": [
     "sawbuck.mjs",
-  "copies.mjs",
+    "copies.mjs",
     "rewrites.mjs",
     "share.mjs",
     "ledger.mjs",
@@ -70,6 +70,9 @@
     "status.mjs",
     "memory.mjs",
     "README.md",
+    "GUIDE.md",
+    "LIMITS.md",
+    "CHANGELOG.md",
     "CONTRACT.md"
   ],
   "promptwheelAction": "23f6c1ccc427f36e182ed38e414a38e46dee16c1"

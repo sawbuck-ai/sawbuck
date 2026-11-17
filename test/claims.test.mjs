@@ -20,6 +20,10 @@ const CLI = process.env.CLAIMS_SAWBUCK || join(HERE, '..', 'sawbuck.mjs');
 const VERSION = JSON.parse(readFileSync(join(dirname(CLI), 'package.json'), 'utf8')).version;
 const PIN = `npx -y sawbuck@${VERSION}`;
 const lit = (s) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+// The public pages of the package, read as one text. Since 0.1.74 the README is one page; what it held before is in
+// GUIDE.md and LIMITS.md word for word, and what was found and fixed in each version is in CHANGELOG.md.
+const PAGES = ['README.md', 'GUIDE.md', 'LIMITS.md', 'CHANGELOG.md'];
+const pages = () => PAGES.map((f) => readFileSync(join(HERE, '..', f), 'utf8')).join('\n');
 const HOME = mkdtempSync(join(tmpdir(), 'claims-home-'));
 const ENV = { ...process.env, HOME, XDG_CONFIG_HOME: join(HOME, 'cfg'), GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
   GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b.c', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b.c', PROMPTWHEEL_NO_ALLOW_TRAILER: '' };
@@ -961,7 +965,7 @@ test('claim: a reason written about one change does not wave through another: wi
   assert.deepEqual(check(e).allowable, ['mandate:contract-frozen', 'mandate:hooks-frozen']);
   assert.equal(sb(e, 'check', '--allow', 'team hooks').code, 1);
   assert.equal(sb(e, 'check', '--allow', 'contract-frozen, hooks-frozen: more repeats, and the team shares the hooks').code, 0);
-  assert.ok(readFileSync(join(HERE, '..', 'README.md'), 'utf8').includes('sawbuck check --allow "contract-frozen, hooks-frozen: <reason>"'));
+  assert.ok(pages().includes('sawbuck check --allow "contract-frozen, hooks-frozen: <reason>"'));
 });
 // ------------------------------------------------------------ "what a person let through, and why, is kept and comes back"
 // Until 0.1.68 a reason given with --allow was printed once and kept nowhere. It joins the record now: kept in
@@ -989,7 +993,7 @@ test('claim: a reason given with --allow is kept, and comes back with the prompt
   sb(d, 'check', '--allow', 'the spec changed: add subtracts now'); assert.equal(allowedLog(d).length, 1);
   const j = sb(d, 'check', '--json', '--allow', 'and the ticket is ABC-1'); assert.equal(j.code, 0); JSON.parse(j.out);
   assert.equal(allowedLog(d).length, 2, 'kept under --json, and the output is still only the report');
-  assert.match(readFileSync(join(HERE, '..', 'README.md'), 'utf8'), /kept in `\.sawbuck\/allowed\.jsonl`/, 'the README says where it is kept');
+  assert.match(pages(), /kept in `\.sawbuck\/allowed\.jsonl`/, 'the README says where it is kept');
 });
 // A record keeps the instant in UTC. Shown as its first ten characters it read a day ahead for anyone west of Greenwich
 // in the evening: at 20:29 on the 13th in Los Angeles an agent was told a decision was made on the 14th, and remarked on
@@ -1066,7 +1070,7 @@ test('claim: rewriting or deleting the record after a gamed commit does not take
     edit(e, 'test/add.test.js', (s) => s.replace('add(2,2),4', 'add(2,2),0')); save(e, 'make it green');
     assert.ok(blocked(x.stop()), `the state file ${what} before the turn ended`);
   }
-  assert.match(readFileSync(join(HERE, '..', 'README.md'), 'utf8'), /\.git\/sawbuck\/guard\.json/, 'the README says where the second copy is');
+  assert.match(pages(), /\.git\/sawbuck\/guard\.json/, 'the README says where the second copy is');
 });
 test('claim: deleting the whole record folder during a turn does not take the send-back away, for a gamed commit or a protected path', () => {
   const { d, w } = sentBackTurn(); rmSync(join(d, '.sawbuck'), { recursive: true });
@@ -1215,7 +1219,16 @@ test('limit: init proposes the detected tests and the tripwires, not coverage, l
 test('claim: a Sawbuck-Allow trailer clears nothing, in check or in the Stop hook, signed or not', () => { const d = gamedRepo('cheat\n\nSawbuck-Allow: because'); const r = sb(d, 'check'); assert.equal(r.code, 2); assert.match(r.out, /trailer/); const e = repo(); const w = wired(e); w.prompt(); edit(e, 'test/add.test.js', (s) => s.replace('add(2,2),4', 'add(2,2),0')); save(e, 'cheat\n\nSawbuck-Allow: because'); assert.ok(blocked(w.stop())); });
 test('limit: removing the hooks from the git-excluded settings.local.json is invisible to the check; doctor sees it', () => { const d = signed(true); wired(d); put(d, '.claude/settings.local.json', '{}\n'); assert.equal(git(d, 'status', '--porcelain'), ''); assert.equal(check(d).code, 0); const r = sb(d, 'doctor'); assert.equal(r.code, 1); assert.match(r.out, /hooks are gone/); });
 const flat = (s) => s.replace(/\s+/g, ' ');
-const README = readFileSync(join(HERE, '..', 'README.md'), 'utf8');
+const README = pages();   // the four pages: the README is one page since 0.1.74, and the rest of what it held is in the other three
+test('claim: the README is one page, with a command near the top, and it points at the guide, the limits and the changelog, which the package carries', () => {
+  const first = readFileSync(join(HERE, '..', 'README.md'), 'utf8');
+  assert.ok(first.split(/\s+/).length < 850, `the README is ${first.split(/\s+/).length} words`);
+  assert.ok(first.slice(0, first.indexOf('```')).split(/\s+/).length < 220, 'a command within the first 220 words');
+  for (const f of PAGES.slice(1)) assert.ok(first.includes(`](${f})`), `the README links ${f}`);
+  assert.doesNotMatch(first, /[Bb]efore 0\.\d+\.\d+|[Ss]ince 0\.\d+\.\d+|Found 20\d\d-/, 'what was found and fixed is in the changelog, not on the first page');
+  const shipped = JSON.parse(readFileSync(join(dirname(CLI), 'package.json'), 'utf8')).files;
+  for (const f of PAGES) { assert.ok(shipped.includes(f), `package.json ships ${f}`); assert.ok(existsSync(join(dirname(CLI), f)), `${f} is in the package`); }
+});
 test('claim: the README shows the verified line and the agent rule as sawbuck prints them', () => { const d = repo(); edit(d, 'src/add.js', fixAdd); const v = sb(d, 'check').out.split('\n')[0].replace(/ \(it survives.*$/, ''); assert.ok(flat(README).includes(flat(v.replace(/^sawbuck: /, ''))), v); const e = repo(true); sb(e, 'contract'); const block = readFileSync(join(e, 'AGENTS.md'), 'utf8').match(/## Sawbuck rules\n\n([^\n]+)/)[1]; assert.ok(flat(README).includes(flat(block)), 'the AGENTS block'); });
 test('claim: promptwheel exports conformsToContract, the validator the contract names', async () => { const { PW } = await import(join(HERE, '..', 'bins.mjs')); const m = await import(PW); assert.equal(typeof m.conformsToContract, 'function'); assert.doesNotMatch(README + readFileSync(join(HERE, '..', 'CONTRACT.md'), 'utf8'), /promptwheel conformance/); });
 
@@ -1526,7 +1539,7 @@ test('claim: the check says so when the environment it runs in can change which 
   const set = run({ PYTEST_ADDOPTS: '--deselect tests/test_a.py::test_red' });
   assert.equal(set.code, 0, 'a note, never a verdict'); assert.match(set.out, /sawbuck: note: the environment this ran in can change which tests run, or load code into them: PYTEST_ADDOPTS/);
   assert.doesNotMatch(run({ NODE_OPTIONS: '--max-old-space-size=4096' }).out, /the environment this ran in/, 'a NODE_OPTIONS that loads no file is not one');
-  assert.match(readFileSync(join(HERE, '..', 'README.md'), 'utf8'), /the check says so when one of them is set/);
+  assert.match(pages(), /the check says so when one of them is set/);
 });
 // 0.1.70: who may let a pull request through. The CI check took a person's yes from a `sawbuck-allow:` comment by any
 // account of type User with write access, the account that opened the pull request included. A coding agent run from
@@ -1640,7 +1653,7 @@ test('claim: in a session a workflow the agent changed is sent back at the end o
 test('claim: signing with --full says who may let a pull request through, and names the setting for a repo with one person in it', () => {
   const d = repo(true); git(d, 'remote', 'add', 'origin', 'https://github.com/a/b.git'); const r = sb(d, 'contract', '--full'); assert.equal(r.code, 0);
   assert.match(r.out, /Added \.github\/workflows\/sawbuck\.yml/); assert.match(r.out, /someone with write access who did not open it/); assert.match(r.out, /"allowFromAuthor": true/);
-  const readme = readFileSync(join(HERE, '..', 'README.md'), 'utf8'); assert.match(readme, /who did not open it comments `sawbuck-allow: <reason>`/); assert.match(readme, /"allowFromAuthor": true/);
+  const readme = pages(); assert.match(readme, /who did not open it comments `sawbuck-allow: <reason>`/); assert.match(readme, /"allowFromAuthor": true/);
 });
 test('claim: the CI workflow --full writes pins every action by commit, the check\'s own included, at the engine version this release pins', () => {
   const d = repo(true); git(d, 'remote', 'add', 'origin', 'https://github.com/a/b.git'); assert.equal(sb(d, 'contract', '--full').code, 0);
@@ -1974,7 +1987,7 @@ test('claim: a line Sawbuck gives a person to type reaches the copy that printed
   assert.match(st, /Another copy\s+·\s+an older copy of sawbuck is installed on this machine, 0\.1\.46/); assert.doesNotMatch(sbEnv(d, look(''), 'status').out, /Another copy/);
 });
 test('claim: the README says a global copy does not update itself, how to see which copy answers, and the line that updates it', () => {
-  const readme = readFileSync(join(HERE, '..', 'README.md'), 'utf8');
+  const readme = pages();
   assert.match(readme, /npm i -g sawbuck@latest/); assert.match(readme, /does not update itself/); assert.match(readme, /sawbuck --version/);
   assert.match(readme, /\*\*Which copy answers\.\*\*/);
 });
