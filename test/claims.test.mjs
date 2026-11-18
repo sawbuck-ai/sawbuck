@@ -793,7 +793,7 @@ test('claim: a turn that puts back what you had undone ends with a line that say
   assert.match(m, /put back/); assert.match(m, /src\/add\.js/); assert.match(m, /2 of the 2 lines/); assert.match(m, /const cache=new Map\(\)/, 'it names the first line that is back');
   assert.equal(redone(d).length, 1); assert.doesNotMatch(JSON.stringify(redone(d)), /make add faster/, 'nothing typed is kept with it');
   w.prompt('thanks'); assert.doesNotMatch(said(w.stop()), /put back/, 'said once');
-  assert.match(w.prompt('make src/add.js faster'), /undone here at your request \([^)]*\), and in the file again now: 2 lines/, 'a later prompt that names the file is told both');
+  { const p = w.prompt('make src/add.js faster'); assert.match(p, /undone here at your request \([^)]*\), and in the file again now: 2 lines/, 'a later prompt that names the file is told both'); assert.doesNotMatch(p, /stop and ask/, 'it is in the file: there is nothing to ask before'); }
   git(d, 'checkout', '--', 'src/add.js');   // taken out again, by hand, with no word to the agent
   { const p = w.prompt('make src/add.js faster'); assert.match(p, /undone here at your request \([^)]*\): 2 lines/); assert.doesNotMatch(p, /in the file again/, 'read from the file each time: it is not said once the lines are gone'); }
   // the same when a shell command wrote it back, and in another session
@@ -802,6 +802,38 @@ test('claim: a turn that puts back what you had undone ends with a line that say
   x.prompt('undo that'); git(e, 'checkout', '--', 'src/add.js'); x.stop();
   const x2 = wired(e, 'two'); x2.prompt('make add faster'); edit(e, 'src/add.js', (s) => s + CACHE1);
   assert.match(said(x2.stop()), /put back .*src\/add\.js/);
+});
+// HIS "do recommendations" (2026-11-17), from the undo-words bench: the line with no words was read as a lead and passed
+// over. 22 of 27 later sessions made the undone change again, 17 of them after saying they had read it, and six wrote
+// its first line back word for word. So where no reason is on record the line says so and tells the agent to ask
+// first; and the person is told, once in a session, that the reason is not kept and how to keep it.
+test('claim: an undo with no reason on record tells the agent to ask before it makes a change like it again; with your words on record it gives the words instead', () => {
+  const d = signed(true); const w = wired(d);
+  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE1); w.stop();
+  w.prompt('undo that, a stale cache logged people out'); git(d, 'checkout', '--', 'src/add.js'); w.stop();
+  const p = w.prompt('make src/add.js faster');
+  assert.match(p, /undone here at your request \([^)]*\): 2 lines starting `const cache=new Map\(\)` in src\/add\.js\. The reason is not on record\. Before you make a change like this one again, in these lines or in others, stop and ask the person\./);
+  const e = signed(true); const x = wiredWords(e);
+  x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
+  x.prompt('undo that, a stale cache logged people out'); git(e, 'checkout', '--', 'src/add.js'); x.stop();
+  const q = x.prompt('make src/add.js faster'); assert.match(q, /Your words: "undo that, a stale cache logged people out"/); assert.doesNotMatch(q, /not on record|stop and ask/);
+});
+test('claim: when an undo is recorded and none of your words are kept, the end of that turn tells you once in a session that the reason is not kept, and how to keep it', () => {
+  const d = signed(true); const w = wired(d);
+  w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE1); assert.doesNotMatch(said(w.stop()), /reason is not kept/);
+  w.prompt('undo that, a stale cache logged people out'); git(d, 'checkout', '--', 'src/add.js');
+  const out = w.stop(); assert.ok(!blocked(out), 'told, not sent back'); const m = said(out);
+  assert.match(m, /Sawbuck: recorded that 2 lines were taken out of src\/add\.js at your request\. The reason is not kept\./);
+  assert.match(m, /tell Claude Code "Remember that for next time\."/); assert.match(m, lit(`${PIN} attach --words`));
+  assert.doesNotMatch(JSON.stringify(undos(d)), /logged people out/, 'and it is true: the record holds none of it');
+  w.prompt('add a counter to src/add.js'); w.agentEdit('src/add.js', (s) => s + COUNTER); w.stop();
+  w.prompt('undo that too'); git(d, 'checkout', '--', 'src/add.js'); assert.doesNotMatch(said(w.stop()), /reason is not kept/, 'once in a session');
+  const w2 = wired(d, 'another'); w2.prompt('add a counter to src/add.js'); w2.agentEdit('src/add.js', (s) => s + COUNTER); w2.stop();
+  w2.prompt('undo that'); git(d, 'checkout', '--', 'src/add.js'); assert.match(said(w2.stop()), /reason is not kept/, 'and once in the next one');
+  // with --words the reason is kept, so nothing is said; and it is for Claude Code's hooks, where the switch and the notes are
+  const e = signed(true); const x = wiredWords(e);
+  x.prompt('add a small cache to add in src/add.js'); x.agentEdit('src/add.js', (s) => s + CACHE1); x.stop();
+  x.prompt('undo that, a stale cache logged people out'); git(e, 'checkout', '--', 'src/add.js'); assert.doesNotMatch(said(x.stop()), /reason is not kept/);
 });
 test('claim: no redo line when you put it back yourself between turns, when one line of it returns, or for an undo an older version recorded', () => {
   const d = signed(true); const w = wired(d);

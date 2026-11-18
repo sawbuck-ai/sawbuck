@@ -16,7 +16,7 @@ import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { readAllowed, keptOnTree } from './allowed.mjs';
 import { cli, olderSaid } from './copies.mjs';
-import { undoJudge, redoJudge, redoDue, redoTold, redoLine } from './undo.mjs';
+import { undoJudge, redoJudge, redoDue, redoTold, redoLine, undoHintNote, undoHintDue, undoHintTold } from './undo.mjs';
 const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const by = flag('--by', '');   // attribution from the harness wiring: the Claude hook passes 'claude', the raw-git hook passes nothing
 // nothing this hook finds is handed on to any notes unless the repo is attached with --words (share.mjs reads this)
@@ -99,6 +99,8 @@ if (own) {
 if (stop) {
   for (const e of undoJudge(repo, hookInput.session_id, st.lastPrompt || '')) {
     await shareFinding(repo, { kind: 'undone', title: `${e.kind === 'part' ? 'partly undone' : 'undone'}: ${e.first || e.file} in ${e.file}`, text: e.why || `An edit to ${e.file} was undone at the person's request.`, files: [e.file] }).catch(() => {});
+    // recorded without its reason (no words are kept here): the person is told so, once in a session, below
+    if (by === 'claude' && !process.argv.includes('--words')) undoHintNote(repo, hookInput.session_id, e);
   }
   // and what was undone before and is in its file again since the person spoke: recorded here, told below
   redoJudge(repo, hookInput.session_id, { end: true });
@@ -450,8 +452,12 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
 // waits for an end of turn that tells, so a turn that ends on a send-back loses nothing. Never a block: they may have
 // asked for it.
 const redoSaid = (stop && !process.env.SAWBUCK_NO_ENFORCE) ? redoLine(repo, hookInput.session_id, redoDue(repo)) : '';
-// what the person is told when a turn ends, with the open line and the redo line after it when there are any
-const tell = (msg) => { if (redoSaid) redoTold(repo); process.stdout.write(JSON.stringify({ systemMessage: [msg, openSaid, redoSaid].filter(Boolean).join(' ') })); };
+// THE REASON IS NOT KEPT (undo.mjs): an undo was recorded in this session with none of the person's words, and they
+// have not been told what that means. Once in a session; it waits for an end of turn that tells, like the redo line.
+const hint = (stop && by === 'claude' && !process.env.SAWBUCK_NO_ENFORCE) ? undoHintDue(repo, hookInput.session_id) : null;
+const hintSaid = hint ? `Sawbuck: recorded that ${hint.added} line${hint.added === 1 ? ' was' : 's were'} taken out of ${hint.file} at your request. The reason is not kept. If it should last, tell Claude Code "Remember that for next time.", or have Sawbuck keep your words from now on: ${cli('attach --words')}.` : '';
+// what the person is told when a turn ends, with the open line, the redo line and the reason line after it when there are any
+const tell = (msg) => { if (redoSaid) redoTold(repo); if (hintSaid) undoHintTold(repo, hookInput.session_id); process.stdout.write(JSON.stringify({ systemMessage: [msg, openSaid, redoSaid, hintSaid].filter(Boolean).join(' ') })); };
 
 // 3a) A DEPENDENCY EDITED IN PLACE: the check's clean copy borrows node_modules and the venv from the working tree, so
 // an edit made inside them is in no diff and a green that leans on it cannot be proved (outside-git bench, 2026-11-11:
@@ -504,7 +510,7 @@ if (stop && st.wordsRemoved && !st.wordsRemovedTold) {
 }
 
 // 3x, said alone when nothing above had anything to say
-if (openSaid || redoSaid) {
+if (openSaid || redoSaid || hintSaid) {
   st.shownTotal = total; saveState('ends');
   tell('');
   process.exit(0);

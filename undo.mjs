@@ -243,6 +243,17 @@ export function redoLine(repo, session, due) {
   return `Sawbuck: ${mine ? 'this turn' : 'a turn before this one'} put back something you had undone: ${one(r)}.${more.length ? ` Also ${more.join(', ')}${rest > 0 ? `, and ${rest} more` : ''}.` : ''} If you asked for that, there is nothing to do. If you did not, tell the agent to undo it.`;
 }
 
+// THE REASON IS NOT KEPT. Where none of the person's words are kept, an undo is recorded without its reason, and the
+// record alone did not keep a later session from making the change again (undo-words bench). So the person is told,
+// once in a session, at the end of a turn that recorded one: the first such undo is noted here, and the note is marked
+// when the end-of-turn hook has said it. (Not a .json name: the session's folder holds one .json per file it watches.)
+const hintPath = (repo, sess) => join(repo, '.sawbuck', 'snap', sess, 'reason-hint');
+export function undoHintNote(repo, session, entry) {
+  try { const sess = sessOf(session); const p = hintPath(repo, sess); if (existsSync(p)) return; mkdirSync(join(repo, '.sawbuck', 'snap', sess), { recursive: true }); writeFileSync(p, JSON.stringify({ file: entry.file, added: entry.added, at: entry.at, told: '' })); } catch {}
+}
+export function undoHintDue(repo, session) { try { const h = JSON.parse(readFileSync(hintPath(repo, sessOf(session)), 'utf8')); return h && !h.told && h.file ? h : null; } catch { return null; } }
+export function undoHintTold(repo, session) { try { const p = hintPath(repo, sessOf(session)); const h = JSON.parse(readFileSync(p, 'utf8')); h.told = new Date().toISOString(); writeFileSync(p, JSON.stringify(h)); } catch {} }
+
 // Claude Code's PreToolUse / PostToolUse on the edit tools
 export function undoHook(body, repo) {
   let h; try { h = JSON.parse(body || '{}'); } catch { return null; }
@@ -282,7 +293,10 @@ export function undoneLines(repo, changed) {
     if (!touched.has(e.file)) continue;
     const k = `${e.file}\n${e.first}`; if (seen.has(k)) continue; seen.add(k);
     const again = back.has(idOf(e));   // read from the file as it stands: say both, so nobody reads the undo as still standing
-    out.push(`    - ${e.kind === 'part' ? 'partly undone' : 'undone'} here at your request (${localDay(e.at)})${again ? ', and in the file again now' : ''}: ${e.added} line${e.added === 1 ? '' : 's'} starting \`${e.first}\` in ${e.file}${e.why ? `. Your words: "${e.why}"` : ''}`);
+    // with no reason on record the line was read as a lead and passed over (undo-words bench: 22 of 27 made the change
+    // again, 17 of them after saying they had read it). So it says the reason is not there, and what to do: ask.
+    const tail = e.why ? `. Your words: "${e.why}"` : (again ? '' : '. The reason is not on record. Before you make a change like this one again, in these lines or in others, stop and ask the person.');
+    out.push(`    - ${e.kind === 'part' ? 'partly undone' : 'undone'} here at your request (${localDay(e.at)})${again ? ', and in the file again now' : ''}: ${e.added} line${e.added === 1 ? '' : 's'} starting \`${e.first}\` in ${e.file}${tail}`);
     if (out.length === 3) break;
   }
   return out;
