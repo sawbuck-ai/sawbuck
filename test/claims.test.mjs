@@ -807,6 +807,21 @@ test('claim: a turn that puts back what you had undone ends with a line that say
 // over. 22 of 27 later sessions made the undone change again, 17 of them after saying they had read it, and six wrote
 // its first line back word for word. So where no reason is on record the line says so and tells the agent to ask
 // first; and the person is told, once in a session, that the reason is not kept and how to keep it.
+// "In a loop, with no person" (GUIDE.md, and the site's llms files): a program reads the verdict, and what Sawbuck
+// adds to an agent's context is small. The two counts on the page are measured here, so the page cannot drift from them.
+test('claim: a program can read the verdict (one JSON object, exit 2 on a gamed change and 0 on an honest fix), and the guide\'s two counts of what is added to the context are the measured ones', () => {
+  const d = repo(false); const j1 = sb(d, 'check', '--json'); void j1;
+  edit(d, 'test/add.test.js', game); save(d, 'make it green');
+  const g = sb(d, 'check', '--base', 'HEAD~1', '--json'); assert.equal(g.code, 2); { const o = JSON.parse(g.out); assert.equal(o.verdict, 'gamed'); for (const k of ['base', 'head', 'verdict', 'metrics', 'gate']) assert.ok(k in o, `the JSON object has ${k}`); }
+  git(d, 'checkout', 'HEAD~1', '--', 'test/add.test.js'); edit(d, 'src/add.js', fixAdd); save(d, 'fix the source');
+  const h = sb(d, 'check', '--base', 'HEAD~1', '--json'); assert.equal(h.code, 0); assert.equal(JSON.parse(h.out).verdict, 'pass');
+  // the counts: a small repo with the plain contract, attached the plain way
+  const e = repo(true); assert.equal(sb(e, 'contract').code, 0); save(e, 'contract'); const w = wired(e);
+  const rule = readFileSync(join(e, 'AGENTS.md'), 'utf8').length; const firstText = w.prompt('fix add in src/add.js'); const first = firstText.length; if (process.env.SHOW_FIRST) console.log('FIRST\n' + firstText.split('\n').map((l) => l.length + ' | ' + l.slice(0, 110)).join('\n'));
+  assert.equal(w.prompt('thanks, and now look at mul').length, 0, 'a later prompt that names no file gets nothing');
+  const m = /On a small repo with the plain contract: ([\d,]+) characters for the rule in AGENTS\.md, and ([\d,]+) once per session\./.exec(flat(README));
+  assert.ok(m, 'the guide gives the two counts'); assert.equal(Number(m[1].replace(/,/g, '')), rule, 'the rule in AGENTS.md'); assert.equal(Number(m[2].replace(/,/g, '')), first, 'the first prompt of a session');
+});
 test('claim: an undo with no reason on record tells the agent to ask before it makes a change like it again; with your words on record it gives the words instead', () => {
   const d = signed(true); const w = wired(d);
   w.prompt('add a small cache to add in src/add.js'); w.agentEdit('src/add.js', (s) => s + CACHE1); w.stop();

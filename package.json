@@ -25,7 +25,10 @@
     "ci",
     "git-hooks",
     "developer-tools",
-    "promptwheel"
+    "promptwheel",
+    "verification",
+    "agents",
+    "cursor"
   ],
   "scripts": {
     "test": "node --test"
