@@ -157,7 +157,7 @@ Usage:
                             argument shows the counts
   sawbuck doctor [repo]     Run what each hook runs (project and user level) and say if it still works,
                             is incomplete, or is gone. --all lists every repo it is attached to and checks each
-  sawbuck contract [--dry-run] [--full] [--strict]
+  sawbuck contract [--dry-run] [--full] [--strict] [--try[=N]]
                             Give this repo its rules: protected paths, the written rule, and your detected
                             tests when there is no config yet (--dry-run to preview). --full adds supply-chain
                             guards, the repo lock, and a CI check on a github.com repo with a real test
@@ -225,7 +225,7 @@ if (rest.includes('--help') || rest.includes('-h')) {
 // a flag a command does not know is an error, never a silent no-op. `check` is not here: it passes its flags to the
 // engine, which refuses the ones it does not know. --claude is what older installs pass: taken, not listed.
 const KNOWN = {
-  contract: ['--dry-run', '--full', '--strict'],
+  contract: ['--dry-run', '--full', '--strict', '--try'],
   init: ['--yes', '-y', '--wizard', '--no-investigate', '--no-agent-block', '--force', '--preset'],
   attach: ['--user', '--shared', '--git', '--dry-run', '--claude', '--codex', '--cursor', '--no-words', '--words'],
   detach: ['--user', '--all', '--verify', '--purge', '--dry-run', '--claude', '--codex', '--cursor'],
@@ -233,13 +233,14 @@ const KNOWN = {
   status: ['--json', '--log', '-n', '--words'],
   steering: ['--json', '--all'],
 };
-if (KNOWN[cmd]) { const bad = rest.filter((a) => a.startsWith('-') && !KNOWN[cmd].includes(a)); if (bad.length) usage(`unknown flag ${bad.join(' ')} for ${cmd} (it takes ${KNOWN[cmd].filter((f) => f !== '--claude').join(', ')})`); }
+const TRY_N = /^--try=\d{1,3}$/;   // contract --try=50: the number rides on the flag, so it is never read as the repo's path
+if (KNOWN[cmd]) { const bad = rest.filter((a) => a.startsWith('-') && !KNOWN[cmd].includes(a) && !(cmd === 'contract' && TRY_N.test(a))); if (bad.length) usage(`unknown flag ${bad.join(' ')} for ${cmd} (it takes ${KNOWN[cmd].filter((f) => f !== '--claude').join(', ')})`); }
 
 switch (cmd) {
   case 'contract': {
     const top = gitTop(repoArg());
     if (!top) usage(gitRefuses(repoArg()) || `${repoArg()} is not a git repository (run it inside your project)`);
-    try { execFileSync(process.execPath, [join(HERE, 'contract-cmd.mjs'), top, ...rest.filter((a) => KNOWN.contract.includes(a))], { stdio: 'inherit' }); }
+    try { execFileSync(process.execPath, [join(HERE, 'contract-cmd.mjs'), top, ...rest.filter((a) => KNOWN.contract.includes(a) || TRY_N.test(a))], { stdio: 'inherit' }); }
     catch (e) { process.exit(e.status || 1); }
     break;
   }

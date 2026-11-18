@@ -807,6 +807,27 @@ test('claim: a turn that puts back what you had undone ends with a line that say
 // over. 22 of 27 later sessions made the undone change again, 17 of them after saying they had read it, and six wrote
 // its first line back word for word. So where no reason is on record the line says so and tells the agent to ask
 // first; and the person is told, once in a session, that the reason is not kept and how to keep it.
+// TRY IT ON YOUR OWN PAST (roadmap W6). Before a person turns the contract on they can see what it would have asked
+// them about. From our own replay of 340 real commits (proof-bench/contract-replay: 82 sent back, every one for a
+// protected path or a count) and from Dream-RSI's use of the record as a simulator (arXiv 2609.14858).
+test('claim: contract --try holds the contract a real run would write against your last commits, writes nothing, and says which would have been sent back and why', () => {
+  const d = repo(true);
+  put(d, '.github/workflows/ci.yml', 'name: ci\non: [push]\n'); save(d, 'add ci');
+  edit(d, 'src/add.js', (s) => s + '// a note\n'); save(d, 'a comment in the source');
+  edit(d, '.github/workflows/ci.yml', (s) => s + '# node 22\n'); save(d, 'bump ci');
+  edit(d, 'test/add.test.js', (s) => s.split('\n').filter((l) => !l.includes("'mul'")).join('\n')); save(d, 'drop the mul test');
+  put(d, 'NOTES.md', 'n\n'); save(d, 'notes');
+  const head = git(d, 'rev-parse', 'HEAD');
+  const r = sb(d, 'contract', '--try'); assert.equal(r.code, 0, r.out + r.err);
+  assert.match(r.out, /nothing was written/); assert.match(r.out, /your last 5 commits/i);
+  assert.match(r.out, /3 would have been sent back/); assert.match(r.out, /2 touch a protected path/); assert.match(r.out, /1 makes a count worse/);
+  assert.match(r.out, /bump ci/); assert.match(r.out, /add ci/); assert.match(r.out, /drop the mul test/); assert.doesNotMatch(r.out, /a comment in the source|  notes/);
+  assert.match(r.out, /\.github\/workflows/); assert.match(r.out, /test_count/);
+  assert.equal(git(d, 'rev-parse', 'HEAD'), head); assert.equal(git(d, 'status', '--porcelain'), '', 'nothing written, nothing left behind');
+  assert.ok(!existsSync(join(d, 'promptwheel.config.json')) && !existsSync(join(d, 'AGENTS.md')) && !existsSync(join(d, '.sawbuck')));
+  assert.match(sb(d, 'contract', '--try=2').out, /your last 2 commits/i);
+  assert.match(flat(README), /`sawbuck contract --try`/, 'the guide names it');
+});
 // "In a loop, with no person" (GUIDE.md, and the site's llms files): a program reads the verdict, and what Sawbuck
 // adds to an agent's context is small. The two counts on the page are measured here, so the page cannot drift from them.
 test('claim: a program can read the verdict (one JSON object, exit 2 on a gamed change and 0 on an honest fix), and the guide\'s two counts of what is added to the context are the measured ones', () => {

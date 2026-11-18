@@ -10,9 +10,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, cpSync, mkdirSync, readdirSync, statSync, symlinkSync, realpathSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PW } from './bins.mjs';
 import { cli } from './copies.mjs';
+import { mandateHits, gitNames } from './contract.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // The check's own action is pinned by commit, like GitHub's: the commit the engine's release tag points at. A moving
@@ -31,7 +32,11 @@ function olderCi(wf) {
   return '';
 }
 const repo = process.argv[2] || process.cwd();
-const dry = process.argv.includes('--dry-run');
+// --try[=N]: the contract a real run would write, held against the last N commits (20 unless said, 200 at most).
+// It is a dry run that ends in a different report: nothing is written.
+const tryArg = process.argv.find((a) => /^--try(=\d{1,3})?$/.test(a));
+const tryN = tryArg ? Math.max(1, Math.min(200, Number(tryArg.split('=')[1]) || 20)) : 0;
+const dry = process.argv.includes('--dry-run') || tryN > 0;
 const strict = process.argv.includes('--strict');
 const full = process.argv.includes('--full') || strict;
 // a new contract starts by watching: everyday change shows as a note. Protected paths, install scripts and sources
@@ -73,6 +78,44 @@ const addByName = (files, root) => (templateOss(root)
   : `  This repo's ignore rules hide ${files.join(' and ')} from git, so add ${files.length > 1 ? 'them' : 'it'} by name: git add -f ${files.join(' ')}\n`);
 const run = (args, cwd, stdio = ['ignore', 'pipe', 'pipe']) => execFileSync(process.execPath, args, { cwd, encoding: 'utf8', stdio });
 
+// TRY IT ON YOUR OWN PAST. Each of the last n commits (merges left out, first parents) is put to the engine with the
+// contract a real run would write: its protected paths, and the counts it keeps beside the tests. The test run itself
+// is not replayed: it is slow, and on 340 real commits every one of the 82 that were sent back was sent back for a
+// protected path or a count (proof-bench/contract-replay). Read-only: the engine measures in throwaway copies.
+const COUNTS = new Set(['test_count', 'skipped_tests', 'suppressions', 'assertions']);
+async function tryIt(repo, cfg, n) {
+  const { check } = await import(pathToFileURL(PW).href);
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  let lines = []; try { lines = git('log', '--no-merges', '--first-parent', '-n', String(n), '--date=short', '--format=%H%x09%P%x09%ad%x09%s').split('\n').filter(Boolean); } catch {}
+  const commits = lines.map((l) => { const [sha, parents, day, ...s] = l.split('\t'); return { sha, parent: (parents || '').split(' ')[0], day, subject: s.join(' ') }; }).filter((c) => c.parent);
+  const counts = (cfg.metrics || []).filter((m) => m && COUNTS.has(m.name));
+  const fast = { ...cfg, mandates: [], metrics: counts };
+  const back = []; let unread = 0;
+  for (const c of commits) {
+    // protected paths: the diff's own file names against the rules as they would be written. (The engine applies a rule
+    // only where it was already in force at the commit before, and here it never was.)
+    let paths = []; try { paths = mandateHits(repo, gitNames(repo, ['diff', '--name-only', '--no-renames', c.parent, c.sha]), { list: cfg.mandates || [] }).map((m) => ({ name: m.name, files: m.files || [] })); } catch { unread++; continue; }
+    let rep = { metrics: [] }; if (counts.length) { try { rep = check({ repo, base: c.parent, head: c.sha, config: fast, detectGaming: false, repeat: 1 }); } catch { unread++; continue; } }
+    const worse = (rep.metrics || []).filter((m) => m.guard && m.ok === false && m.status === 'regressed').map((m) => m.name);
+    if (paths.length || worse.length) back.push({ ...c, paths, worse });
+  }
+  const P = back.filter((b) => b.paths.length).length, W = back.filter((b) => b.worse.length).length;
+  const tally = (list) => { const t = new Map(); for (const x of list) t.set(x, (t.get(x) || 0) + 1); return [...t].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '); };
+  const o = [`sawbuck contract --try: nothing was written. Your last ${commits.length} commit${commits.length === 1 ? '' : 's'}, held against the contract a real run would write:`];
+  o.push(`  ${commits.length - back.length - unread} would have passed.`);
+  if (back.length) {
+    o.push(`  ${back.length} would have been sent back to ask you:`);
+    if (P) o.push(`    ${P} touch${P === 1 ? 'es' : ''} a protected path (${tally(back.flatMap((b) => b.paths.flatMap((p) => p.files.length ? p.files : [p.name])))})`);
+    if (W) o.push(`    ${W} make${W === 1 ? 's' : ''} a count worse (${tally(back.flatMap((b) => b.worse))})`);
+    o.push('  They are:');
+    for (const b of back.slice(0, 10)) o.push(`    ${b.sha.slice(0, 8)}  ${b.day}  ${b.subject.slice(0, 60)}  [${[...b.paths.flatMap((p) => p.files.length ? p.files : [p.name]), ...b.worse].slice(0, 3).join(', ')}]`);
+    if (back.length > 10) o.push(`    and ${back.length - 10} more`);
+  }
+  if (unread) o.push(`  ${unread} could not be read.`);
+  o.push('  Not replayed: the test run itself. A change to a workflow or to a count takes your reason: sawbuck check --allow "<why>".');
+  process.stdout.write(o.join('\n') + '\n');
+}
+
 // the preset as the engine writes it, in a scratch repo, so the contract and the engine cannot drift apart
 // realpathSync: a Mac's temp folder is reached through a symlink, and a script started by a path through one does not
 // know itself as the main script (the engine's lock.mjs then writes nothing, and the dry run left the lock off its list)
@@ -109,7 +152,7 @@ try {
       const read = (f) => { try { return readFileSync(f, 'utf8'); } catch { return ''; } };
       const exWas = read(exclude(shadow));
       g('add', '-A', '-f'); g('commit', '-q', '--allow-empty', '-m', 'as it is now');   // -f: a file the repo tracks in spite of its ignore rules is tracked here too
-      run([fileURLToPath(import.meta.url), shadow, ...process.argv.slice(3).filter((a) => a !== '--dry-run')], shadow);
+      run([fileURLToPath(import.meta.url), shadow, ...process.argv.slice(3).filter((a) => a !== '--dry-run' && !/^--try(=\d{1,3})?$/.test(a))], shadow);
       const rows = new Map();
       for (const l of g('status', '--porcelain', '-uall').split('\n').filter(Boolean)) {
         const f = l.slice(3).replace(/^(\.promptwheel\/packs\/supply-chain\/).*/, '$1');
@@ -128,7 +171,8 @@ try {
         '.promptwheel/packs/supply-chain/': 'the two scanners the supply-chain guards run',
         '.gitignore': 'so the scanners reach git',
       };
-      if (!rows.size) process.stdout.write('sawbuck contract --dry-run: already signed, nothing would change.\n');
+      if (tryN) await tryIt(repo, after, tryN);
+      else if (!rows.size) process.stdout.write('sawbuck contract --dry-run: already signed, nothing would change.\n');
       else {
         process.stdout.write('sawbuck contract --dry-run: nothing was written. A real run would write:\n');
         for (const [f, how] of rows) process.stdout.write(`  ${f.padEnd(34)} ${how}${what[f] ? ': ' + what[f] : ''}\n`);
