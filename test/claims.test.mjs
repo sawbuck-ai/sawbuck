@@ -826,6 +826,12 @@ test('claim: contract --try holds the contract a real run would write against yo
   assert.equal(git(d, 'rev-parse', 'HEAD'), head); assert.equal(git(d, 'status', '--porcelain'), '', 'nothing written, nothing left behind');
   assert.ok(!existsSync(join(d, 'promptwheel.config.json')) && !existsSync(join(d, 'AGENTS.md')) && !existsSync(join(d, '.sawbuck')));
   assert.match(sb(d, 'contract', '--try=2').out, /your last 2 commits/i);
+  // a repo that is signed already: its own contract is the one held against its past, and the commit that signed it is
+  // not counted against itself (a rule a change adds does not apply to that change). Seen in a real session, 2026-11-17.
+  assert.equal(sb(d, 'contract').code, 0); save(d, 'the contract');
+  const again = sb(d, 'contract', '--try'); assert.equal(again.code, 0, again.out + again.err);
+  assert.match(again.out, /your last 6 commits/i); assert.match(again.out, /3 would have been sent back/); assert.match(again.out, /1 is the commit that signed the contract/);
+  assert.doesNotMatch(again.out, /the contract\s+\[/, 'the signing commit is not in the list');
   assert.match(flat(README), /`sawbuck contract --try`/, 'the guide names it');
 });
 // "In a loop, with no person" (GUIDE.md, and the site's llms files): a program reads the verdict, and what Sawbuck

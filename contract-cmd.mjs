@@ -90,8 +90,12 @@ async function tryIt(repo, cfg, n) {
   const commits = lines.map((l) => { const [sha, parents, day, ...s] = l.split('\t'); return { sha, parent: (parents || '').split(' ')[0], day, subject: s.join(' ') }; }).filter((c) => c.parent);
   const counts = (cfg.metrics || []).filter((m) => m && COUNTS.has(m.name));
   const fast = { ...cfg, mandates: [], metrics: counts };
-  const back = []; let unread = 0;
+  const back = []; let unread = 0, signed = 0;
+  // the commit that signed the contract adds the very files the contract protects, and a rule a change adds does not
+  // apply to that change: it is counted apart, not as sent back
+  const holds = (ref) => { try { execFileSync('git', ['-C', repo, 'cat-file', '-e', `${ref}:promptwheel.config.json`], { stdio: 'ignore' }); return true; } catch { return false; } };
   for (const c of commits) {
+    if (!holds(c.parent) && holds(c.sha)) { signed++; continue; }
     // protected paths: the diff's own file names against the rules as they would be written. (The engine applies a rule
     // only where it was already in force at the commit before, and here it never was.)
     let paths = []; try { paths = mandateHits(repo, gitNames(repo, ['diff', '--name-only', '--no-renames', c.parent, c.sha]), { list: cfg.mandates || [] }).map((m) => ({ name: m.name, files: m.files || [] })); } catch { unread++; continue; }
@@ -102,7 +106,8 @@ async function tryIt(repo, cfg, n) {
   const P = back.filter((b) => b.paths.length).length, W = back.filter((b) => b.worse.length).length;
   const tally = (list) => { const t = new Map(); for (const x of list) t.set(x, (t.get(x) || 0) + 1); return [...t].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '); };
   const o = [`sawbuck contract --try: nothing was written. Your last ${commits.length} commit${commits.length === 1 ? '' : 's'}, held against the contract a real run would write:`];
-  o.push(`  ${commits.length - back.length - unread} would have passed.`);
+  o.push(`  ${commits.length - back.length - unread - signed} would have passed.`);
+  if (signed) o.push(`  ${signed} is the commit that signed the contract (a rule does not apply to the change that adds it).`);
   if (back.length) {
     o.push(`  ${back.length} would have been sent back to ask you:`);
     if (P) o.push(`    ${P} touch${P === 1 ? 'es' : ''} a protected path (${tally(back.flatMap((b) => b.paths.flatMap((p) => p.files.length ? p.files : [p.name])))})`);
