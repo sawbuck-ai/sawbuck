@@ -4,6 +4,7 @@
 // verify/dry-run, rank's per-path filtering, and context.
 
 import { TMP_HOME } from '../testkit.mjs';   // first: a throwaway HOME and temp folder for everything this file starts
+import { PW as ENGINE_BIN } from '../bins.mjs';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { test } from 'node:test';
@@ -1132,7 +1133,7 @@ test('share: a finding goes once to each memory the person runs, as a titled mem
 // ---- the strength for a repo where nobody stands at the merge (roadmap W16): the counts of the tests take a reason
 // written in a commit of the change, and the reason is kept on the record. Protected paths still take a person's.
 test('contract --say-why: a removed test passes when a commit says why, a plain contract still asks a person, and a second signing keeps the strength', () => {
-  const PWBIN = process.env.PW_BIN || fileURLToPath(new URL('../../promptwheel/bin/promptwheel.mjs', import.meta.url));
+  const PWBIN = ENGINE_BIN;   // found the way the product finds it: PW_BIN, then this checkout's node_modules, then the sibling
   const mk = (...flags) => {
     const { d, g } = tmpRepo();
     writeFileSync(join(d, 'package.json'), '{"name":"x","type":"module","scripts":{"test":"node --test"}}');
