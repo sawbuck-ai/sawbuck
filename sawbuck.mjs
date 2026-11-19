@@ -157,7 +157,7 @@ Usage:
                             argument shows the counts
   sawbuck doctor [repo]     Run what each hook runs (project and user level) and say if it still works,
                             is incomplete, or is gone. --all lists every repo it is attached to and checks each
-  sawbuck contract [--dry-run] [--full] [--strict] [--try[=N]]
+  sawbuck contract [--dry-run] [--full] [--strict] [--say-why] [--try[=N]]
                             Give this repo its rules: protected paths, the written rule, and your detected
                             tests when there is no config yet (--dry-run to preview). --full adds supply-chain
                             guards, the repo lock, and a CI check on a github.com repo with a real test
@@ -225,7 +225,7 @@ if (rest.includes('--help') || rest.includes('-h')) {
 // a flag a command does not know is an error, never a silent no-op. `check` is not here: it passes its flags to the
 // engine, which refuses the ones it does not know. --claude is what older installs pass: taken, not listed.
 const KNOWN = {
-  contract: ['--dry-run', '--full', '--strict', '--try'],
+  contract: ['--dry-run', '--full', '--strict', '--say-why', '--try'],
   init: ['--yes', '-y', '--wizard', '--no-investigate', '--no-agent-block', '--force', '--preset'],
   attach: ['--user', '--shared', '--git', '--dry-run', '--claude', '--codex', '--cursor', '--no-words', '--words'],
   detach: ['--user', '--all', '--verify', '--purge', '--dry-run', '--claude', '--codex', '--cursor'],

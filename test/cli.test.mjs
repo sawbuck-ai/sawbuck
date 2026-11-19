@@ -1128,3 +1128,39 @@ test('share: a finding goes once to each memory the person runs, as a titled mem
     assert.match(notes, /1 note in Claude Code's own memory/); assert.match(notes, /User wants replies kept to about three lines \[feedback\]/); assert.match(notes, /Keep replies to three lines\./); assert.ok(!/from Sawbuck|rule-reply/.test(notes));
   } finally { srv.close(); rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
 });
+
+// ---- the strength for a repo where nobody stands at the merge (roadmap W16): the counts of the tests take a reason
+// written in a commit of the change, and the reason is kept on the record. Protected paths still take a person's.
+test('contract --say-why: a removed test passes when a commit says why, a plain contract still asks a person, and a second signing keeps the strength', () => {
+  const PWBIN = process.env.PW_BIN || fileURLToPath(new URL('../../promptwheel/bin/promptwheel.mjs', import.meta.url));
+  const mk = (...flags) => {
+    const { d, g } = tmpRepo();
+    writeFileSync(join(d, 'package.json'), '{"name":"x","type":"module","scripts":{"test":"node --test"}}');
+    mkdirSync(join(d, 'test')); writeFileSync(join(d, 'test/a.test.js'), "import test from 'node:test';\ntest('add', () => {});\ntest('sub', () => {});\n");
+    g('add', '-A'); g('commit', '-qm', 'tests');
+    const out = execFileSync(process.execPath, [CLI, 'contract', ...flags], { cwd: d, encoding: 'utf8' });
+    g('add', '-A'); g('commit', '-qm', 'the contract');
+    return { d, g, out };
+  };
+  const drop = ({ d, g }) => {
+    writeFileSync(join(d, 'test/a.test.js'), "import test from 'node:test';\ntest('add', () => {});\n");
+    g('commit', '-qam', 'drop the sub test\n\nSawbuck-Allow: test_count: the rule it checked went');
+    const r = spawnSync(process.execPath, [PWBIN, 'run', '--base', 'HEAD~1', '--head', 'HEAD', '--json', '--no-record'], { cwd: d, encoding: 'utf8' });
+    return { code: r.status, rep: JSON.parse(r.stdout) };
+  };
+  const a = mk('--say-why');
+  try {
+    assert.match(a.out, /A test may be removed where a commit of the change says why/);
+    const cfg = JSON.parse(readFileSync(join(a.d, 'promptwheel.config.json'), 'utf8'));
+    assert.equal(cfg.allowTrailer, undefined); assert.equal(cfg.metrics.find((m) => m.name === 'test_count').allowable, true);
+    assert.ok(cfg.mandates.every((m) => m.allowable !== true), 'a protected path still takes a person');
+    const before = readFileSync(join(a.d, 'promptwheel.config.json'), 'utf8');
+    assert.match(execFileSync(process.execPath, [CLI, 'contract'], { cwd: a.d, encoding: 'utf8' }), /already signed/);
+    assert.equal(readFileSync(join(a.d, 'promptwheel.config.json'), 'utf8'), before, 'a second signing with no switch does not take the strength away');
+    const r = drop(a);
+    assert.equal(r.code, 0, JSON.stringify(r.rep.allowed)); assert.match(r.rep.allowed.reason, /the rule it checked went/);
+  } finally { rmSync(a.d, { recursive: true, force: true }); }
+  const b = mk();
+  try { assert.equal(drop(b).code, 1, 'the contract as it was: no reason from a commit'); } finally { rmSync(b.d, { recursive: true, force: true }); }
+});
+
