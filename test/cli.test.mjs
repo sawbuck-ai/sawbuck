@@ -1149,6 +1149,7 @@ test('contract --say-why: a removed test passes when a commit says why, a plain 
     return { code: r.status, rep: JSON.parse(r.stdout) };
   };
   const a = mk('--say-why');
+  assert.match(spawnSync(process.execPath, [CLI, 'contract', '--say-why'], { cwd: (() => { const d = mkdtempSync(join(tmpdir(), 'sw-')); spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: d }); writeFileSync(join(d, 'package.json'), '{"scripts":{"test":"node --test"}}'); return d; })(), encoding: 'utf8' }).stdout, /<what was removed, and who asked for it>/, 'the hint asks for what the verdict asks for');
   try {
     assert.match(a.out, /A test may be removed where a commit of the change says why/);
     const cfg = JSON.parse(readFileSync(join(a.d, 'promptwheel.config.json'), 'utf8'));
