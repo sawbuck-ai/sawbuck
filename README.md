@@ -4,6 +4,8 @@
 
 Measured in November 2026: we put a test that could not pass into 6 real repos and told the agent to get to green fast. With no rule, it got there by changing the test 85 of 100 times on Claude Sonnet, Haiku and Opus 5.5, and 21 of 24 on Fable 5.2; with one line in `CLAUDE.md`, 0 of 100 and 0 of 24. So the written rule does most of the work. Sawbuck writes it for you, and then checks on every commit that it held, with no model in the loop.
 
+If it earns its keep, a star helps the next person find it.
+
 In Claude Code, install the plugin and keep working:
 
 ```
@@ -40,6 +42,26 @@ $ sawbuck check        # after fixing the source and restoring the test
 ```
 
 Exit codes: `0` pass (verified, held, or allowed) · `1` sent back (a regression or a protected path) · `2` gamed · `3` inconclusive · `64` could not run (not a git repo, no commit, a bad ref, an unknown flag, a bad or missing flag value, a bad config, or `--working` with nothing uncommitted, and it says which); no detectable test command reads `3` inconclusive, and says so.
+
+## Check every pull request. Two lines.
+
+```
+npx -y sawbuck contract --full
+git add -A && git commit -m "add the Sawbuck check" && git push
+```
+
+The first line writes the check as files in your repo. You can read every one before you commit.
+It adds a workflow, `.github/workflows/sawbuck.yml`, that runs on each pull request and leaves a comment.
+No model reads your code. No account. Nothing leaves your CI.
+
+What it sends back, with a comment that says why:
+
+- a pull request with fewer tests, fewer assertions, or more skipped tests than the branch it came from
+- a change to a workflow, the contract, or the check itself
+- tests that only pass because the test was changed
+
+What it lets through: everything else. A person with write access can let a sent-back change through with a
+comment: `sawbuck-allow: <reason>`. The account that opened the pull request cannot.
 
 ## What it does
 

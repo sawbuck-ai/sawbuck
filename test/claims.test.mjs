@@ -2657,3 +2657,19 @@ test('claim: with the temp folder reached through a symlink, as on a Mac, contra
   assert.equal(sbEnv(d, env, 'contract', '--full').code, 0);
   for (const f of ['promptwheel.lock.json', 'promptwheel.config.json', 'AGENTS.md']) { assert.ok(existsSync(join(d, f)), f); assert.match(dry, lit(f), `the dry run names ${f}:\n${dry}`); }
 });
+
+// "Check every pull request. Two lines." (README, his yes 2026-11-19). The first line must write the workflow the
+// README describes, in a repo with a GitHub remote, and the README must not offer the workflow file alone: pasted
+// with no contract it runs the tests and nothing else (a removed test passed, proof-bench/outside-repos section 10).
+test('claim: the two lines in the README write a pull request check as files in the repo', () => {
+  const d = repo(false);
+  git(d, 'remote', 'add', 'origin', 'https://github.com/example/x.git');
+  const r = sb(d, 'contract', '--full'); assert.equal(r.code, 0, r.out);
+  const wf = readFileSync(join(d, '.github/workflows/sawbuck.yml'), 'utf8');
+  assert.match(wf, /^on: pull_request$/m); assert.match(wf, /pull-requests: write/); assert.match(wf, /promptwheel-ai\/promptwheel@[0-9a-f]{40}/);
+  assert.ok(existsSync(join(d, 'promptwheel.config.json')), 'the contract is a file too');
+  const page = flat(README);
+  assert.match(page, /Check every pull request\. Two lines\./);
+  assert.match(page, /npx -y sawbuck contract --full git add -A && git commit -m "add the Sawbuck check" && git push/);
+  assert.match(page, /The account that opened the pull request cannot\./);
+});
