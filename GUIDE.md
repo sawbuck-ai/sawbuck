@@ -75,6 +75,17 @@ To remove a rule, delete its entry under `mandates` in `promptwheel.config.json`
 
 ## With `--full`: the supply chain and pull requests
 
+On a pull request, the check `contract --full` adds is a workflow, `.github/workflows/sawbuck.yml`.
+
+What it sends back, with a comment that says why:
+
+- a pull request with fewer tests, fewer assertions, or more skipped tests than the branch it came from
+- a change to a workflow, the contract, or the check itself
+- tests that only pass because the test was changed
+
+What it lets through: everything else. A person with write access can let a sent-back change through with a
+comment: `sawbuck-allow: <reason>`. The account that opened the pull request cannot.
+
 **With `--full`.** `pins_changed` is a fingerprint of the resolved dependency tree, not a count, so its value is a long number that only means changed or unchanged. The supply-chain guards read `unmeasurable` on the commit that adds them, because their scanners did not exist before it, and count from the next change. It starts by watching: protected paths, new install scripts and sources outside the registry block from day one, and new dependencies and structure changes show as notes. `sawbuck contract --strict` blocks them all. When something fails, the check says what changed in words. If your tests can't run in CI, the check says so and doesn't fail the job, and protected paths are still enforced. To accept it on a pull request, someone with write access who did not open it comments `sawbuck-allow: <reason>`, and the check is run again; the reason stays on the record. The account that opened the pull request does not count (since 0.1.70): a coding agent run from a service account opens its pull requests from that account, and before this its own comment let a gamed green through. If you are the only person in the repo, add `"allowFromAuthor": true` to `promptwheel.config.json` on your default branch and your own comment counts; a pull request cannot turn that on for itself. A workflow an older `sawbuck contract --full` wrote keeps the engine it pins, and the old rule with it, until its `uses:` line is changed: `sawbuck contract` says when that is so and prints the line. That line is a workflow change. Under a contract written before 0.1.70 the `workflows-frozen` rule takes no reason, so it takes two changes, each with a person's reason: add `"allowable": "flag"` to that rule in `promptwheel.config.json`, then change the line. Under a contract written since, it is one change and one reason. A workflow on `@v0` follows the tag. With more than one thing to accept, the comment names each one, and the check's own comment shows the line. An agent signed in as another person with write access could still post the comment, so branch protection and review still matter. Locally, use `--allow "<reason>"`. A commit trailer is not a person, so Sawbuck does not read one.
 
 ## Before a command leaves the repo

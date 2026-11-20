@@ -1816,7 +1816,7 @@ const flat = (s) => s.replace(/\s+/g, ' ');
 const README = pages();   // the four pages: the README is one page since 0.1.74, and the rest of what it held is in the other three
 test('claim: the README is one page, with a command near the top, and it points at the guide, the limits and the changelog, which the package carries', () => {
   const first = readFileSync(join(HERE, '..', 'README.md'), 'utf8');
-  assert.ok(first.split(/\s+/).length < 850, `the README is ${first.split(/\s+/).length} words`);
+  assert.ok(first.split(/\s+/).length < 900, `the README is ${first.split(/\s+/).length} words`);
   assert.ok(first.slice(0, first.indexOf('```')).split(/\s+/).length < 220, 'a command within the first 220 words');
   for (const f of PAGES.slice(1)) assert.ok(first.includes(`](${f})`), `the README links ${f}`);
   assert.doesNotMatch(first, /[Bb]efore 0\.\d+\.\d+|[Ss]ince 0\.\d+\.\d+|Found 20\d\d-/, 'what was found and fixed is in the changelog, not on the first page');

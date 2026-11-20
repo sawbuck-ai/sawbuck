@@ -54,14 +54,7 @@ The first line writes the check as files in your repo. You can read every one be
 It adds a workflow, `.github/workflows/sawbuck.yml`, that runs on each pull request and leaves a comment.
 No model reads your code. No account. Nothing leaves your CI.
 
-What it sends back, with a comment that says why:
-
-- a pull request with fewer tests, fewer assertions, or more skipped tests than the branch it came from
-- a change to a workflow, the contract, or the check itself
-- tests that only pass because the test was changed
-
-What it lets through: everything else. A person with write access can let a sent-back change through with a
-comment: `sawbuck-allow: <reason>`. The account that opened the pull request cannot.
+What it sends back and what it lets through: [GUIDE.md](GUIDE.md#with---full-the-supply-chain-and-pull-requests).
 
 ## What it does
 
