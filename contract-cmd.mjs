@@ -40,7 +40,17 @@ const dry = process.argv.includes('--dry-run') || tryN > 0;
 const strict = process.argv.includes('--strict');
 // --say-why: for a repo where nobody stands at the merge. The three counts of the tests take a reason written in a
 // commit of the change (kept on the record). The protected paths still take a person's.
-const sayWhy = process.argv.includes('--say-why');
+// --solo: for a repo with one person in it. What --say-why does, and on a pull request the opener's own comment
+// counts ("allowFromAuthor": true). A sent-back pull request is let through by someone who did not open it, and
+// where the person is the opener and the agent works under the same account GitHub cannot tell the two apart. So
+// what can be kept there is a reason, written down. The output says so in those words.
+const solo = process.argv.includes('--solo');
+const sayWhy = process.argv.includes('--say-why') || solo;
+// --comment-only: with --full, the workflow it writes never fails a pull request. The comment says what would have
+// been sent back. For trying the check on real pull requests before it counts. (--try is a different thing: the
+// contract held against your last commits, nothing written.)
+const commentOnly = process.argv.includes('--comment-only');
+const WITH = `with: { inconclusive: pass${commentOnly ? ', comment-only: true' : ''} }`;
 const TESTS3 = ['test_count', 'skipped_tests', 'assertions'];
 const full = process.argv.includes('--full') || strict;
 // a new contract starts by watching: everyday change shows as a note. Protected paths, install scripts and sources
@@ -65,7 +75,9 @@ ${npm ? `      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d68200
         with: { node-version: 22 }
       - run: npm ci --ignore-scripts
 ` : ''}      - uses: ${ACTION}
-        with: { inconclusive: pass }
+${commentOnly ? `        # comment-only: no pull request fails here. The comment says what would have been sent back.
+        # Take "comment-only: true" out to make the check count.
+` : ''}        ${WITH}
 `;
 const cfgPath = join(repo, 'promptwheel.config.json');
 // The files signing writes that this repo's ignore rules hide from git: git status does not show them and git add skips
@@ -175,7 +187,7 @@ try {
       const what = {
         'promptwheel.config.json': `${counts(now)}, ${(after.metrics || []).length} checks in all (${(after.metrics || []).map((m) => m.name).join(', ')})${notes ? `, and ${notes} guards that are notes would block` : ''}`,
         'AGENTS.md': 'the written rule', 'CLAUDE.md': 'the written rule', '.cursorrules': 'the written rule',
-        '.github/workflows/sawbuck.yml': 'a CI check on pull requests',
+        '.github/workflows/sawbuck.yml': commentOnly ? 'a CI check on pull requests, comment only: it fails none' : 'a CI check on pull requests',
         'promptwheel.lock.json': 'the shape of this repo',
         '.promptwheel/packs/supply-chain/': 'the two scanners the supply-chain guards run',
         '.gitignore': 'so the scanners reach git',
@@ -208,6 +220,9 @@ try {
     // --say-why typed in a repo already signed changes the contract: it is said, never "nothing changed" (seen after the wave of 0.2.1)
     const turnedOn = had && sayWhy && !saidWhy;
     if (saysWhy) { for (const m of cfg.metrics || []) if (m && TESTS3.includes(m.name) && m.allowable) m.allowable = true; delete cfg.allowTrailer; } else cfg.allowTrailer = false;
+    // --solo: the opener's own comment counts on a pull request. Kept once set; said when a signed repo gets it now.
+    const soloOn = solo && cfg.allowFromAuthor !== true, soloNow = had && soloOn;
+    if (solo) cfg.allowFromAuthor = true;
     writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n');
     const pack = join(repo, '.promptwheel', 'packs', 'supply-chain');
     if (full) {
@@ -236,10 +251,19 @@ try {
     if (full && !locked) run([join(pack, 'lock.mjs'), 'write', repo], repo);
     const added = (cfg.mandates.length - before.m) + (cfg.metrics.length - before.g);
     const fresh = added || hardened || ci || (full && !locked);
-    process.stdout.write(!fresh ? (turnedOn ? `sawbuck: already signed. One thing changed in promptwheel.config.json: the counts of the tests now take a reason written in a commit.\n  The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : 'sawbuck: already signed, nothing changed.\n') : full
-      ? `sawbuck: signed. ${counts(cfg)}, and the shape of this repo in promptwheel.lock.json.\n${strict ? (hardened ? `  ${hardened} guards that were notes now block. The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : '') : '  New dependencies and structure changes show as notes for now; protected paths and install scripts block. --strict blocks them all.\n'}${ci ? '  Added .github/workflows/sawbuck.yml, so pull requests are checked in CI. Commit it with the rest.\n  On a pull request, a change that takes a reason is let through by a comment from someone with write access who did not open it: sawbuck-allow: <reason>. If you are the only person here, add "allowFromAuthor": true to promptwheel.config.json so your own comment counts.\n' : ''}`
+    // what a switch changed in a contract that was already signed, in words: never "nothing changed" over an edit
+    const changed = [...(turnedOn ? ['the counts of the tests now take a reason written in a commit'] : []), ...(soloNow ? ['on a pull request your own comment now counts ("allowFromAuthor": true)'] : [])];
+    process.stdout.write(!fresh ? (changed.length ? `sawbuck: already signed. ${changed.length > 1 ? 'Two things' : 'One thing'} changed in promptwheel.config.json: ${changed.join('; ')}.\n  The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n${soloNow ? '  Commit it on your default branch: a pull request cannot turn this on for itself.\n' : ''}` : 'sawbuck: already signed, nothing changed.\n') : full
+      ? `sawbuck: signed. ${counts(cfg)}, and the shape of this repo in promptwheel.lock.json.\n${strict ? (hardened ? `  ${hardened} guards that were notes now block. The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : '') : '  New dependencies and structure changes show as notes for now; protected paths and install scripts block. --strict blocks them all.\n'}${ci ? `  Added .github/workflows/sawbuck.yml, so pull requests are checked in CI. Commit it with the rest.\n${commentOnly ? '  It is comment only (--comment-only): no pull request fails, and the comment says what would have been sent back.\n  To make it count, take "comment-only: true" out of the workflow\'s last line. That is a workflow change, so it takes a person\'s reason.\n' : ''}${solo ? '' : `  On a pull request, a change that takes a reason is let through by a comment from someone with write access who did not open it: sawbuck-allow: <reason>. If you are the only person here, sign with --solo so your own comment counts: ${cli('contract --solo')}\n`}` : ''}`
       : `sawbuck: signed. ${counts(cfg)}, and the rule in AGENTS.md.\n  --full adds supply-chain guards, a repo lock and a CI check.\n`);
     if ((fresh && sayWhy) || turnedOn) process.stdout.write('  A test may be removed where a commit of the change says why: end its message with\n    Sawbuck-Allow: test_count: <what was removed, and who asked for it>\n  The reason is kept on the record. A protected path still takes a person.\n');
+    if ((fresh && solo) || soloNow) process.stdout.write('  One person works here (--solo), so on a pull request your own comment counts: sawbuck-allow: <reason>\n  GitHub cannot tell you from your agent there: the agent works under your account. What is kept is the reason, not proof of who gave it.\n');
+    // --comment-only with nothing to write it into: say what to do, and never write over a workflow that is here
+    if (commentOnly && !ci) {
+      let has = ''; try { has = readFileSync(wf, 'utf8'); } catch { /* no workflow here */ }
+      if (!has && !full) process.stdout.write(`  --comment-only is about the pull request check, and --full is what writes it: ${cli('contract --full --comment-only')}\n`);
+      else if (has && !/comment-only:\s*['"]?true/.test(has)) process.stdout.write(`  .github/workflows/sawbuck.yml is already here, and Sawbuck never rewrites a workflow file. To make it comment only, change its last line yourself to:\n    ${WITH}\n  That is a workflow change, so it takes a person's reason. It needs the engine at v0.8.15 or newer in the "uses:" line above it.\n`);
+    }
     if (full && !ci && !existsSync(wf)) process.stdout.write(`  No CI check added: ${!/github\.com/.test(remote) ? 'this repo has no github.com origin' : 'there is no real test command yet, and a placeholder would fail every pull request'}. Run sawbuck contract --full again once it has one.\n`);
     const old = ci ? '' : olderCi(wf);
     // The line is a workflow change. A contract written from 0.1.70 on lets one through with a person's reason. A contract

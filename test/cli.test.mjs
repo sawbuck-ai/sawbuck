@@ -1177,3 +1177,100 @@ test('contract --say-why: a removed test passes when a commit says why, a plain 
   } finally { rmSync(c.d, { recursive: true, force: true }); }
 });
 
+
+// ---- 0.2.2, a repo with one person in it (proof-bench/outside-repos, the look back of 2026-11-19): a sent-back
+// pull request is let through by someone who did not open it, and with Claude Code the person IS the opener and the
+// agent works under the same account. GitHub cannot tell the two apart there, so what can be kept is a reason.
+// --solo: what --say-why does, and the opener's own comment counts on a pull request.
+test('contract --solo: a reason in a commit clears a removed test, the opener\'s own comment clears a protected path, and it says GitHub cannot tell the two apart', () => {
+  const mk = (...flags) => {
+    const { d, g } = tmpRepo();
+    writeFileSync(join(d, 'package.json'), '{"name":"x","type":"module","scripts":{"test":"node --test"}}');
+    mkdirSync(join(d, 'test')); writeFileSync(join(d, 'test/a.test.js'), "import test from 'node:test';\ntest('add', () => {});\ntest('sub', () => {});\n");
+    mkdirSync(join(d, '.github/workflows'), { recursive: true }); writeFileSync(join(d, '.github/workflows/ci.yml'), 'name: ci\non: push\njobs: {}\n');
+    g('add', '-A'); g('commit', '-qm', 'tests');
+    const out = execFileSync(process.execPath, [CLI, 'contract', ...flags], { cwd: d, encoding: 'utf8' });
+    g('add', '-A'); g('commit', '-qm', 'the contract');
+    return { d, g, out };
+  };
+  const pw = (d, ...a) => { const r = spawnSync(process.execPath, [ENGINE_BIN, ...a], { cwd: d, encoding: 'utf8' }); return { code: r.status, out: r.stdout }; };
+  const mine = JSON.stringify({ body: 'sawbuck-allow: I changed the CI step myself', author_association: 'OWNER', user: { type: 'User', login: 'solo-dev' } }) + '\n';
+  const openerSays = (d, base) => spawnSync(process.execPath, [ENGINE_BIN, 'pr-allow', '--author', 'solo-dev', '--base', base], { cwd: d, input: mine, encoding: 'utf8' }).stdout;
+  const workflowChange = ({ d, g }) => {
+    const base = g('rev-parse', 'HEAD').trim();
+    writeFileSync(join(d, '.github/workflows/ci.yml'), 'name: ci\non: push\njobs: {}\n# a step\n'); g('commit', '-qam', 'a step in the workflow');
+    const asked = pw(d, 'run', '--base', base, '--head', 'HEAD', '--json', '--no-record');
+    const reason = openerSays(d, base);
+    const told = pw(d, 'run', '--base', base, '--head', 'HEAD', '--markdown', '--no-record').out;
+    return { asked: asked.code, rep: JSON.parse(asked.out), reason, told, after: reason ? pw(d, 'run', '--base', base, '--head', 'HEAD', '--json', '--no-record', '--allow', reason).code : null };
+  };
+  const a = mk('--solo');
+  try {
+    const cfg = JSON.parse(readFileSync(join(a.d, 'promptwheel.config.json'), 'utf8'));
+    assert.equal(cfg.allowFromAuthor, true); assert.equal(cfg.allowTrailer, undefined); assert.equal(cfg.metrics.find((m) => m.name === 'test_count').allowable, true);
+    assert.match(a.out, /Sawbuck-Allow: test_count: <what was removed, and who asked for it>/);
+    assert.match(a.out, /One person works here \(--solo\), so on a pull request your own comment counts: sawbuck-allow: <reason>/);
+    assert.match(a.out, /GitHub cannot tell you from your agent there: the agent works under your account\. What is kept is the reason, not proof of who gave it\./);
+    // each way through, as printed
+    writeFileSync(join(a.d, 'test/a.test.js'), "import test from 'node:test';\ntest('add', () => {});\n");
+    a.g('commit', '-qam', 'drop the sub test\n\nSawbuck-Allow: test_count: the rule it checked went, I asked for it');
+    assert.equal(pw(a.d, 'run', '--base', 'HEAD~1', '--head', 'HEAD', '--json', '--no-record').code, 0, 'a reason in a commit clears a removed test');
+    const w = workflowChange(a);
+    assert.equal(w.asked, 1, 'a workflow change is still sent back'); assert.equal(w.rep.openerCounts, true);
+    assert.match(w.told, /To accept this, comment `sawbuck-allow: <the reason>` on this PR/, 'the comment the check posts names the way through that works here');
+    assert.match(w.reason, /I changed the CI step myself \(approved by solo-dev\)/, 'the opener\'s own comment counts'); assert.equal(w.after, 0, 'and with it the change passes');
+    const before = readFileSync(join(a.d, 'promptwheel.config.json'), 'utf8');
+    assert.match(execFileSync(process.execPath, [CLI, 'contract'], { cwd: a.d, encoding: 'utf8' }), /already signed, nothing changed/);
+    assert.equal(readFileSync(join(a.d, 'promptwheel.config.json'), 'utf8'), before, 'a second signing with no switch keeps both');
+  } finally { rmSync(a.d, { recursive: true, force: true }); }
+  const b = mk();
+  try {
+    const w = workflowChange(b);
+    assert.equal(w.asked, 1); assert.equal(w.reason, '', 'a plain contract: the opener\'s own comment does not count'); assert.equal(w.rep.openerCounts, undefined);
+    assert.match(w.told, /someone with write access who did not open this PR comments/);
+    // typed in a repo already signed: it says what changed, and that a pull request cannot turn it on for itself
+    const out = execFileSync(process.execPath, [CLI, 'contract', '--solo'], { cwd: b.d, encoding: 'utf8' });
+    assert.match(out, /already signed\. Two things changed in promptwheel\.config\.json: the counts of the tests now take a reason written in a commit; on a pull request your own comment now counts/);
+    assert.match(out, /check --allow/); assert.match(out, /a pull request cannot turn this on for itself/);
+    assert.equal(JSON.parse(readFileSync(join(b.d, 'promptwheel.config.json'), 'utf8')).allowFromAuthor, true);
+    assert.match(execFileSync(process.execPath, [CLI, 'contract', '--solo'], { cwd: b.d, encoding: 'utf8' }), /already signed, nothing changed/);
+  } finally { rmSync(b.d, { recursive: true, force: true }); }
+  const c = mk('--say-why');
+  try { assert.match(execFileSync(process.execPath, [CLI, 'contract', '--solo'], { cwd: c.d, encoding: 'utf8' }), /already signed\. One thing changed in promptwheel\.config\.json: on a pull request your own comment now counts/); } finally { rmSync(c.d, { recursive: true, force: true }); }
+});
+
+// ---- 0.2.2, trying the pull request check before it counts. The check asks on about 1 in 6 reviewed agent pull
+// requests, and until now the only way to see what it says on yours was to let it fail them.
+test('contract --full --comment-only: the workflow it writes never fails a pull request, and a workflow that is already there is not rewritten', () => {
+  const mk = (...flags) => {
+    const { d, g } = tmpRepo();
+    writeFileSync(join(d, 'package.json'), '{"name":"x","type":"module","scripts":{"test":"node --test"}}');
+    mkdirSync(join(d, 'test')); writeFileSync(join(d, 'test/a.test.js'), "import test from 'node:test';\ntest('add', () => {});\n");
+    g('remote', 'add', 'origin', 'https://github.com/example/x.git'); g('add', '-A'); g('commit', '-qm', 'tests');
+    const r = spawnSync(process.execPath, [CLI, 'contract', ...flags], { cwd: d, encoding: 'utf8' });
+    return { d, g, out: r.stdout + r.stderr, code: r.status };
+  };
+  const wfOf = (d) => { try { return readFileSync(join(d, '.github/workflows/sawbuck.yml'), 'utf8'); } catch { return ''; } };
+  const a = mk('--full', '--comment-only');
+  try {
+    assert.equal(a.code, 0, a.out);
+    assert.match(wfOf(a.d), /^        with: \{ inconclusive: pass, comment-only: true \}$/m);
+    assert.match(a.out, /It is comment only \(--comment-only\): no pull request fails, and the comment says what would have been sent back\./);
+    assert.match(a.out, /To make it count, take "comment-only: true" out of the workflow's last line\./);
+  } finally { rmSync(a.d, { recursive: true, force: true }); }
+  const b = mk('--full');
+  try {
+    assert.doesNotMatch(wfOf(b.d), /comment-only/, 'without the switch the check counts');
+    const was = wfOf(b.d);
+    const out = execFileSync(process.execPath, [CLI, 'contract', '--full', '--comment-only'], { cwd: b.d, encoding: 'utf8' });
+    assert.equal(wfOf(b.d), was, 'a workflow that is already there is never rewritten');
+    assert.match(out, /\.github\/workflows\/sawbuck\.yml is already here, and Sawbuck never rewrites a workflow file\. To make it comment only, change its last line yourself to:\n    with: \{ inconclusive: pass, comment-only: true \}/);
+  } finally { rmSync(b.d, { recursive: true, force: true }); }
+  const c = mk('--comment-only');
+  try {
+    assert.equal(wfOf(c.d), '', 'plain signing writes no workflow');
+    assert.match(c.out, /--comment-only is about the pull request check, and --full is what writes it: .*contract --full --comment-only/);
+  } finally { rmSync(c.d, { recursive: true, force: true }); }
+  const { d } = tmpRepo();
+  try { const r = spawnSync(process.execPath, [CLI, 'contract', '--coment-only'], { cwd: d, encoding: 'utf8' }); assert.equal(r.status, 64); assert.match(r.stderr, /unknown flag --coment-only/); } finally { rmSync(d, { recursive: true, force: true }); }
+});

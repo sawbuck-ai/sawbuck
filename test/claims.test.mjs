@@ -2246,7 +2246,7 @@ test('claim: in a session a workflow the agent changed is sent back at the end o
 });
 test('claim: signing with --full says who may let a pull request through, and names the setting for a repo with one person in it', () => {
   const d = repo(true); git(d, 'remote', 'add', 'origin', 'https://github.com/a/b.git'); const r = sb(d, 'contract', '--full'); assert.equal(r.code, 0);
-  assert.match(r.out, /Added \.github\/workflows\/sawbuck\.yml/); assert.match(r.out, /someone with write access who did not open it/); assert.match(r.out, /"allowFromAuthor": true/);
+  assert.match(r.out, /Added \.github\/workflows\/sawbuck\.yml/); assert.match(r.out, /someone with write access who did not open it/); assert.match(r.out, /If you are the only person here, sign with --solo so your own comment counts: \S.*contract --solo/);
   const readme = pages(); assert.match(readme, /who did not open it comments `sawbuck-allow: <reason>`/); assert.match(readme, /"allowFromAuthor": true/);
 });
 test('claim: the CI workflow --full writes pins every action by commit, the check\'s own included, at the engine version this release pins', () => {
@@ -2672,4 +2672,64 @@ test('claim: the two lines in the README write a pull request check as files in 
   assert.match(page, /Check every pull request\. Two lines\./);
   assert.match(page, /npx -y sawbuck contract --full git add -A && git commit -m "add the Sawbuck check" && git push/);
   assert.match(page, /The account that opened the pull request cannot\./);
+});
+
+// ---- 0.2.2: the pull request check as a good guest (the look back of 2026-11-19, proof-bench/live/good-guest).
+// The released Action commented on every push, a pass included. The words below are held against the engine this
+// release pins, through the same command its Action runs (pr-comment). GitHub itself is action-test.sh, by hand.
+const planFor = (d, base, ...flags) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'claims-plan-'));
+  const run = spawnSync(process.execPath, [ENGINE_HERE, 'run', '--base', base, '--head', 'HEAD', '--json', '--no-record'], { cwd: d, encoding: 'utf8', env: ENV });
+  writeFileSync(join(tmp, 'report.json'), run.stdout); writeFileSync(join(tmp, 'comments.jsonl'), '');
+  const p = spawnSync(process.execPath, [ENGINE_HERE, 'pr-comment', '--report', join(tmp, 'report.json'), '--exit', String(run.status), '--comments', join(tmp, 'comments.jsonl'), '--key', 'Sawbuck/contract', '--body', join(tmp, 'body.md'), ...flags], { encoding: 'utf8', env: ENV });
+  assert.equal(p.status, 0, `the engine this release pins has no pr-comment: ${p.stderr}`);
+  return { exit: run.status, plan: p.stdout.trim(), body: readFileSync(join(tmp, 'body.md'), 'utf8') };
+};
+test('claim: on a pull request a pass gets no comment, and a removed test gets one comment that is Sawbuck\'s and says the way through', () => {
+  const d = signed(true); const base = git(d, 'rev-parse', 'HEAD');
+  edit(d, 'src/add.js', (s) => s + 'exports.sub=(a,b)=>a-b\n'); save(d, 'a new function');
+  assert.deepEqual(planFor(d, base), { exit: 0, plan: 'none', body: '' }, 'a pass gets no comment');
+  put(d, 'test/add.test.js', TEST.split('\n').slice(0, 2).join('\n') + '\n'); save(d, 'drop the mul test');
+  const sent = planFor(d, base);
+  assert.equal(sent.exit, 1); assert.equal(sent.plan, 'create');
+  assert.match(sent.body, /^<!-- sawbuck-check: Sawbuck\/contract -->\n### ❌ Sawbuck: sent back/);
+  assert.match(sent.body, /\*\*Where:\*\* `test\/add\.test\.js` \(2 → 1\)/); assert.match(sent.body, /Put back what was removed, and push/);
+  assert.match(sent.body, /\]\(https:\/\/github\.com\/sawbuck-ai\/sawbuck\)/); assert.doesNotMatch(sent.body, /promptwheel-ai|outcome gate/);
+  const page = flat(README);
+  assert.match(page, /that runs on each pull request\. A pass gets no comment\./);
+  assert.match(page, /one comment on the pull request, which it edits in place/, 'the guide says how it comments');
+});
+test('claim: --comment-only, as the README and the guide give it: the check says what it would have sent back and fails no pull request', () => {
+  const d = signed(true); const base = git(d, 'rev-parse', 'HEAD');
+  put(d, 'test/add.test.js', TEST.split('\n').slice(0, 2).join('\n') + '\n'); save(d, 'drop the mul test');
+  const told = planFor(d, base, '--comment-only', 'true');
+  assert.equal(told.plan, 'create'); assert.match(told.body, /### ✋ Sawbuck, comment only: this would have been sent back\n\nThis check only comments here\. It never fails the job\./);
+  const page = flat(README);
+  assert.match(page, /Try it first with `--comment-only`: nothing fails\./);
+  assert.match(page, /`sawbuck contract --full --comment-only` writes the workflow so that no pull request fails/, 'the guide has the whole of it');
+});
+test('claim: --solo, as the README and the guide give it, and sawbuck check in such a repo names the way through that works there', () => {
+  const d = repo(true); assert.equal(sb(d, 'contract', '--full', '--solo').code, 0); save(d, 'sign');
+  put(d, '.github/workflows/ci.yml', 'name: ci\non: push\njobs: {}\n'); save(d, 'a workflow');
+  const r = sb(d, 'check');
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /protected path "workflows-frozen" touched/);
+  const plain = signed(true); put(plain, '.github/workflows/ci.yml', 'name: ci\non: push\njobs: {}\n'); save(plain, 'a workflow');
+  json(d, 'package.json', (o) => { o.scripts.postinstall = 'x'; }); save(d, 'an install script');
+  json(plain, 'package.json', (o) => { o.scripts.postinstall = 'x'; }); save(plain, 'an install script');
+  assert.match(sb(d, 'check').out, /or on a pull request, comment sawbuck-allow: [^\n]*<reason> \(one person works here, so your own comment counts\)/);
+  assert.match(sb(plain, 'check').out, /or on a pull request someone who did not open it comments sawbuck-allow:/, 'a contract with more than one person in it says what it always said');
+  const page = flat(README);
+  assert.match(page, /Working alone, add `--solo`\./);
+  assert.match(page, /GitHub cannot tell you from your agent there/, 'the guide says it in the words the command prints');
+});
+test('claim: sawbuck check names a file that lost its assertions while the repo\'s total held, as a note', () => {
+  const d = signed(true);
+  const spec = (name, lines) => `const t = require('node:test');\nconst assert = require('node:assert');\nconst total = (a, b) => { if (a < 0) throw new Error('negative'); return a + b; };\nt.test('${name}', () => {\n${lines.map((l) => '  ' + l).join('\n')}\n});\n`;
+  put(d, 'test/pay.test.js', spec('pay adds up', ['assert.equal(total(3, 4), 7);', 'assert.equal(total(0, 0), 0);', 'assert.throws(() => total(-1, 2), /negative/);'])); save(d, 'pay tests');
+  put(d, 'test/pay.test.js', spec('pay adds up', ['total(3, 4);']));   // the test is still there, and checks nothing
+  put(d, 'test/other.test.js', spec('other', ['assert.ok(1 + 1 === 2);', 'assert.ok(2 + 2 === 4);', 'assert.ok(3 + 3 === 6);', 'assert.ok(4 + 4 === 8);'])); save(d, 'swap');
+  const r = sb(d, 'check');
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /sawbuck: note: test\/pay\.test\.js has fewer assertions \(5 → 2\), though the repo's total did not fall/);
+  assert.match(flat(README), /a file that lost tests or assertions while the repo's total held is named in a note/, 'the guide says so');
 });

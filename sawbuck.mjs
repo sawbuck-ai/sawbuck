@@ -157,11 +157,14 @@ Usage:
                             argument shows the counts
   sawbuck doctor [repo]     Run what each hook runs (project and user level) and say if it still works,
                             is incomplete, or is gone. --all lists every repo it is attached to and checks each
-  sawbuck contract [--dry-run] [--full] [--strict] [--say-why] [--try[=N]]
+  sawbuck contract [--dry-run] [--full] [--strict] [--say-why] [--solo] [--comment-only] [--try[=N]]
                             Give this repo its rules: protected paths, the written rule, and your detected
                             tests when there is no config yet (--dry-run to preview). --full adds supply-chain
                             guards, the repo lock, and a CI check on a github.com repo with a real test
-                            command; --strict makes them block
+                            command; --strict makes them block. --comment-only: that CI check never fails a
+                            pull request, it says what it would have sent back. --solo: for a repo with one
+                            person in it, a reason in a commit clears a removed test and your own comment
+                            counts on a pull request
   sawbuck rules --prepare   Gather your messages on this machine so an agent can propose the rules you never wrote
   sawbuck rules --check F   Keep only proposed rules with 2 quotes that are really yours
   sawbuck undo --hook       The edit-tool hooks attach wires: an edit the person had undone in a session is kept, with their words, and shown with the prompt that names the file
@@ -225,7 +228,7 @@ if (rest.includes('--help') || rest.includes('-h')) {
 // a flag a command does not know is an error, never a silent no-op. `check` is not here: it passes its flags to the
 // engine, which refuses the ones it does not know. --claude is what older installs pass: taken, not listed.
 const KNOWN = {
-  contract: ['--dry-run', '--full', '--strict', '--say-why', '--try'],
+  contract: ['--dry-run', '--full', '--strict', '--say-why', '--solo', '--comment-only', '--try'],
   init: ['--yes', '-y', '--wizard', '--no-investigate', '--no-agent-block', '--force', '--preset'],
   attach: ['--user', '--shared', '--git', '--dry-run', '--claude', '--codex', '--cursor', '--no-words', '--words'],
   detach: ['--user', '--all', '--verify', '--purge', '--dry-run', '--claude', '--codex', '--cursor'],
@@ -381,7 +384,10 @@ switch (cmd) {
     if (standingHint) out(standingHint);
     if (rep.verdict !== 'inconclusive' && setupFailure(rep)) out(`⚠ the setup command failed ${setupFailure(rep)}. The check still ran, so see whether "setup" in promptwheel.config.json is still right.`);
     if ((rep.metrics || []).some((x) => x.heldByTestEdit)) out('⚠ your tests changed too, and the old tests fail on this source. Fine for an intended change. Otherwise check the tests were not weakened: a green that stays green is not proved.');
-    for (const x of rep.explained || []) out(`sawbuck: ${x.noted ? 'note' : 'needs a look'}: ${x.what}${x.items ? ': ' + x.items.join(', ') : ''}${!x.noted && x.allowable ? `. If you meant this: ${allowHow}, or on a pull request someone who did not open it comments sawbuck-allow: ${allowNames}<reason>` : ''}${!x.noted && !x.allowable && TEST_KIND.has(x.metric) && x.metric !== 'tests_pass' ? `. This contract takes no reason for it: add "allowable": "flag" to "${x.metric}" in promptwheel.config.json (a contract written from 0.1.74 on has it), or undo the change` : ''}`);
+    for (const x of rep.explained || []) out(`sawbuck: ${x.noted ? 'note' : 'needs a look'}: ${x.what}${x.items ? ': ' + x.items.join(', ') : ''}${!x.noted && x.allowable ? `. If you meant this: ${allowHow}, or on a pull request${rep.openerCounts ? `, comment sawbuck-allow: ${allowNames}<reason> (one person works here, so your own comment counts)` : ` someone who did not open it comments sawbuck-allow: ${allowNames}<reason>`}` : ''}${!x.noted && !x.allowable && TEST_KIND.has(x.metric) && x.metric !== 'tests_pass' ? `. This contract takes no reason for it: add "allowable": "flag" to "${x.metric}" in promptwheel.config.json (a contract written from 0.1.74 on has it), or undo the change` : ''}`);
+    // a count that held for the repo and fell in one file (the engine's per-file note, 0.8.15): a note, never a verdict
+    const FEWER = { test_count: 'fewer tests', assertions: 'fewer assertions' };
+    for (const x of rep.metrics || []) for (const w of x.lostIn || []) out(`sawbuck: note: ${w.file} has ${FEWER[x.name] || x.name} (${w.before} → ${w.after}), though the repo's total did not fall`);
     if (rep.gate && rep.gate.changed) out(`⚠ the gate definition changed in this change (fingerprint ${rep.gate.fingerprint.base} -> ${rep.gate.fingerprint.head}): a metric, guard, evaluatorPath or mandate was added, removed or edited.`);
     process.exit(code);
   }
