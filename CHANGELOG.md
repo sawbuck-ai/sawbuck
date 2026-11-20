@@ -2,6 +2,24 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
+## 0.2.2 (2026-11-20): a good guest on a pull request
+
+We looked back at everything measured so far, and at what a stranger's repo would see of Sawbuck. The check on a pull request spoke on every push, under another name, and there was no way to try it without failing someone's pull request.
+
+**A pass gets no comment.** The pull request check keeps one comment and edits it in place. It speaks when it sends a pull request back, when a reason was used, and when a file lost tests or assertions while the repo's total held. The comment says Sawbuck and links here. This is the engine, 0.8.15. A workflow that an older `sawbuck contract --full` wrote keeps the engine it pins until its `uses:` line is changed, and `sawbuck contract` prints the line.
+
+**Try it first: `--comment-only`.** `sawbuck contract --full --comment-only` writes the workflow so that no pull request fails. The comment says what would have been sent back. Take `comment-only: true` out of the workflow's last line when you want it to count.
+
+**Working alone: `--solo`.** A sent-back pull request is let through by someone who did not open it. In a repo with one person in it there is no such person: you opened it, and your agent works under your account. GitHub cannot tell the two apart. `sawbuck contract --solo` signs for that. A test may be removed where a commit of the change says why, and on a pull request your own comment counts. What is kept is the reason, not proof of who gave it, and the command says so.
+
+**A changed workflow says how to accept it.** On a pull request the comment for a protected path named the path and stopped there. Now it says who can let it through, and with what words.
+
+**A file that lost its tests is named.** When a file loses tests or assertions and the repo's total holds because another file gained as many, `sawbuck check` and the comment on a pull request name the file in a note. It fails nothing.
+
+**`--say-why` in a repo already signed says what it changed.** It turned the switch on and said "nothing changed". Found by typing it after the 0.2.1 release.
+
+Not run on GitHub itself before this release: the Action's own steps were run with a stand-in for `gh` (23 pull requests, 35 pushes).
+
 ## 0.2.1 (2026-11-17): try it on your own past, and a loop can read it
 
 **Try the contract before you turn it on.** `sawbuck contract --try` writes nothing. It holds the contract a real run would write against your last 20 commits (`--try=50` for more, 200 at most) and says which would have been sent back to ask you: the ones that touch a protected path, and the ones that make a count worse. The test run itself is not replayed. When we held the plain contract against 340 real commits, 82 were sent back, every one for a protected path or a count. Now you can see your own number first.

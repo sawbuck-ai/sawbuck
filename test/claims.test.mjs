@@ -2733,3 +2733,13 @@ test('claim: sawbuck check names a file that lost its assertions while the repo\
   assert.match(r.out, /sawbuck: note: test\/pay\.test\.js has fewer assertions \(5 → 2\), though the repo's total did not fall/);
   assert.match(flat(README), /a file that lost tests or assertions while the repo's total held is named in a note/, 'the guide says so');
 });
+test('claim: the limits page says what --solo gives up, and that the one comment was not run on GitHub itself', () => {
+  // the limit, as behaviour: in a --solo repo a comment from the account that opened the pull request is taken, whoever typed it
+  const d = repo(true); assert.equal(sb(d, 'contract', '--solo').code, 0); save(d, 'sign'); const base = git(d, 'rev-parse', 'HEAD');
+  const own = JSON.stringify({ body: 'sawbuck-allow: fine by me', author_association: 'OWNER', user: { type: 'User', login: 'solo-dev' } }) + '\n';
+  const said = spawnSync(process.execPath, [ENGINE_HERE, 'pr-allow', '--author', 'solo-dev', '--base', base], { cwd: d, encoding: 'utf8', env: ENV, input: own }).stdout;
+  assert.match(said, /fine by me \(approved by solo-dev\)/);
+  const page = flat(readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8'));
+  assert.match(page, /\*\*A repo signed `--solo`\.\*\* On a pull request the comment of the account that opened it counts, and an agent that works under that account can post it\. GitHub cannot tell the two apart\. What is kept is the reason, not proof of who gave it\./);
+  assert.match(page, /\*\*The one comment, on GitHub itself\.\*\* That the pull request check edits its one comment in place was run with a stand-in for GitHub's command line, not on GitHub\. If GitHub refuses the edit, the check posts a new comment instead\./);
+});
