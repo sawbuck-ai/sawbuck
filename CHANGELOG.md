@@ -6,7 +6,7 @@ What was found and fixed in each version, newest first. For versions before 0.1.
 
 We looked back at everything measured so far, and at what a stranger's repo would see of Sawbuck. The check on a pull request spoke on every push, under another name, and there was no way to try it without failing someone's pull request.
 
-**A pass gets no comment.** The pull request check keeps one comment and edits it in place. It speaks when it sends a pull request back, when a reason was used, and when a file lost tests or assertions while the repo's total held. The comment says Sawbuck and links here. This is the engine, 0.8.15. A workflow that an older `sawbuck contract --full` wrote keeps the engine it pins until its `uses:` line is changed, and `sawbuck contract` prints the line.
+**A pass gets no comment.** The pull request check keeps one comment and edits it in place. The workflow `contract --full` writes now stops the check of an older push when a new one arrives. It speaks when it sends a pull request back, when a reason was used, and when a file lost tests or assertions while the repo's total held. The comment says Sawbuck and links here. This is the engine, 0.8.15. A workflow that an older `sawbuck contract --full` wrote keeps the engine it pins until its `uses:` line is changed, and `sawbuck contract` prints the line.
 
 **Try it first: `--comment-only`.** `sawbuck contract --full --comment-only` writes the workflow so that no pull request fails. The comment says what would have been sent back. Take `comment-only: true` out of the workflow's last line when you want it to count.
 
@@ -18,7 +18,7 @@ We looked back at everything measured so far, and at what a stranger's repo woul
 
 **`--say-why` in a repo already signed says what it changed.** It turned the switch on and said "nothing changed". Found by typing it after the 0.2.1 release.
 
-Not run on GitHub itself before this release: the Action's own steps were run with a stand-in for `gh` (23 pull requests, 35 pushes).
+Not run on GitHub itself before this release: the Action's own steps were run with a stand-in for `gh` (24 pull requests, 36 pushes).
 
 ## 0.2.1 (2026-11-17): try it on your own past, and a loop can read it
 

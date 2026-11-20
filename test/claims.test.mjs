@@ -2667,6 +2667,8 @@ test('claim: the two lines in the README write a pull request check as files in 
   const r = sb(d, 'contract', '--full'); assert.equal(r.code, 0, r.out);
   const wf = readFileSync(join(d, '.github/workflows/sawbuck.yml'), 'utf8');
   assert.match(wf, /^on: pull_request$/m); assert.match(wf, /pull-requests: write/); assert.match(wf, /promptwheel-ai\/promptwheel@[0-9a-f]{40}/);
+  // a new push stops the check of the push before it: the older run would only say what is no longer true, on the guest's minutes
+  assert.match(wf, /^concurrency: \{ group: "\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}", cancel-in-progress: true \}$/m);
   assert.ok(existsSync(join(d, 'promptwheel.config.json')), 'the contract is a file too');
   const page = flat(README);
   assert.match(page, /Check every pull request\. Two lines\./);

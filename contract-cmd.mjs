@@ -65,6 +65,8 @@ const workflow = (npm) => `# Written by sawbuck contract. Checks every pull requ
 name: Sawbuck
 on: pull_request
 permissions: { contents: read, pull-requests: write }
+# a new push to the pull request stops the check of the push before it
+concurrency: { group: "\${{ github.workflow }}-\${{ github.ref }}", cancel-in-progress: true }
 jobs:
   contract:
     runs-on: ubuntu-latest
