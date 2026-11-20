@@ -86,7 +86,7 @@ What it sends back, with a comment that says why:
 What it lets through: everything else. A person with write access can let a sent-back change through with a
 comment: `sawbuck-allow: <reason>`. The account that opened the pull request cannot.
 
-How it comments: a pull request that passes gets no comment. When there is something to say, it says it in one
+How it comments: a plain pass gets no comment. When there is something to say, it says it in one
 comment on the pull request, which it edits in place on each push. Something to say is a send-back, a reason that
 was used, or a note about the tests: a file that lost tests or assertions while the repo's total held is named in
 a note. The whole report is in the job summary on every run.

@@ -51,10 +51,10 @@ git add -A && git commit -m "add the Sawbuck check" && git push
 ```
 
 The first line writes the check as files in your repo. You can read every one before you commit.
-It adds a workflow, `.github/workflows/sawbuck.yml`, that runs on each pull request. A pass gets no comment.
+It adds a workflow, `.github/workflows/sawbuck.yml`, that runs on each pull request. A plain pass gets no comment.
 No model reads your code. No account. Nothing leaves your CI.
 
-Try it first with `--comment-only`: nothing fails. Working alone, add `--solo`. Both, and what it sends back: [GUIDE.md](GUIDE.md#with---full-the-supply-chain-and-pull-requests).
+Try it with `--comment-only`: nothing fails. Working alone, add `--solo`. Both, and what it sends back: [GUIDE.md](GUIDE.md#with---full-the-supply-chain-and-pull-requests).
 
 ## What it does
 

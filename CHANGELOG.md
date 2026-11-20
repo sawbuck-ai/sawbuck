@@ -6,7 +6,7 @@ What was found and fixed in each version, newest first. For versions before 0.1.
 
 We looked back at everything measured so far, and at what a stranger's repo would see of Sawbuck. The check on a pull request spoke on every push, under another name, and there was no way to try it without failing someone's pull request.
 
-**A pass gets no comment.** The pull request check keeps one comment and edits it in place. The workflow `contract --full` writes now stops the check of an older push when a new one arrives. It speaks when it sends a pull request back, when a reason was used, and when a file lost tests or assertions while the repo's total held. The comment says Sawbuck and links here. This is the engine, 0.8.15. A workflow that an older `sawbuck contract --full` wrote keeps the engine it pins until its `uses:` line is changed, and `sawbuck contract` prints the line.
+**A plain pass gets no comment.** The pull request check keeps one comment and edits it in place. The workflow `contract --full` writes now stops the check of an older push when a new one arrives. It speaks when it sends a pull request back, when a reason was used, and when a file lost tests or assertions while the repo's total held. The comment says Sawbuck and links here. This is the engine, 0.8.15. A workflow that an older `sawbuck contract --full` wrote keeps the engine it pins until its `uses:` line is changed, and `sawbuck contract` prints the line.
 
 **Try it first: `--comment-only`.** `sawbuck contract --full --comment-only` writes the workflow so that no pull request fails. The comment says what would have been sent back. Take `comment-only: true` out of the workflow's last line when you want it to count.
 
@@ -14,7 +14,7 @@ We looked back at everything measured so far, and at what a stranger's repo woul
 
 **A changed workflow says how to accept it.** On a pull request the comment for a protected path named the path and stopped there. Now it says who can let it through, and with what words.
 
-**A file that lost its tests is named.** When a file loses tests or assertions and the repo's total holds because another file gained as many, `sawbuck check` and the comment on a pull request name the file in a note. It fails nothing.
+**A file that lost its tests is named.** When a file loses tests or assertions and the repo's total holds because another file gained as many, `sawbuck check` and the comment on a pull request name the file in a note. It fails nothing. Run on 408 ordinary pull requests from seven public repos: of the 365 that pass, the note names a file on 17, about 1 in 20.
 
 **`--say-why` in a repo already signed says what it changed.** It turned the switch on and said "nothing changed". Found by typing it after the 0.2.1 release.
 

@@ -2698,7 +2698,8 @@ test('claim: on a pull request a pass gets no comment, and a removed test gets o
   assert.match(sent.body, /\*\*Where:\*\* `test\/add\.test\.js` \(2 → 1\)/); assert.match(sent.body, /Put back what was removed, and push/);
   assert.match(sent.body, /\]\(https:\/\/github\.com\/sawbuck-ai\/sawbuck\)/); assert.doesNotMatch(sent.body, /promptwheel-ai|outcome gate/);
   const page = flat(README);
-  assert.match(page, /that runs on each pull request\. A pass gets no comment\./);
+  assert.match(page, /that runs on each pull request\. A plain pass gets no comment\./);
+  assert.doesNotMatch(page, /[^n] A pass gets no comment/, 'a pass that carries a note or a used reason does get the one comment, so the pages do not say "a pass"');
   assert.match(page, /one comment on the pull request, which it edits in place/, 'the guide says how it comments');
 });
 test('claim: --comment-only, as the README and the guide give it: the check says what it would have sent back and fails no pull request', () => {
@@ -2707,7 +2708,7 @@ test('claim: --comment-only, as the README and the guide give it: the check says
   const told = planFor(d, base, '--comment-only', 'true');
   assert.equal(told.plan, 'create'); assert.match(told.body, /### ✋ Sawbuck, comment only: this would have been sent back\n\nThis check only comments here\. It never fails the job\./);
   const page = flat(README);
-  assert.match(page, /Try it first with `--comment-only`: nothing fails\./);
+  assert.match(page, /Try it with `--comment-only`: nothing fails\./);
   assert.match(page, /`sawbuck contract --full --comment-only` writes the workflow so that no pull request fails/, 'the guide has the whole of it');
 });
 test('claim: --solo, as the README and the guide give it, and sawbuck check in such a repo names the way through that works there', () => {
@@ -2734,6 +2735,10 @@ test('claim: sawbuck check names a file that lost its assertions while the repo\
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /sawbuck: note: test\/pay\.test\.js has fewer assertions \(5 → 2\), though the repo's total did not fall/);
   assert.match(flat(README), /a file that lost tests or assertions while the repo's total held is named in a note/, 'the guide says so');
+  // and that is a pass the check speaks on: one comment, titled as a pass, with the note in it (so the pages say "a plain pass")
+  const said = planFor(d, git(d, 'rev-parse', 'HEAD~1'));
+  assert.deepEqual([said.exit, said.plan], [0, 'create']);
+  assert.match(said.body, /### ✅ Sawbuck: passes\n\n> ℹ️ \*\*Note:\*\* `test\/pay\.test\.js` has fewer assertions \(5 → 2\), though the repo's total did not fall\./);
 });
 test('claim: the limits page says what --solo gives up, and that the one comment was not run on GitHub itself', () => {
   // the limit, as behaviour: in a --solo repo a comment from the account that opened the pull request is taken, whoever typed it
