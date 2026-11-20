@@ -203,7 +203,10 @@ try {
     let hardened = 0;
     if (strict) for (const m of cfg.metrics || []) if (m && m.report && REPORT.has(m.name)) { delete m.report; hardened++; }
     // a repo signed with --say-why keeps that strength when it is signed again with no switch
-    const saysWhy = sayWhy || (had && cfg.allowTrailer !== false && (cfg.metrics || []).some((m) => m && TESTS3.includes(m.name) && m.allowable === true));
+    const saidWhy = had && cfg.allowTrailer !== false && (cfg.metrics || []).some((m) => m && TESTS3.includes(m.name) && m.allowable === true);
+    const saysWhy = sayWhy || saidWhy;
+    // --say-why typed in a repo already signed changes the contract: it is said, never "nothing changed" (seen after the wave of 0.2.1)
+    const turnedOn = had && sayWhy && !saidWhy;
     if (saysWhy) { for (const m of cfg.metrics || []) if (m && TESTS3.includes(m.name) && m.allowable) m.allowable = true; delete cfg.allowTrailer; } else cfg.allowTrailer = false;
     writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n');
     const pack = join(repo, '.promptwheel', 'packs', 'supply-chain');
@@ -233,10 +236,10 @@ try {
     if (full && !locked) run([join(pack, 'lock.mjs'), 'write', repo], repo);
     const added = (cfg.mandates.length - before.m) + (cfg.metrics.length - before.g);
     const fresh = added || hardened || ci || (full && !locked);
-    process.stdout.write(!fresh ? 'sawbuck: already signed, nothing changed.\n' : full
+    process.stdout.write(!fresh ? (turnedOn ? `sawbuck: already signed. One thing changed in promptwheel.config.json: the counts of the tests now take a reason written in a commit.\n  The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : 'sawbuck: already signed, nothing changed.\n') : full
       ? `sawbuck: signed. ${counts(cfg)}, and the shape of this repo in promptwheel.lock.json.\n${strict ? (hardened ? `  ${hardened} guards that were notes now block. The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : '') : '  New dependencies and structure changes show as notes for now; protected paths and install scripts block. --strict blocks them all.\n'}${ci ? '  Added .github/workflows/sawbuck.yml, so pull requests are checked in CI. Commit it with the rest.\n  On a pull request, a change that takes a reason is let through by a comment from someone with write access who did not open it: sawbuck-allow: <reason>. If you are the only person here, add "allowFromAuthor": true to promptwheel.config.json so your own comment counts.\n' : ''}`
       : `sawbuck: signed. ${counts(cfg)}, and the rule in AGENTS.md.\n  --full adds supply-chain guards, a repo lock and a CI check.\n`);
-    if (fresh && sayWhy) process.stdout.write('  A test may be removed where a commit of the change says why: end its message with\n    Sawbuck-Allow: test_count: <what was removed, and who asked for it>\n  The reason is kept on the record. A protected path still takes a person.\n');
+    if ((fresh && sayWhy) || turnedOn) process.stdout.write('  A test may be removed where a commit of the change says why: end its message with\n    Sawbuck-Allow: test_count: <what was removed, and who asked for it>\n  The reason is kept on the record. A protected path still takes a person.\n');
     if (full && !ci && !existsSync(wf)) process.stdout.write(`  No CI check added: ${!/github\.com/.test(remote) ? 'this repo has no github.com origin' : 'there is no real test command yet, and a placeholder would fail every pull request'}. Run sawbuck contract --full again once it has one.\n`);
     const old = ci ? '' : olderCi(wf);
     // The line is a workflow change. A contract written from 0.1.70 on lets one through with a person's reason. A contract

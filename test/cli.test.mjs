@@ -1164,5 +1164,16 @@ test('contract --say-why: a removed test passes when a commit says why, a plain 
   } finally { rmSync(a.d, { recursive: true, force: true }); }
   const b = mk();
   try { assert.equal(drop(b).code, 1, 'the contract as it was: no reason from a commit'); } finally { rmSync(b.d, { recursive: true, force: true }); }
+  // typed after the wave of 0.2.1 (2026-11-19): a repo signed plain, then --say-why. It changed the contract and said "nothing changed"
+  const c = mk();
+  try {
+    const out = execFileSync(process.execPath, [CLI, 'contract', '--say-why'], { cwd: c.d, encoding: 'utf8' });
+    const cfg = JSON.parse(readFileSync(join(c.d, 'promptwheel.config.json'), 'utf8'));
+    assert.equal(cfg.metrics.find((m) => m.name === 'test_count').allowable, true, 'the switch is turned on in a signed repo');
+    assert.doesNotMatch(out, /nothing changed/, 'it changed the contract, so it does not say nothing changed');
+    assert.match(out, /Sawbuck-Allow: test_count: <what was removed, and who asked for it>/, 'the line to write is shown');
+    assert.match(out, /check --allow/, 'the contract is a protected path: the commit that carries this takes a person');
+    assert.match(execFileSync(process.execPath, [CLI, 'contract', '--say-why'], { cwd: c.d, encoding: 'utf8' }), /already signed, nothing changed/, 'a second time changes nothing and says so');
+  } finally { rmSync(c.d, { recursive: true, force: true }); }
 });
 
