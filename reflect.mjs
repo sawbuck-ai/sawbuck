@@ -53,7 +53,9 @@ const runNode = (file, a) => execFileSync(process.execPath, [file, ...a], { cwd:
 // The check exits nonzero on fail/gamed/inconclusive, but still prints the JSON
 // report to stdout, so recover it from the thrown error too.
 function check() {
-  const parse = (out) => { const i = out.indexOf('{'); return i < 0 ? null : JSON.parse(out.slice(i)); };
+  // A report that cannot be read is no verdict: one that arrived cut (the engine was stopped while it printed; until
+  // engine 0.8.16 also any report larger than a pipe holds) used to throw here, from inside the catch below.
+  const parse = (out) => { const i = out.indexOf('{'); if (i < 0) return null; try { return JSON.parse(out.slice(i)); } catch { return null; } };
   try {
     return parse(runNode(PW, ['run', '--base', base, '--head', head, '--json', ...(noAuto ? ['--no-auto'] : [])]));
   } catch (e) {

@@ -1274,3 +1274,56 @@ test('contract --full --comment-only: the workflow it writes never fails a pull 
   const { d } = tmpRepo();
   try { const r = spawnSync(process.execPath, [CLI, 'contract', '--coment-only'], { cwd: d, encoding: 'utf8' }); assert.equal(r.status, 64); assert.match(r.stderr, /unknown flag --coment-only/); } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+// Found 2026-11-20 (proof-bench/gatekeep-study, then proof-bench/live/release-0.2.3). The engine printed its report and
+// called process.exit() at once, and so did `sawbuck check --json`. Node writes to a pipe in the background and an exit
+// drops what the pipe has not taken, so a report larger than a pipe holds arrived cut. The report lists every test,
+// fixture and config file a change touches: beside a few thousand of them `sawbuck check` said "could not run the check
+// here: the engine gave no verdict" (exit 64), and something reading `check --json` got 65,536 bytes of it.
+const bigChange = (n) => {
+  const { d, g } = tmpRepo();
+  writeFileSync(join(d, 'package.json'), '{"name":"x","version":"1.0.0","scripts":{"test":"node --test test/a.test.js"}}\n');
+  mkdirSync(join(d, 'test')); writeFileSync(join(d, 'test/a.test.js'), "require('node:test').test('a', () => {})\n");
+  g('add', '-A'); g('commit', '-qm', 'a test');
+  const deep = join(d, 'fixtures', 'a-folder-name-long-enough-that-fifteen-hundred-files-in-it-make-a-report-no-pipe-holds');
+  mkdirSync(deep, { recursive: true });
+  for (let i = 0; i < n; i++) writeFileSync(join(deep, `case-${String(i).padStart(4, '0')}.json`), `{"case":${i}}\n`);
+  g('add', '-A'); g('commit', '-qm', `${n} fixture files`);
+  return d;
+};
+test('check gives its verdict on a change that adds fifteen hundred fixture files, and check --json arrives whole through a reader that starts late', () => {
+  const d = bigChange(1500);
+  try {
+    const r = spawnSync(process.execPath, [CLI, 'check'], { cwd: d, encoding: 'utf8' });
+    assert.equal(r.status, 0, `sawbuck check said: ${(r.stdout + r.stderr).split('\n')[0]}`);
+    assert.match(r.stdout, /held: nothing got worse in your last change/);
+    // a real pipe between two processes whose reader takes nothing for a second (a busy parent, a slow tool)
+    const o = join(d, '..', 'late-check.out'), c = join(d, '..', 'late-check.code');
+    spawnSync('sh', ['-c', '( "$0" "$@" 2>/dev/null; echo $? > "$CODE" ) | ( sleep 1; cat ) > "$OUT"', process.execPath, CLI, 'check', '--json'], { cwd: d, env: { ...process.env, OUT: o, CODE: c } });
+    const text = readFileSync(o, 'utf8'); let rep = null; try { rep = JSON.parse(text); } catch { /* cut */ }
+    assert.ok(rep, `check --json did not arrive whole: ${Buffer.byteLength(text)} bytes came`);
+    assert.ok(Buffer.byteLength(text) > 146176, `this test means nothing unless the report is larger than what used to arrive: ${Buffer.byteLength(text)} bytes`);
+    assert.equal(rep.verdict, 'pass'); assert.equal(+readFileSync(c, 'utf8'), 0); assert.equal(rep.gate.goalposts.length, 1500);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+// The same fault beside it (proof-bench/live/release-0.2.3, debt-neighbour.sh): `sawbuck debt --json` printed and called
+// process.exit() at once, and `sawbuck status` reads it through a pipe. Its JSON holds a few hundred bytes for each
+// file that carries debt, so in a repo with about 550 such files status said "could not read the ledger".
+test('status reads the debt of a repo where a thousand files each silence a lint rule, and debt --json arrives whole through a reader that starts late', () => {
+  const { d, g } = tmpRepo();
+  try {
+    const dir = join(d, 'src', 'a-folder-name-of-ordinary-length', 'components'); mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 1000; i++) writeFileSync(join(dir, `widget-${String(i).padStart(4, '0')}.js`), `// eslint-disable-next-line no-unused-vars\nconst unused${i} = ${i};\nmodule.exports = {};\n`);
+    g('add', '-A'); g('commit', '-qm', 'a thousand widgets');
+    const st = spawnSync(process.execPath, [CLI, 'status'], { cwd: d, encoding: 'utf8' }).stdout;
+    assert.doesNotMatch(st, /could not read the ledger/, 'status read the debt');
+    assert.match(st, /Debt accruing now\n     1000 silenced in HEAD/, 'and says what it holds');
+    const o = join(d, '..', 'late-debt.out'), c = join(d, '..', 'late-debt.code');
+    spawnSync('sh', ['-c', '( "$0" "$@" 2>/dev/null; echo $? > "$CODE" ) | ( sleep 1; cat ) > "$OUT"', process.execPath, CLI, 'debt', '--json', '--fail-on', 'any'], { cwd: d, env: { ...process.env, OUT: o, CODE: c } });
+    const text = readFileSync(o, 'utf8'); let j = null; try { j = JSON.parse(text); } catch { /* cut */ }
+    assert.ok(j, `debt --json did not arrive whole: ${Buffer.byteLength(text)} bytes came`);
+    assert.equal(j.total, 1000); assert.equal(j.files.length, 1000); assert.ok(Buffer.byteLength(text) > 146176);
+    assert.equal(+readFileSync(c, 'utf8'), 1, 'and the exit code is still the gate\'s: --fail-on any with debt in the tree');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

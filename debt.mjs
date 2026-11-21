@@ -56,99 +56,106 @@ const erasedOnBranch = (ref) => {
     return block ? ['', '   ' + block.replace('(recovered locally, leads)', '(from the ledger, leads)').split('\n').join('\n   ')] : [];
   } catch { return []; }
 };
-if (since && typeof since === 'string') {
-  const norm = (s) => String(s).trim().replace(/\s+/g, ' ');
-  // the delta base: the raw suppression set at REF (the adapter's ref mode), subtracted from HEAD.
-  // null = the ref could not be read (not fetched, a typo): unmeasurable is NOT an empty base, or
-  // every pre-existing suppression would read as newly added and a --fail-on gate would fail falsely.
-  const baseRows = memDebt(repo, { ref: since });
-  if (baseRows === null) { console.error(`sawbuck debt: could not read the suppression ledger at ${since} (is the ref fetched? in GitHub Actions use actions/checkout with fetch-depth: 0)`); process.exit(1); }
-  const base = new Set(baseRows.map((r) => r.file + '\u0000' + norm(r.content)));
-  const added = live.filter((it) => it.content && !base.has(it.file + '\u0000' + norm(it.content)));
-  const skips = added.filter((it) => it.testSkip).length, undoc = added.filter((it) => !it.documented).length;
-  // the gate: fail (exit 1) when the branch adds the kind of debt --fail-on names.
-  const fail = gateFails(added);
-  if (asJson) { console.log(JSON.stringify({ since, added: added.length, testSkips: skips, undocumented: undoc, failOn: failMode, fail, items: added.map((it) => ({ file: it.file, line: it.line, kind: String(it.kind).trim(), documented: it.documented })) }, null, 2)); process.exit(fail ? 1 : 0); }
-  if (!added.length) { console.log([`sawbuck: no new suppression debt since ${since} (clean).`, ...erasedOnBranch(since)].join('\n')); process.exit(0); }
-  const o = [`sawbuck: ${added.length} new suppression${added.length === 1 ? '' : 's'} since ${since}  ·  ${skips} disabled test${skips === 1 ? '' : 's'}  ·  ${undoc} undocumented (no code/reason)`];
-  for (const it of added.slice(0, Math.max(top, 20))) o.push(`     ${it.testSkip ? '🔴' : (it.documented ? '  ' : '✎ ')} ${it.file}:${it.line}  ${String(it.kind).trim()}${it.documented ? '' : '   (bare - no code/reason)'}`);
-  o.push(`\n   ✎ = bare/undocumented (the suspect kind); declare intent (a rule code or reason) or remove it.`);
-  if (failMode) o.push(fail ? `\n   ❌ debt gate FAILED (--fail-on ${failMode}): this branch adds debt that must be declared or removed.` : `\n   ✓ debt gate passed (--fail-on ${failMode}).`);
-  o.push(...erasedOnBranch(since));
-  console.log(o.join('\n'));
-  process.exit(fail ? 1 : 0);
-}
-
-const liveFail = gateFails(live);
-if (!live.length) { console.log(asJson ? '{"total":0,"testSkips":0,"codeSuppressions":0,"undocumented":0,"files":[]}' : 'sawbuck: no live suppression debt in HEAD (nothing silenced in src/test/config). A clean tree.'); process.exit(0); }
-
-// Fragility: debt on code that keeps breaking (reverts, fix-bursts) is the debt that matters; debt
-// on stable code is mostly noise. One pass over the events builds per-file history; a file's debt
-// severity is multiplied by its fragility. Same signals rank.mjs uses.
-const DAY = 86400000;
-const resolveRename = (f) => f.replace(/\{[^}]*=>\s*([^}]*)\}/g, '$1').replace(/\/{2,}/g, '/');
-const histMap = new Map();
-for (const e of events) {
-  const rv = !!e.revert, fx = !!e.fix;
-  if (!rv && !fx) continue;
-  for (const raw of (e.files || [])) {
-    const f = resolveRename(raw);
-    const h = histMap.get(f) || { reverts: 0, fixes: 0, fixDates: [] };
-    if (rv) h.reverts++;
-    if (fx) { h.fixes++; if (e.date) h.fixDates.push(Date.parse(e.date)); }
-    histMap.set(f, h);
+// What is printed from here on can be far larger than a pipe holds: a few hundred bytes for each file that carries
+// debt. So each ending returns its exit code, and the process ends by itself once the print is written. Until 0.2.2
+// each one was process.exit(), which drops what a pipe has not taken yet: `sawbuck status` reads this through a
+// pipe, and in a repo with about 550 such files it said "could not read the ledger".
+const finish = () => {
+  if (since && typeof since === 'string') {
+    const norm = (s) => String(s).trim().replace(/\s+/g, ' ');
+    // the delta base: the raw suppression set at REF (the adapter's ref mode), subtracted from HEAD.
+    // null = the ref could not be read (not fetched, a typo): unmeasurable is NOT an empty base, or
+    // every pre-existing suppression would read as newly added and a --fail-on gate would fail falsely.
+    const baseRows = memDebt(repo, { ref: since });
+    if (baseRows === null) { console.error(`sawbuck debt: could not read the suppression ledger at ${since} (is the ref fetched? in GitHub Actions use actions/checkout with fetch-depth: 0)`); process.exit(1); }
+    const base = new Set(baseRows.map((r) => r.file + '\u0000' + norm(r.content)));
+    const added = live.filter((it) => it.content && !base.has(it.file + '\u0000' + norm(it.content)));
+    const skips = added.filter((it) => it.testSkip).length, undoc = added.filter((it) => !it.documented).length;
+    // the gate: fail (exit 1) when the branch adds the kind of debt --fail-on names.
+    const fail = gateFails(added);
+    if (asJson) { console.log(JSON.stringify({ since, added: added.length, testSkips: skips, undocumented: undoc, failOn: failMode, fail, items: added.map((it) => ({ file: it.file, line: it.line, kind: String(it.kind).trim(), documented: it.documented })) }, null, 2)); return fail ? 1 : 0; }
+    if (!added.length) { console.log([`sawbuck: no new suppression debt since ${since} (clean).`, ...erasedOnBranch(since)].join('\n')); return 0; }
+    const o = [`sawbuck: ${added.length} new suppression${added.length === 1 ? '' : 's'} since ${since}  ·  ${skips} disabled test${skips === 1 ? '' : 's'}  ·  ${undoc} undocumented (no code/reason)`];
+    for (const it of added.slice(0, Math.max(top, 20))) o.push(`     ${it.testSkip ? '🔴' : (it.documented ? '  ' : '✎ ')} ${it.file}:${it.line}  ${String(it.kind).trim()}${it.documented ? '' : '   (bare - no code/reason)'}`);
+    o.push(`\n   ✎ = bare/undocumented (the suspect kind); declare intent (a rule code or reason) or remove it.`);
+    if (failMode) o.push(fail ? `\n   ❌ debt gate FAILED (--fail-on ${failMode}): this branch adds debt that must be declared or removed.` : `\n   ✓ debt gate passed (--fail-on ${failMode}).`);
+    o.push(...erasedOnBranch(since));
+    console.log(o.join('\n'));
+    return fail ? 1 : 0;
   }
-}
-const fragilityOf = (file) => {
-  const h = histMap.get(file) || { reverts: 0, fixes: 0, fixDates: [] };
-  const fd = [...h.fixDates].sort((a, b) => a - b);
-  let burst = 0;
-  for (let i = 0; i + 2 < fd.length; i++) if (fd[i + 2] - fd[i] <= 30 * DAY) { burst = fd.filter((x) => x >= fd[i] && x <= fd[i] + 30 * DAY).length; break; }
-  const hot = burst >= 3;
-  const mult = 1 + Math.min(3, h.reverts * 0.75 + (hot ? 1 : 0) + h.fixes * 0.1);
-  return { reverts: h.reverts, fixes: h.fixes, hot, mult };
+
+  const liveFail = gateFails(live);
+  if (!live.length) { console.log(asJson ? '{"total":0,"testSkips":0,"codeSuppressions":0,"undocumented":0,"files":[]}' : 'sawbuck: no live suppression debt in HEAD (nothing silenced in src/test/config). A clean tree.'); return 0; }
+
+  // Fragility: debt on code that keeps breaking (reverts, fix-bursts) is the debt that matters; debt
+  // on stable code is mostly noise. One pass over the events builds per-file history; a file's debt
+  // severity is multiplied by its fragility. Same signals rank.mjs uses.
+  const DAY = 86400000;
+  const resolveRename = (f) => f.replace(/\{[^}]*=>\s*([^}]*)\}/g, '$1').replace(/\/{2,}/g, '/');
+  const histMap = new Map();
+  for (const e of events) {
+    const rv = !!e.revert, fx = !!e.fix;
+    if (!rv && !fx) continue;
+    for (const raw of (e.files || [])) {
+      const f = resolveRename(raw);
+      const h = histMap.get(f) || { reverts: 0, fixes: 0, fixDates: [] };
+      if (rv) h.reverts++;
+      if (fx) { h.fixes++; if (e.date) h.fixDates.push(Date.parse(e.date)); }
+      histMap.set(f, h);
+    }
+  }
+  const fragilityOf = (file) => {
+    const h = histMap.get(file) || { reverts: 0, fixes: 0, fixDates: [] };
+    const fd = [...h.fixDates].sort((a, b) => a - b);
+    let burst = 0;
+    for (let i = 0; i + 2 < fd.length; i++) if (fd[i + 2] - fd[i] <= 30 * DAY) { burst = fd.filter((x) => x >= fd[i] && x <= fd[i] + 30 * DAY).length; break; }
+    const hot = burst >= 3;
+    const mult = 1 + Math.min(3, h.reverts * 0.75 + (hot ? 1 : 0) + h.fixes * 0.1);
+    return { reverts: h.reverts, fixes: h.fixes, hot, mult };
+  };
+
+  const byFile = new Map();
+  let testSkips = 0, codeSup = 0;
+  for (const it of live) {
+    const t = it.testSkip; t ? testSkips++ : codeSup++;
+    const f = byFile.get(it.file) || { file: it.file, skips: 0, bareSup: 0, docSup: 0, kinds: new Set(), oldest: null };
+    if (t) f.skips++; else (it.documented ? f.docSup++ : f.bareSup++);
+    f.kinds.add(String(it.kind).trim());
+    if (it.since && (!f.oldest || it.since < f.oldest)) f.oldest = it.since;
+    byFile.set(it.file, f);
+  }
+  // RISK = severity (disabled test 3, bare suppression 1.5, documented 1) x file fragility.
+  const files = [...byFile.values()].map((f) => {
+    const sup = f.bareSup + f.docSup;
+    const sev = f.skips * 3 + f.bareSup * 1.5 + f.docSup * 1;
+    const fr = fragilityOf(f.file);
+    return { file: f.file, n: f.skips + sup, skips: f.skips, sup, bareSup: f.bareSup, oldest: f.oldest, reverts: fr.reverts, fixes: fr.fixes, hot: fr.hot, risk: +(sev * fr.mult).toFixed(1) };
+  }).sort((a, b) => b.risk - a.risk || b.n - a.n);
+  const onFragile = files.filter((f) => f.reverts > 0 || f.hot).length;
+
+  if (asJson) {
+    console.log(JSON.stringify({ total: live.length, testSkips, codeSuppressions: codeSup, undocumented: bare, filesOnFragileCode: onFragile, ...(failMode ? { failOn: failMode, fail: liveFail } : {}), files: files.map((f) => ({ file: f.file, live: f.n, testSkips: f.skips, suppressions: f.sup, undocumented: f.bareSup, reverts: f.reverts, hot: f.hot, risk: f.risk, oldest: f.oldest })) }, null, 2));
+    return liveFail ? 1 : 0;
+  }
+
+  const out = [];
+  out.push(`sawbuck: live suppression debt in ${basename(repo)}`);
+  out.push(`   ${live.length} still silenced in HEAD  ·  ${testSkips} disabled/weakened test${testSkips === 1 ? '' : 's'} (hidden-failure risk)  ·  ${codeSup} lint/type suppression${codeSup === 1 ? '' : 's'}  ·  ${bare} undocumented (no code/reason)`);
+  if (onFragile) out.push(`   ${onFragile} of ${files.length} debt-carrying files sit on fragile code (reverts/hotspots); look there first`);
+  out.push(`\n   highest-risk debt (severity x how fragile the file is):`);
+  for (const f of files.slice(0, top)) {
+    const bits = [f.skips ? `${f.skips} test` : '', f.sup ? `${f.sup} lint/type${f.bareSup ? `, ${f.bareSup} bare` : ''}` : ''].filter(Boolean).join(' + ');
+    const frag = [f.reverts ? `${f.reverts} revert${f.reverts === 1 ? '' : 's'}` : '', f.hot ? 'fix-hotspot' : '', (!f.hot && f.fixes >= 3) ? `${f.fixes} fixes` : ''].filter(Boolean).join(', ');
+    out.push(`     ${f.reverts || f.hot ? '🔥 ' : '   '}${f.file}  ·  ${f.n} (${bits})${frag ? `  · ${frag}` : ''}  ·  risk ${f.risk}`);
+  }
+  const dated = live.filter((it) => it.since).sort((a, b) => String(a.since).localeCompare(String(b.since)));
+  if (dated.length) {
+    out.push(`\n   oldest still-silenced (most stale):`);
+    for (const it of dated.slice(0, 5)) out.push(`     ${it.file}:${it.line}  ${String(it.kind).trim()}  (since ${it.since})`);
+  }
+  out.push(`\n   bare = no code/reason, the suspect kind. leads, not verdicts; full dated ledger: logbook audit`);
+  if (failMode) out.push(liveFail ? `\n   ❌ debt gate FAILED (--fail-on ${failMode}): HEAD carries this debt. Add --since <base> to gate only what a branch adds.` : `\n   ✓ debt gate passed (--fail-on ${failMode}).`);
+  console.log(out.join('\n'));
+  return liveFail ? 1 : 0;
 };
-
-const byFile = new Map();
-let testSkips = 0, codeSup = 0;
-for (const it of live) {
-  const t = it.testSkip; t ? testSkips++ : codeSup++;
-  const f = byFile.get(it.file) || { file: it.file, skips: 0, bareSup: 0, docSup: 0, kinds: new Set(), oldest: null };
-  if (t) f.skips++; else (it.documented ? f.docSup++ : f.bareSup++);
-  f.kinds.add(String(it.kind).trim());
-  if (it.since && (!f.oldest || it.since < f.oldest)) f.oldest = it.since;
-  byFile.set(it.file, f);
-}
-// RISK = severity (disabled test 3, bare suppression 1.5, documented 1) x file fragility.
-const files = [...byFile.values()].map((f) => {
-  const sup = f.bareSup + f.docSup;
-  const sev = f.skips * 3 + f.bareSup * 1.5 + f.docSup * 1;
-  const fr = fragilityOf(f.file);
-  return { file: f.file, n: f.skips + sup, skips: f.skips, sup, bareSup: f.bareSup, oldest: f.oldest, reverts: fr.reverts, fixes: fr.fixes, hot: fr.hot, risk: +(sev * fr.mult).toFixed(1) };
-}).sort((a, b) => b.risk - a.risk || b.n - a.n);
-const onFragile = files.filter((f) => f.reverts > 0 || f.hot).length;
-
-if (asJson) {
-  console.log(JSON.stringify({ total: live.length, testSkips, codeSuppressions: codeSup, undocumented: bare, filesOnFragileCode: onFragile, ...(failMode ? { failOn: failMode, fail: liveFail } : {}), files: files.map((f) => ({ file: f.file, live: f.n, testSkips: f.skips, suppressions: f.sup, undocumented: f.bareSup, reverts: f.reverts, hot: f.hot, risk: f.risk, oldest: f.oldest })) }, null, 2));
-  process.exit(liveFail ? 1 : 0);
-}
-
-const out = [];
-out.push(`sawbuck: live suppression debt in ${basename(repo)}`);
-out.push(`   ${live.length} still silenced in HEAD  ·  ${testSkips} disabled/weakened test${testSkips === 1 ? '' : 's'} (hidden-failure risk)  ·  ${codeSup} lint/type suppression${codeSup === 1 ? '' : 's'}  ·  ${bare} undocumented (no code/reason)`);
-if (onFragile) out.push(`   ${onFragile} of ${files.length} debt-carrying files sit on fragile code (reverts/hotspots); look there first`);
-out.push(`\n   highest-risk debt (severity x how fragile the file is):`);
-for (const f of files.slice(0, top)) {
-  const bits = [f.skips ? `${f.skips} test` : '', f.sup ? `${f.sup} lint/type${f.bareSup ? `, ${f.bareSup} bare` : ''}` : ''].filter(Boolean).join(' + ');
-  const frag = [f.reverts ? `${f.reverts} revert${f.reverts === 1 ? '' : 's'}` : '', f.hot ? 'fix-hotspot' : '', (!f.hot && f.fixes >= 3) ? `${f.fixes} fixes` : ''].filter(Boolean).join(', ');
-  out.push(`     ${f.reverts || f.hot ? '🔥 ' : '   '}${f.file}  ·  ${f.n} (${bits})${frag ? `  · ${frag}` : ''}  ·  risk ${f.risk}`);
-}
-const dated = live.filter((it) => it.since).sort((a, b) => String(a.since).localeCompare(String(b.since)));
-if (dated.length) {
-  out.push(`\n   oldest still-silenced (most stale):`);
-  for (const it of dated.slice(0, 5)) out.push(`     ${it.file}:${it.line}  ${String(it.kind).trim()}  (since ${it.since})`);
-}
-out.push(`\n   bare = no code/reason, the suspect kind. leads, not verdicts; full dated ledger: logbook audit`);
-if (failMode) out.push(liveFail ? `\n   ❌ debt gate FAILED (--fail-on ${failMode}): HEAD carries this debt. Add --since <base> to gate only what a branch adds.` : `\n   ✓ debt gate passed (--fail-on ${failMode}).`);
-console.log(out.join('\n'));
-process.exit(liveFail ? 1 : 0);
+process.exitCode = finish();

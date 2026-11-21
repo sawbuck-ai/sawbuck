@@ -8,8 +8,8 @@
 import '../testkit.mjs';   // first: a throwaway HOME and temp folder for everything this file starts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +50,24 @@ test('reflect records a gamed result as a gamed change in the results', () => {
     assert.equal(rec.latest.kind, 'gamed');
     assert.equal(rec.latest.file, 'app.js');
     assert.match(rec.latest.reason, /gamed/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The commit hook reads the engine's report through a pipe. A report that arrives cut (the engine was stopped while it
+// printed; until engine 0.8.16 also any report larger than a pipe holds) is "no verdict": the reader ends quietly and
+// records nothing. With a verdict's exit code it used to throw from inside its own catch, and wrote a stack.
+test('reflect: a report that arrives cut is no verdict, never a crash', () => {
+  const { dir, env } = setupRepo();
+  try {
+    for (const code of [0, 1, 2]) {
+      writeFileSync(join(dir, 'pw-stub.mjs'), `process.stdout.write('{"verdict":"gamed","metrics":[{"gamed":true,"gamingReason":"tests were ed'); process.exitCode = ${code};\n`);
+      const r = spawnSync(process.execPath, [REFLECT, '--repo', dir, '--answer'], { env, encoding: 'utf8' });
+      assert.equal(r.status, 0, `exit ${code} from the engine: reflect exited ${r.status} and wrote ${JSON.stringify(r.stderr.slice(0, 160))}`);
+      assert.equal(r.stderr, '', `exit ${code} from the engine: nothing on standard error`);
+      assert.equal(existsSync(join(dir, '.sawbuck', 'results.json')), false, 'nothing is recorded from a report nobody could read');
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

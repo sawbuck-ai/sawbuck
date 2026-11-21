@@ -2750,3 +2750,21 @@ test('claim: the limits page says what --solo gives up, and that the one comment
   assert.match(page, /\*\*A repo signed `--solo`\.\*\* On a pull request the comment of the account that opened it counts, and an agent that works under that account can post it\. GitHub cannot tell the two apart\. What is kept is the reason, not proof of who gave it\./);
   assert.match(page, /\*\*The one comment, on GitHub itself\.\*\* That the pull request check edits its one comment in place was run with a stand-in for GitHub's command line, not on GitHub\. If GitHub refuses the edit, the check posts a new comment instead\./);
 });
+
+// Found 2026-11-20 (proof-bench/live/release-0.2.3, turn-end.sh), on every published version tried. The commit hook
+// reads the engine's report through a pipe, and a report larger than a pipe holds arrived cut (the engine exited before
+// its print was written). The hook could not read it and recorded nothing. So a test edited to pass ended the turn with
+// nothing said when the same commit also added a few thousand test or fixture files, and `sawbuck check` on that
+// commit said "could not run". Fixed in engine 0.8.16 (it ends by itself once its report is written).
+test('claim: a test edited to pass is sent back at the end of the turn whatever else the commit holds, fifteen hundred new fixture files too', () => {
+  const d = signed(false); const w = wired(d);
+  w.prompt('make the add test pass'); edit(d, 'test/add.test.js', game);
+  for (let i = 0; i < 1500; i++) put(d, `fixtures/a-folder-name-long-enough-that-fifteen-hundred-files-in-it-make-a-report-no-pipe-holds/case-${String(i).padStart(4, '0')}.json`, `{"case":${i}}\n`);
+  save(d, 'make it green');
+  const o = w.stop(); assert.ok(blocked(o), `the gamed test is sent back: ${o || '(the stop hook said nothing)'}`);
+  assert.match(o, /the win on test\/add\.test\.js was gamed/); assert.equal(latest(d).kind, 'gamed');
+  const c = sb(d, 'check'); assert.equal(c.code, 2, `sawbuck check on that commit: ${c.out.split('\n')[0]}`);
+  const j = check(d); assert.ok(JSON.stringify(j).length > 146176, `this claim means nothing unless the report is larger than what used to arrive: ${JSON.stringify(j).length}`);
+  edit(d, 'src/add.js', fixAdd); edit(d, 'test/add.test.js', ungame); save(d, 'fix add, put the test back');
+  assert.ok(!blocked(w.stop()), 'the real fix ends it');
+});

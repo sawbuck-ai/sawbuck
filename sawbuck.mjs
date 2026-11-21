@@ -331,7 +331,10 @@ switch (cmd) {
     // what a person let through, and why, joins the record where sawbuck is attached (allowed.mjs): kept, and shown
     // with the prompt that names the test or path, the way a revert is. Under --json too; the output stays the report.
     const kept = (rep.allowed && (rep.verdict === 'pass' || letGamedThrough)) ? recordAllowed(top, rep, { dirty, base: base || 'HEAD~1', head: head || 'HEAD' }) : null;
-    if (json) { out(JSON.stringify(rep)); process.exit(code); }
+    // The code is set and the process ends by itself, so what was printed is written first. Until 0.2.2 these two
+    // endings were process.exit(): an exit drops what a pipe has not taken yet, and a report larger than a pipe holds
+    // (a change that touches a few thousand test or fixture files) reached whoever read `check --json` cut at 65,536 bytes.
+    if (json) { out(JSON.stringify(rep)); process.exitCode = code; break; }
     const m = (rep.metrics || [])[0];
     // --allow as a person should type it here: one thing needs no name; with more than one, the reason names each one
     // it covers, so a reason written about one change cannot wave through another
@@ -389,7 +392,8 @@ switch (cmd) {
     const FEWER = { test_count: 'fewer tests', assertions: 'fewer assertions' };
     for (const x of rep.metrics || []) for (const w of x.lostIn || []) out(`sawbuck: note: ${w.file} has ${FEWER[x.name] || x.name} (${w.before} → ${w.after}), though the repo's total did not fall`);
     if (rep.gate && rep.gate.changed) out(`⚠ the gate definition changed in this change (fingerprint ${rep.gate.fingerprint.base} -> ${rep.gate.fingerprint.head}): a metric, guard, evaluatorPath or mandate was added, removed or edited.`);
-    process.exit(code);
+    process.exitCode = code;
+    break;
   }
   case 'rank': {
     try { execFileSync(process.execPath, [join(HERE, 'rank.mjs'), ...rest], { stdio: 'inherit' }); }
