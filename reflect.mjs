@@ -26,6 +26,8 @@ import { join } from 'node:path';
 import { record as memRecord } from './memory.mjs';
 import { keptOnTree } from './allowed.mjs';
 import { PW } from './bins.mjs';
+import { ownGitOn, personEnv } from './own-git.mjs';
+ownGitOn();   // when this file is run by itself; under sawbuck it is on already (own-git.mjs)
 
 // Logbook is reached only through memory.mjs, never resolved or shelled directly here.
 
@@ -46,7 +48,7 @@ const CHECK_TIMEOUT = +(process.env.SAWBUCK_CHECK_TIMEOUT_MS) || 600000;
 // A Sawbuck-Allow or Promptwheel-Allow trailer never clears the verdict, whichever hook ran this: the git hook cannot
 // tell who made a commit, and an agent can write a commit message. The override is a person running
 // `sawbuck check --allow "<reason>"`.
-const childEnv = { ...process.env, PROMPTWHEEL_NO_ALLOW_TRAILER: '1' };
+const childEnv = { ...personEnv(), PROMPTWHEEL_NO_ALLOW_TRAILER: '1' };
 const runNode = (file, a) => execFileSync(process.execPath, [file, ...a], { cwd: repo, encoding: 'utf8', env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], timeout: CHECK_TIMEOUT, killSignal: 'SIGKILL' });
 
 // --- 1) the check: measure the commit, parse the structured result ----------

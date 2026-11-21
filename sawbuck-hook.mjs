@@ -17,6 +17,8 @@ import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { readAllowed, keptOnTree } from './allowed.mjs';
 import { cli, olderSaid } from './copies.mjs';
 import { undoJudge, redoJudge, redoDue, redoTold, redoLine, undoHintNote, undoHintDue, undoHintTold } from './undo.mjs';
+import { ownGitOn } from './own-git.mjs';
+ownGitOn();   // when this file is run by itself; under sawbuck it is on already (own-git.mjs)
 const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const by = flag('--by', '');   // attribution from the harness wiring: the Claude hook passes 'claude', the raw-git hook passes nothing
 // nothing this hook finds is handed on to any notes unless the repo is attached with --words (share.mjs reads this)
