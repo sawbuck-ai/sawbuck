@@ -1327,3 +1327,50 @@ test('status reads the debt of a repo where a thousand files each silence a lint
     assert.equal(+readFileSync(c, 'utf8'), 1, 'and the exit code is still the gate\'s: --fail-on any with debt in the tree');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+// ---- 0.2.3, the two lines in a repo where no test command is found. Typed in copies of twelve real repos
+// (proof-bench/fact-sheets, 2026-11-20), `contract --full --comment-only` wrote the workflow in 6 and none in 6: every
+// .NET repo and three others. The reason it printed, "a placeholder would fail every pull request", was not true: the
+// workflow passes `inconclusive: pass`, and with it a plain change passes with no comment while a removed test and a
+// changed workflow still speak (proof-bench/live/release-0.2.3, t1.py). The counts and the protected paths need no
+// test command, and comment-only fails nothing, so that mode writes the workflow there too.
+test('contract --full --comment-only writes the workflow where no test command is found and says no tests are run; without the switch it writes none and says how to try it', () => {
+  const mk = (...flags) => {
+    const { d, g } = tmpRepo();   // no package.json, go.mod, Cargo.toml or pyproject.toml: nothing a test command is found from
+    mkdirSync(join(d, 'tests')); writeFileSync(join(d, 'tests/AddTests.cs'), 'using Xunit;\npublic class AddTests {\n  [Fact] public void Adds() { Assert.Equal(4, 2 + 2); }\n}\n');
+    g('remote', 'add', 'origin', 'https://github.com/example/x.git'); g('add', '-A'); g('commit', '-qm', 'tests');
+    const r = spawnSync(process.execPath, [CLI, 'contract', ...flags], { cwd: d, encoding: 'utf8' });
+    return { d, g, out: r.stdout + r.stderr, code: r.status };
+  };
+  const wfOf = (d) => { try { return readFileSync(join(d, '.github/workflows/sawbuck.yml'), 'utf8'); } catch { return ''; } };
+  const testCmd = (d) => JSON.parse(readFileSync(join(d, 'promptwheel.config.json'), 'utf8')).metrics.find((m) => m.name === 'tests_pass').cmd;
+  const a = mk('--full', '--comment-only');
+  try {
+    assert.equal(a.code, 0, a.out); assert.match(testCmd(a.d), /set your test command/, 'the scene: no test command was found');
+    assert.match(wfOf(a.d), /^        with: \{ inconclusive: pass, comment-only: true \}$/m, `the workflow is written; the command said: ${a.out}`);
+    assert.match(a.out, /Added \.github\/workflows\/sawbuck\.yml, so pull requests are checked in CI\. Commit it with the rest\./);
+    assert.match(a.out, /It is comment only \(--comment-only\): no pull request fails, and the comment says what would have been sent back\./);
+    assert.match(a.out, /No test command was found here, so the check runs no tests yet\. It still reads the counts of your tests and the protected paths\.\n  To have your tests run, put your test command in promptwheel\.config\.json where the placeholder is\.\n/);
+    assert.doesNotMatch(a.out, /No CI check added/);
+    // a second run changes nothing and does not write over the workflow
+    const was = wfOf(a.d); const again = spawnSync(process.execPath, [CLI, 'contract', '--full', '--comment-only'], { cwd: a.d, encoding: 'utf8' });
+    assert.equal(wfOf(a.d), was); assert.match(again.stdout, /already signed, nothing changed/);
+  } finally { rmSync(a.d, { recursive: true, force: true }); }
+  const b = mk('--full');
+  try {
+    assert.equal(b.code, 0, b.out); assert.equal(wfOf(b.d), '', 'without the switch no workflow is written where no test command is found');
+    assert.match(b.out, /No CI check added: no test command was found here\. Put yours in promptwheel\.config\.json where the placeholder is, then run .*contract --full again\.\n  To try the check on pull requests before that, run .*contract --full --comment-only: it runs no tests, reads the counts of your tests and the protected paths, and fails no pull request\.\n/);
+    assert.doesNotMatch(b.out, /a placeholder would fail every pull request/, 'that sentence was not true');
+    // and that line does what it says, in the same repo
+    const then = spawnSync(process.execPath, [CLI, 'contract', '--full', '--comment-only'], { cwd: b.d, encoding: 'utf8' });
+    assert.match(wfOf(b.d), /comment-only: true/, then.stdout + then.stderr);
+  } finally { rmSync(b.d, { recursive: true, force: true }); }
+  const c = mk('--full', '--comment-only', '--dry-run');
+  try {
+    assert.equal(wfOf(c.d), '', 'a dry run writes nothing');
+    assert.match(c.out, /\.github\/workflows\/sawbuck\.yml\s+.*a CI check on pull requests, comment only: it fails none/, c.out);
+  } finally { rmSync(c.d, { recursive: true, force: true }); }
+  // no github.com origin: said as before, in both modes
+  const { d, g } = tmpRepo();
+  try { const r = spawnSync(process.execPath, [CLI, 'contract', '--full', '--comment-only'], { cwd: d, encoding: 'utf8' }); assert.equal(wfOf(d), ''); assert.match(r.stdout, /No CI check added: this repo has no github\.com origin\. Run sawbuck contract --full again once it has one\./); } finally { rmSync(d, { recursive: true, force: true }); }
+});

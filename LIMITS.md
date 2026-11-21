@@ -7,6 +7,7 @@ Each limit here is held by a test in [`test/claims.test.mjs`](test/claims.test.m
 - **A suite weakened while it stays green.** It is not proved: there is no win to re-run. Tripwires catch skips and removed assertions in a signed repo.
 - **Says what it cannot see.** A gaming move that lives inside the source itself (a value hardcoded to the one visible case, logic keyed to the test environment) is invisible to a source-only re-run, by construction. That limit is in [the contract](CONTRACT.md#3-the-integrity-boundary-what-counts-as-gaming), not hidden.
 - **A count that got worse with nothing gamed.** A test deleted from a green suite is said once at the end of a turn and not sent back. The check on the commit and on a pull request fails it until a person gives a reason.
+- **Where no test command is found.** `sawbuck contract --full --comment-only` writes the pull request check there too. That check runs no tests. It reads the counts of your tests and the protected paths, and its job summary says it could not measure. A test that fails is not seen there until your test command is in `promptwheel.config.json`.
 - **A repo signed `--solo`.** On a pull request the comment of the account that opened it counts, and an agent that works under that account can post it. GitHub cannot tell the two apart. What is kept is the reason, not proof of who gave it.
 
 ## In a session

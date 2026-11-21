@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // sawbuck contract: give a repo its first rules with one command. Keeps whatever config is already here (and adds no
 // tests to it); with no config it writes one with your detected tests. Adds the protected paths and the written rule, which is what changes the agent (the pressure bench: 11 of
-// 20 to 0 of 20). --full adds the supply-chain guards, the repo lock and a CI check (github.com origin, real test command). Zero-LLM. Re-running changes
+// 20 to 0 of 20). --full adds the supply-chain guards, the repo lock and a CI check (github.com origin; a real test command, or --comment-only). Zero-LLM. Re-running changes
 // nothing. Protected product code (auth, billing) is suggested, never added: freezing those is a person's decision.
 import './pipe.mjs';
 import { ensureExcluded } from './exclude.mjs';
@@ -243,12 +243,17 @@ try {
     // the written rule is what changes the agent (the pressure bench: 11 of 20 to 0 of 20), so every signing writes it
     writeAgentBlock(repo);
     // CI goes in here, before the rules take hold: afterwards the contract itself would refuse an agent the file.
-    // Only for a GitHub repo with a real test command: a placeholder would fail every pull request.
+    // For a GitHub repo. Where no test command was found the contract holds a placeholder: the check then runs no
+    // tests and still reads the counts and the protected paths (the workflow passes `inconclusive: pass`, so a plain
+    // change passes with no comment; proof-bench/live/release-0.2.3, t1.py). Until 0.2.2 no workflow was written there
+    // at all, in 6 of 12 real repos, and the reason printed was not true. From 0.2.3 comment-only mode writes it, since
+    // nothing fails in that mode. Without that switch it is still not written: a check that can fail a pull request
+    // and runs no tests is for the person to turn on, not for a default.
     const wf = join(repo, '.github', 'workflows', 'sawbuck.yml');
     let remote = ''; try { remote = execFileSync('git', ['-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch {}
     const realTests = !(cfg.metrics || []).some((m) => /set your test command/.test(String(m.cmd)));
     let ci = '';
-    if (full && /github\.com/.test(remote) && realTests && !existsSync(wf)) { mkdirSync(dirname(wf), { recursive: true }); writeFileSync(wf, workflow(existsSync(join(repo, 'package-lock.json')))); ci = wf; }
+    if (full && /github\.com/.test(remote) && (realTests || commentOnly) && !existsSync(wf)) { mkdirSync(dirname(wf), { recursive: true }); writeFileSync(wf, workflow(existsSync(join(repo, 'package-lock.json')))); ci = wf; }
     const locked = existsSync(join(repo, 'promptwheel.lock.json'));
     if (full && !locked) run([join(pack, 'lock.mjs'), 'write', repo], repo);
     const added = (cfg.mandates.length - before.m) + (cfg.metrics.length - before.g);
@@ -256,7 +261,7 @@ try {
     // what a switch changed in a contract that was already signed, in words: never "nothing changed" over an edit
     const changed = [...(turnedOn ? ['the counts of the tests now take a reason written in a commit'] : []), ...(soloNow ? ['on a pull request your own comment now counts ("allowFromAuthor": true)'] : [])];
     process.stdout.write(!fresh ? (changed.length ? `sawbuck: already signed. ${changed.length > 1 ? 'Two things' : 'One thing'} changed in promptwheel.config.json: ${changed.join('; ')}.\n  The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n${soloNow ? '  Commit it on your default branch: a pull request cannot turn this on for itself.\n' : ''}` : 'sawbuck: already signed, nothing changed.\n') : full
-      ? `sawbuck: signed. ${counts(cfg)}, and the shape of this repo in promptwheel.lock.json.\n${strict ? (hardened ? `  ${hardened} guards that were notes now block. The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : '') : '  New dependencies and structure changes show as notes for now; protected paths and install scripts block. --strict blocks them all.\n'}${ci ? `  Added .github/workflows/sawbuck.yml, so pull requests are checked in CI. Commit it with the rest.\n${commentOnly ? '  It is comment only (--comment-only): no pull request fails, and the comment says what would have been sent back.\n  To make it count, take "comment-only: true" out of the workflow\'s last line. That is a workflow change, so it takes a person\'s reason.\n' : ''}${solo ? '' : `  On a pull request, a change that takes a reason is let through by a comment from someone with write access who did not open it: sawbuck-allow: <reason>. If you are the only person here, sign with --solo so your own comment counts: ${cli('contract --solo')}\n`}` : ''}`
+      ? `sawbuck: signed. ${counts(cfg)}, and the shape of this repo in promptwheel.lock.json.\n${strict ? (hardened ? `  ${hardened} guards that were notes now block. The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : '') : '  New dependencies and structure changes show as notes for now; protected paths and install scripts block. --strict blocks them all.\n'}${ci ? `  Added .github/workflows/sawbuck.yml, so pull requests are checked in CI. Commit it with the rest.\n${commentOnly ? '  It is comment only (--comment-only): no pull request fails, and the comment says what would have been sent back.\n  To make it count, take "comment-only: true" out of the workflow\'s last line. That is a workflow change, so it takes a person\'s reason.\n' : ''}${realTests ? '' : '  No test command was found here, so the check runs no tests yet. It still reads the counts of your tests and the protected paths.\n  To have your tests run, put your test command in promptwheel.config.json where the placeholder is.\n'}${solo ? '' : `  On a pull request, a change that takes a reason is let through by a comment from someone with write access who did not open it: sawbuck-allow: <reason>. If you are the only person here, sign with --solo so your own comment counts: ${cli('contract --solo')}\n`}` : ''}`
       : `sawbuck: signed. ${counts(cfg)}, and the rule in AGENTS.md.\n  --full adds supply-chain guards, a repo lock and a CI check.\n`);
     if ((fresh && sayWhy) || turnedOn) process.stdout.write('  A test may be removed where a commit of the change says why: end its message with\n    Sawbuck-Allow: test_count: <what was removed, and who asked for it>\n  The reason is kept on the record. A protected path still takes a person.\n');
     if ((fresh && solo) || soloNow) process.stdout.write('  One person works here (--solo), so on a pull request your own comment counts: sawbuck-allow: <reason>\n  GitHub cannot tell you from your agent there: the agent works under your account. What is kept is the reason, not proof of who gave it.\n');
@@ -266,7 +271,9 @@ try {
       if (!has && !full) process.stdout.write(`  --comment-only is about the pull request check, and --full is what writes it: ${cli('contract --full --comment-only')}\n`);
       else if (has && !/comment-only:\s*['"]?true/.test(has)) process.stdout.write(`  .github/workflows/sawbuck.yml is already here, and Sawbuck never rewrites a workflow file. To make it comment only, change its last line yourself to:\n    ${WITH}\n  That is a workflow change, so it takes a person's reason. It needs the engine at v0.8.15 or newer in the "uses:" line above it.\n`);
     }
-    if (full && !ci && !existsSync(wf)) process.stdout.write(`  No CI check added: ${!/github\.com/.test(remote) ? 'this repo has no github.com origin' : 'there is no real test command yet, and a placeholder would fail every pull request'}. Run sawbuck contract --full again once it has one.\n`);
+    if (full && !ci && !existsSync(wf)) process.stdout.write(!/github\.com/.test(remote)
+      ? '  No CI check added: this repo has no github.com origin. Run sawbuck contract --full again once it has one.\n'
+      : `  No CI check added: no test command was found here. Put yours in promptwheel.config.json where the placeholder is, then run ${cli('contract --full')} again.\n  To try the check on pull requests before that, run ${cli('contract --full --comment-only')}: it runs no tests, reads the counts of your tests and the protected paths, and fails no pull request.\n`);
     const old = ci ? '' : olderCi(wf);
     // The line is a workflow change. A contract written from 0.1.70 on lets one through with a person's reason. A contract
     // written before it holds its own copy of the rule with no way through (proof-bench/pr-shapes: a pull request with

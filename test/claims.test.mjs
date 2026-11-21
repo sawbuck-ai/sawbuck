@@ -2768,3 +2768,35 @@ test('claim: a test edited to pass is sent back at the end of the turn whatever 
   edit(d, 'src/add.js', fixAdd); edit(d, 'test/add.test.js', ungame); save(d, 'fix add, put the test back');
   assert.ok(!blocked(w.stop()), 'the real fix ends it');
 });
+
+// ---- 0.2.3: the pull request check where no test command is found (proof-bench/live/release-0.2.3). Until 0.2.2
+// `contract --full --comment-only` wrote no workflow there, in 6 of 12 real repos, and gave a reason that was not true.
+test('claim: where no test command is found, try mode writes the pull request check; it measures no tests and still reads a removed test and a protected path, and the guide and the limits say so', () => {
+  const d = mkdtempSync(join(tmpdir(), 'claims-notest-')); git(d, 'init', '-q', '-b', 'main'); git(d, 'remote', 'add', 'origin', 'https://github.com/example/x.git');
+  const TWO = 'using Xunit;\npublic class AddTests {\n  [Fact] public void Adds() { Assert.Equal(4, Calc.Add(2, 2)); }\n  [Fact] public void AddsAgain() { Assert.Equal(2, Calc.Add(1, 1)); }\n}\n';
+  put(d, 'src/Calc.cs', 'public static class Calc { public static int Add(int a, int b) => a + b; }\n'); put(d, 'tests/AddTests.cs', TWO); save(d, 'base');
+  const r = sb(d, 'contract', '--full', '--comment-only'); assert.equal(r.code, 0, r.out);
+  const WF = '.github/workflows/sawbuck.yml';
+  assert.match(readFileSync(join(d, WF), 'utf8'), /^        with: \{ inconclusive: pass, comment-only: true \}$/m, `the workflow is written: ${r.out}`);
+  assert.match(r.out, /No test command was found here, so the check runs no tests yet\. It still reads the counts of your tests and the protected paths\./);
+  save(d, 'sign');
+  // a plain change: nothing was measured, and the check says that, not "pass" (the workflow lets it through: inconclusive: pass)
+  put(d, 'src/Note.cs', '// a note\n'); save(d, 'a plain change');
+  let c = check(d); assert.equal(c.verdict, 'inconclusive', JSON.stringify(c).slice(0, 300)); assert.equal(c.code, 3);
+  // a removed test is read from the counts, with no test run
+  edit(d, 'tests/AddTests.cs', (s) => s.replace('  [Fact] public void AddsAgain() { Assert.Equal(2, Calc.Add(1, 1)); }\n', '')); save(d, 'drop a test');
+  c = check(d); assert.equal(c.code, 1); assert.equal(c.metrics.find((m) => m.name === 'test_count').status, 'regressed');
+  // and so is a protected path
+  edit(d, 'tests/AddTests.cs', () => TWO); save(d, 'put it back'); edit(d, WF, (s) => s + '      - run: echo done\n'); save(d, 'a step in the workflow');
+  c = check(d); assert.equal(c.code, 1); assert.ok((c.mandates || []).some((m) => m.name === 'workflows-frozen'), 'the workflow change is named');
+  // without the switch: no workflow, and the words say how to try it. The old reason is gone: it was not true.
+  const e = mkdtempSync(join(tmpdir(), 'claims-notest-')); git(e, 'init', '-q', '-b', 'main'); git(e, 'remote', 'add', 'origin', 'https://github.com/example/x.git');
+  put(e, 'tests/AddTests.cs', TWO); save(e, 'base'); const q = sb(e, 'contract', '--full'); assert.equal(existsSync(join(e, WF)), false);
+  assert.match(q.out, /No CI check added: no test command was found here\./); assert.match(q.out, /contract --full --comment-only: it runs no tests, reads the counts of your tests and the protected paths, and fails no pull request\./);
+  assert.doesNotMatch(q.out, /a placeholder would fail every pull request/);
+  // the pages
+  // the guide and the limits (the README is one page and at its length: its link to the guide carries this)
+  const limits = flat(readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8')), guide = flat(readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8'));
+  assert.match(limits, /\*\*Where no test command is found\.\*\* `sawbuck contract --full --comment-only` writes the pull request check there too\. That check runs no tests\. It reads the counts of your tests and the protected paths, and its job summary says it could not measure\. A test that fails is not seen there until your test command is in `promptwheel\.config\.json`\./);
+  assert.match(guide, /\*\*Where no test command is found\.\*\* Sawbuck finds npm, pytest, cargo and go tests on its own\. Where it finds none, `contract --full` writes no workflow and says so\. With `--comment-only` it writes the workflow there too\. That check runs no tests: it reads the counts of your tests and the protected paths\. To have your tests run, put your test command in `promptwheel\.config\.json` where the placeholder is\./);
+});

@@ -95,6 +95,11 @@ a note. The whole report is in the job summary on every run.
 The comment says what would have been sent back. To make it count, take `comment-only: true` out of the
 workflow's last line. That is a workflow change, so it takes a person's reason.
 
+**Where no test command is found.** Sawbuck finds npm, pytest, cargo and go tests on its own. Where it finds none,
+`contract --full` writes no workflow and says so. With `--comment-only` it writes the workflow there too. That
+check runs no tests: it reads the counts of your tests and the protected paths. To have your tests run, put your
+test command in `promptwheel.config.json` where the placeholder is.
+
 **If you work alone.** `sawbuck contract --solo` (with `--full` for the pull request check) signs for one person.
 A test may be removed where a commit of the change says why, and on a pull request your own comment counts.
 GitHub cannot tell you from your agent there: the agent works under your account. What is kept is the reason,
