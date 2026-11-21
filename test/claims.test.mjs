@@ -1967,7 +1967,7 @@ test('claim: a teammate can detach in their clone of a repo that shares its hook
 // every file under the roots by content (git's own files aside), so what a command touched is what differs
 const snap = (roots) => {
   const m = new Map();
-  const skip = (p) => /\/(\.npm|node_modules)$/.test(p) || (/\/\.git\/[^/]+$/.test(p) && !/\/\.git\/(hooks|info|sawbuck)$/.test(p));
+  const skip = (p) => /\/(\.npm|node_modules)$/.test(p) || (/\/\.git\/[^/]+$/.test(p) && !/\/\.git\/(hooks|info|sawbuck|promptwheel)$/.test(p));   // promptwheel: the engine's record of checked runs, which a purge removes
   const walk = (p) => { if (skip(p)) return; if (lstatSync(p).isDirectory()) for (const f of readdirSync(p)) walk(join(p, f)); else m.set(p, readFileSync(p, 'latin1')); };
   for (const r of roots) if (existsSync(r)) walk(r);
   return m;

@@ -145,12 +145,13 @@ Usage:
                             wiring is gone and names what is left. --dry-run lists what would go
   sawbuck status [repo]     The inventory: caught over time + debt accruing now + whether it is armed. --json
                             --log [-n N] for the recent checks, newest first
-  sawbuck improve --attempt "<cmd>" [--label "<name>"] [--json]
+  sawbuck improve --attempt "<cmd>" [--goal <measure>] [--label "<name>"] [--json]
                             The loop's one step, for work nobody watches: run any agent or script, check
                             what it changed, and keep it only if a measure improved (one commit). If a guard
                             got worse, if the win came from a change to the tests, or if nothing improved,
-                            the tree is put back as it was. Start from a clean tree. Exit 0 kept · 1 a
-                            guard got worse · 2 gamed · 3 nothing improved
+                            the tree is put back as it was. More tests alone is not a win. --goal: only
+                            that measure makes a win. Start from a clean tree. Exit 0 kept · 1 a guard
+                            got worse · 2 gamed · 3 nothing improved
   sawbuck playbook [--json] What has paid in this repo, and what the loop tried and threw away, each with
                             the measured reason. Read from the record of checked runs, which is kept in
                             the git folder and never in your files
