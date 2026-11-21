@@ -8,7 +8,7 @@
 // gone and names what is left; `doctor` runs what each hook runs.
 
 import './pipe.mjs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { erasedBlock, erasedCommits } from './rewrites.mjs';
 import { shareFinding, handedOnNotes } from './share.mjs';
 import { ledgerCli } from './ledger.mjs';
@@ -145,6 +145,19 @@ Usage:
                             wiring is gone and names what is left. --dry-run lists what would go
   sawbuck status [repo]     The inventory: caught over time + debt accruing now + whether it is armed. --json
                             --log [-n N] for the recent checks, newest first
+  sawbuck improve --attempt "<cmd>" [--label "<name>"] [--json]
+                            The loop's one step, for work nobody watches: run any agent or script, check
+                            what it changed, and keep it only if a measure improved (one commit). If a guard
+                            got worse, if the win came from a change to the tests, or if nothing improved,
+                            the tree is put back as it was. Start from a clean tree. Exit 0 kept · 1 a
+                            guard got worse · 2 gamed · 3 nothing improved
+  sawbuck playbook [--json] What has paid in this repo, and what the loop tried and threw away, each with
+                            the measured reason. Read from the record of checked runs, which is kept in
+                            the git folder and never in your files
+  sawbuck insights [--json] How each measure has responded over the checked runs
+  sawbuck suggest [--json]  Where to spend the next attempt: a lever that has paid, or what was tried least
+  sawbuck backfill [-n N | --since REF]
+                            Fill the record from past commits
   sawbuck debt [repo] [--since REF] [--fail-on undocumented|test|any|N]
                             The live suppression debt in HEAD, risk-ranked, undocumented flagged. --since REF
                             shows only what a branch adds; --fail-on exits 1 when that debt (or, without
@@ -704,6 +717,13 @@ switch (cmd) {
     } catch {}
     break;
   }
+  // The loop and the views over the record are the engine's own. Sawbuck hands these five through as they are: the
+  // contract is the one `sawbuck contract` wrote, the exit codes are the check's, and no reason in a commit is read.
+  case 'improve': case 'playbook': case 'insights': case 'suggest': case 'backfill': {
+    const r = spawnSync(process.execPath, [PW, cmd, ...rest], { stdio: 'inherit', env: { ...process.env, PROMPTWHEEL_NO_ALLOW_TRAILER: '1' } });
+    process.exitCode = r.status ?? 1;
+    break;
+  }
   default: die(`unknown command '${cmd}'\n\n${help}`);
 }
 
@@ -816,9 +836,16 @@ function syncExclude(repo, manifest) {
   return changed;
 }
 // the record paths still on disk and not tracked (a committed LOGBOOK.md is the person's file)
+// the engine's record of checked runs: one short row for each check a hook ran and each attempt of the loop. It is in
+// the git folder every worktree shares, never in the working tree, so it is found by asking git and shown by its path.
+function engineRecord(repo) {
+  try { return resolve(repo, execFileSync('git', ['-C', repo, 'rev-parse', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 'promptwheel', 'outcomes.jsonl'); } catch { return ''; }
+}
 function recordLeft(repo) {
   const tracked = (p) => { try { return !!execFileSync('git', ['-C', repo, 'ls-files', '--', p], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return false; } };
-  return ['.sawbuck/', '.promptwheel/outcomes.jsonl', 'events.jsonl', 'annotations.jsonl', 'LOGBOOK.md', 'JOURNEY.md'].filter((p) => there(join(repo, p)) && !tracked(p));
+  const er = engineRecord(repo);
+  return [...['.sawbuck/', '.promptwheel/outcomes.jsonl', 'events.jsonl', 'annotations.jsonl', 'LOGBOOK.md', 'JOURNEY.md'].filter((p) => there(join(repo, p)) && !tracked(p)),
+    ...(er && there(er) ? [relative(repo, er) || er] : [])];
 }
 // what the block hides that is still there: the record, and a settings.local.json the person keeps
 function hiddenLeft(repo) {
@@ -1249,6 +1276,7 @@ function purgeRecord(repo) {
     purge(join(repo, d));
   }
   purge(join(repo, '.promptwheel', 'outcomes.jsonl'));   // the rest of .promptwheel/ is the signed contract: yours to keep or delete
+  const er = engineRecord(repo); if (er) purge(er);        // the engine's record of checked runs, in the git folder
   if (!n) say('sawbuck: no record to purge');
 }
 // the path a hook bakes in: the quoted one ending in sawbuck.mjs, in a shell hook or in JSON, where the quotes are escaped

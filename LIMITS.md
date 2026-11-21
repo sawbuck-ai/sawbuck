@@ -10,6 +10,10 @@ Each limit here is held by a test in [`test/claims.test.mjs`](test/claims.test.m
 - **Where no test command is found.** `sawbuck contract --full --comment-only` writes the pull request check there too. That check runs no tests. It reads the counts of your tests and the protected paths, and its job summary says it could not measure. A test that fails is not seen there until your test command is in `promptwheel.config.json`.
 - **A repo signed `--solo`.** On a pull request the comment of the account that opened it counts, and an agent that works under that account can post it. GitHub cannot tell the two apart. What is kept is the reason, not proof of who gave it.
 
+- **The loop is not known to get better with use.** `sawbuck improve` keeps a change only if it measured better: that is tested. That a later attempt is better for the record of earlier ones is not shown. The test for it exists and has not been run on real work.
+- **The loop can fit your own tests.** A loop that keeps what raises a measure will find what raises that measure. The source-only re-run stops the cheapest way (a change to the tests) and no other. Tests the loop never sees are the answer, and Sawbuck does not hold any for you.
+- **The record is a hint.** It is a file in the repo's git folder. Anything that can write to the repo can write to it, so it never decides a check.
+
 ## In a session
 
 - **After the turn that did it.** A gamed change is sent back in the turn that made it, up to three times. After that turn it is told, not sent back: you get one line at the end of each of the next five turns (`enforce.remindTurns` in `sawbuck.config.json` sets how many), `sawbuck status` shows it for as long as it is open, and a later turn can build on it. `sawbuck check` on the commit and the check on a pull request still fail.

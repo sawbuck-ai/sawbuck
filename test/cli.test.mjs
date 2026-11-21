@@ -1374,3 +1374,62 @@ test('contract --full --comment-only writes the workflow where no test command i
   const { d, g } = tmpRepo();
   try { const r = spawnSync(process.execPath, [CLI, 'contract', '--full', '--comment-only'], { cwd: d, encoding: 'utf8' }); assert.equal(wfOf(d), ''); assert.match(r.stdout, /No CI check added: this repo has no github\.com origin\. Run sawbuck contract --full again once it has one\./); } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+// ---- The wheel in Sawbuck (proof-bench/wheel/PLAN.md, 2026-11-21) -------------------------------------------------------
+// The engine's loop and its record were never reachable from Sawbuck: no command ran `improve` and nothing read the
+// record. The hooks' checks did write the engine's rows until the engine dropped the record in 0.8.0; a person's
+// `sawbuck check` never did.
+const calcRepo = () => {
+  const { d, g } = tmpRepo();
+  writeFileSync(join(d, 'package.json'), '{"name":"w","version":"1.0.0","scripts":{"test":"node --test"}}\n');
+  mkdirSync(join(d, 'src')); mkdirSync(join(d, 'test'));
+  writeFileSync(join(d, 'src/calc.js'), 'exports.add=(a,b)=>a-b\n');
+  writeFileSync(join(d, 'test/calc.test.js'), "const t=require('node:test'),a=require('node:assert');const {add}=require('../src/calc.js')\nt.test('add',()=>a.equal(add(2,2),4))\n");
+  g('add', '-A'); g('commit', '-qm', 'a failing test');
+  return { d, g };
+};
+const sb2 = (args, cwd) => { const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...process.env, HOME: TMP_HOME } }); return { code: r.status, out: r.stdout, err: r.stderr }; };
+const wheelRows = (d) => { try { return readFileSync(join(d, '.git', 'promptwheel', 'outcomes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+
+test('sawbuck improve keeps a change only if it measured better, and playbook, insights and suggest read what the loop did', () => {
+  const { d, g } = calcRepo();
+  try {
+    const base = g('rev-parse', 'HEAD').trim();
+    // a test edited to pass: put back, exit 2
+    let r = sb2(['improve', '--attempt', "sed -i 's/add(2,2),4/add(2,2),0/' test/calc.test.js"], d);
+    assert.equal(r.code, 2, r.out + r.err); assert.equal(g('rev-parse', 'HEAD').trim(), base); assert.equal(porcelain(d), '');
+    // the source fixed: kept as one commit, exit 0
+    r = sb2(['improve', '--label', 'fix add', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js"], d);
+    assert.equal(r.code, 0, r.out + r.err); assert.equal(g('rev-list', '--count', `${base}..HEAD`).trim(), '1');
+    assert.deepEqual(wheelRows(d).map((x) => x.result), ['gamed', 'kept']);
+    r = sb2(['playbook'], d); assert.equal(r.code, 0, r.err); assert.match(r.out, /## Tried and thrown away/); assert.match(r.out, /went up by a change to the tests/);
+    for (const c of ['insights', 'suggest']) assert.equal(sb2([c], d).code, 0, c);
+    assert.equal(JSON.parse(sb2(['insights', '--json'], d).out).kept, 1);
+    r = sb2(['improve'], d); assert.equal(r.code, 64, 'no attempt is a usage error, as in the engine'); assert.match(r.err, /--attempt/);
+    assert.match(sb2(['help', '--all'], d).out, /sawbuck improve --attempt/);
+    assert.match(sb2(['improve', '--help'], d).out, /keep it only if a measure improved/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+test('the record is fed by what the hooks check, a look by a person adds no row, and nothing lands in the working tree', () => {
+  const { d, g } = calcRepo();
+  try {
+    writeFileSync(join(d, 'src/calc.js'), 'exports.add=(a,b)=>a+b\n'); g('commit', '-qam', 'fix add');
+    sawbuck(['check'], d);                                                                   // a person looks
+    assert.equal(wheelRows(d).length, 0, 'a look is not an event');
+    reflect(['--repo', d, '--base', 'HEAD~1', '--head', 'HEAD'], d, { LOGBOOK_NO_CACHE: '1' });   // what a hook runs on a commit
+    const rows = wheelRows(d); assert.equal(rows.length, 1); assert.equal(rows[0].verdict, 'pass'); assert.deepEqual(rows[0].subsystems, ['src']);
+    assert.equal(existsSync(join(d, '.promptwheel')), false, 'no .promptwheel folder in the tree');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+test('detach --purge removes the engine\'s record of checked runs too, and a plain detach names it as still on disk', () => {
+  const { d, g } = calcRepo();
+  try {
+    sawbuck(['attach', '--claude'], d);
+    writeFileSync(join(d, 'src/calc.js'), 'exports.add=(a,b)=>a+b\n'); g('commit', '-qam', 'fix add');
+    reflect(['--repo', d, '--base', 'HEAD~1', '--head', 'HEAD'], d, { LOGBOOK_NO_CACHE: '1' });
+    const f = join(d, '.git', 'promptwheel', 'outcomes.jsonl'); assert.ok(existsSync(f), 'a hook check wrote a row');
+    let r = sb2(['detach'], d); assert.equal(r.code, 0, r.err); assert.match(r.out + r.err, /still on disk: .*\.git\/promptwheel\/outcomes\.jsonl/);
+    assert.ok(existsSync(f), 'a plain detach keeps the record');
+    r = sb2(['detach', '--purge'], d); assert.equal(r.code, 0, r.err); assert.equal(existsSync(f), false, 'the purge removes it');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

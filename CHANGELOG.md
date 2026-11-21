@@ -2,6 +2,15 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
+## Unreleased: the loop, and the record it leaves
+
+The engine had a loop from June to November: run an agent, check what it changed, keep it only if a measure improved. It was removed before launch with no measurement behind the cut, and Sawbuck never had a command for it. It is back in the engine, and Sawbuck hands it through.
+
+- **`sawbuck improve --attempt "<cmd>"`.** One step of a loop, for work nobody watches. Kept means one commit. Anything else means the tree is put back as it was. More tests alone is not a win, and a commit the agent makes itself is still checked.
+- **`sawbuck playbook`, `insights`, `suggest`, `backfill`.** They read the record of checked runs: what has paid here, what was tried and thrown away and why, where to spend the next attempt.
+- **The record.** One short row for each check a hook runs and each attempt of the loop, in the repo's git folder. Nothing you typed is in it, and nothing lands in your files. A `sawbuck check` by hand adds no row. `sawbuck detach --purge` removes it.
+- **Not claimed:** that the loop gets better with use. The test for that has not been run on real work ([LIMITS.md](LIMITS.md)).
+
 ## 0.2.3 (2026-11-20): a report that arrived cut, and try mode without a test command
 
 We ran the check's own commands on every commit of 994 pull requests. On one that changed 10,753 files the check said "could not run". The report was whole when it left the engine. It was cut on the way.
