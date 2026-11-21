@@ -39,6 +39,17 @@ Each limit here is held by a test in [`test/claims.test.mjs`](test/claims.test.m
 - **A hooks folder every repo shares.** With a global `core.hooksPath` git runs hooks from that one folder, so `attach --git` puts its block there, in a file outside your repo, for the first repo you attach. For a second repo it says the folder is shared and writes nothing (before 0.1.73 it said "already attached", which was not true of that repo). In those repos use `attach` (Claude Code) or `attach --shared`.
 - **Two ways round the second copy are open.** A record rewritten to say you allowed the change copies your yes, and nothing kept on your machine can tell a copy from the real thing. And an agent that removes both copies has removed both; the hold asks you first when a command or an edit names either folder, and a command that reaches them without naming them is not seen.
 
+## What is judged cannot touch what judges it
+
+Sawbuck judges an agent that runs as you, on your machine, with no wall between them. Held to a list of attacks on
+2026-11-21, these are the places where that shows. Each was run.
+
+- **The installed copy can be edited.** Sawbuck runs from files on your machine: where npm, npx or the plugin put it. An agent that runs as you can edit those files, and the next check then runs the edited code. Nothing on your machine can notice: the thing that would notice is the thing that was edited. Run: after a turn rewrote the installed hook, a gamed commit ended the next turn with nothing said, and `sawbuck doctor` from the same copy said OK. What holds: the pull request check, which runs a fresh copy that the agent's machine never touches, or a container around the agent.
+- **An installed package that your tests run.** Git ignores `node_modules` and folders like it. An agent that edits a package there can turn a red test green, and no commit shows it: the check reads the same package before and after. Run: the end of the turn said nothing, and `sawbuck check` said "held". What holds: a fresh install, as on a pull request.
+- **A file a process changes after the turn has ended.** A process the agent leaves running can edit a file once the end-of-turn check has passed. Nothing is said about it at the end of the next turn either, and a protected path changed that way is read as yours. It is checked like any other change when a turn commits it, and on a pull request.
+- **A rule deleted behind another rule.** When two checks in your code cover the same thing and an agent deletes one, no test fails and no count falls. Sawbuck does not see it. What protects should be a protected path in your contract, so that a change to it takes your reason.
+- **Closed in this version:** a protected path that a turn hid from git (`skip-worktree`, `assume-unchanged`) and then edited was not seen at the end of the turn. It is now.
+
 ## Your machine
 
 - **Your git, your settings.** Run on git 2.25 through 2.52, and under what a `~/.gitconfig` commonly holds: no `a/` `b/` prefixes, an outside diff tool, forced colour, signed commits with signatures shown, a global hooks folder, a global ignore file. Before 0.1.71 four of those could change what a check read, and a file whose name holds a byte above 127 (`añadir.js`) was read wrongly under git's defaults: an honest fix there was sent back as gamed, and a new workflow file named that way was not a protected path. Not run: Git LFS, submodules. A Mac and Windows are under "Not run", below.
