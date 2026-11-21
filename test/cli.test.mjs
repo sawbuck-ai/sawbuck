@@ -1374,3 +1374,25 @@ test('contract --full --comment-only writes the workflow where no test command i
   const { d, g } = tmpRepo();
   try { const r = spawnSync(process.execPath, [CLI, 'contract', '--full', '--comment-only'], { cwd: d, encoding: 'utf8' }); assert.equal(wfOf(d), ''); assert.match(r.stdout, /No CI check added: this repo has no github\.com origin\. Run sawbuck contract --full again once it has one\./); } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+// ---- the next version: tests a change added and took out again (engine 0.8.17, proof-bench/per-test). The check holds
+// the head against the base, so tests an agent wrote in one commit and deleted in a later one left no trace. Over a
+// range of commits `sawbuck check --base` now says so in a note, with their names. It is never part of the verdict.
+test('check --base over several commits notes the tests an earlier commit added that are all gone, and the check of one commit does not', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'package.json'), '{"name":"x","version":"1.0.0","scripts":{"test":"node --test test/a.test.js"}}\n');
+    mkdirSync(join(d, 'test')); writeFileSync(join(d, 'test/a.test.js'), "require('node:test').test('a', () => {})\n");
+    g('add', '-A'); g('commit', '-qm', 'a test'); const base = g('rev-parse', 'HEAD').trim();
+    writeFileSync(join(d, 'test/more.test.js'), "const { test } = require('node:test');\ntest('adds two', () => {});\ntest('adds three', () => {});\n");
+    g('add', '-A'); g('commit', '-qm', 'two more tests'); const c1 = g('rev-parse', '--short', 'HEAD').trim();
+    rmSync(join(d, 'test/more.test.js')); writeFileSync(join(d, 'a.js'), 'export const v = 2;\n'); g('add', '-A'); g('commit', '-qm', 'drop them');
+    const r = spawnSync(process.execPath, [CLI, 'check', '--base', base], { cwd: d, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, new RegExp(`sawbuck: note: an earlier commit of this change \\(${c1}\\) added 2 tests, and none of them is in it now: adds three, adds two\n`), r.stdout);
+    const j = JSON.parse(spawnSync(process.execPath, [CLI, 'check', '--base', base, '--json'], { cwd: d, encoding: 'utf8' }).stdout);
+    assert.deepEqual(j.testsTakenOut, { added: 2, names: ['adds three', 'adds two'], more: 0, at: c1 }); assert.equal(j.verdict, 'pass');
+    const last = spawnSync(process.execPath, [CLI, 'check'], { cwd: d, encoding: 'utf8' });
+    assert.doesNotMatch(last.stdout, /an earlier commit of this change/, 'one commit has no earlier commit');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

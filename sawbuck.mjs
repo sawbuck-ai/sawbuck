@@ -391,6 +391,8 @@ switch (cmd) {
     // a count that held for the repo and fell in one file (the engine's per-file note, 0.8.15): a note, never a verdict
     const FEWER = { test_count: 'fewer tests', assertions: 'fewer assertions' };
     for (const x of rep.metrics || []) for (const w of x.lostIn || []) out(`sawbuck: note: ${w.file} has ${FEWER[x.name] || x.name} (${w.before} → ${w.after}), though the repo's total did not fall`);
+    // tests an earlier commit of the range added, all gone at its end (the engine's testsTakenOut): a note, never a verdict
+    if (rep.testsTakenOut) { const t = rep.testsTakenOut; out(`sawbuck: note: an earlier commit of this change (${t.at}) added ${t.added} test${t.added === 1 ? '' : 's'}, and ${t.added === 1 ? 'it is not' : 'none of them is'} in it now: ${t.names.join(', ')}${t.more ? ` and ${t.more} more` : ''}`); }
     if (rep.gate && rep.gate.changed) out(`⚠ the gate definition changed in this change (fingerprint ${rep.gate.fingerprint.base} -> ${rep.gate.fingerprint.head}): a metric, guard, evaluatorPath or mandate was added, removed or edited.`);
     process.exitCode = code;
     break;
