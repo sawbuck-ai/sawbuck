@@ -2,6 +2,24 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
+## 0.2.3 (2026-11-20): a report that arrived cut, and try mode without a test command
+
+We ran the check's own commands on every commit of 994 pull requests. On one that changed 10,753 files the check said "could not run". The report was whole when it left the engine. It was cut on the way.
+
+**A large change is checked like any other.** The engine printed its report and exited at once. Node writes to a pipe in the background, and an exit drops what the pipe has not taken yet. So a report larger than a pipe holds arrived cut: at 146,176 bytes where the reader was quick, at 65,536 where it was slow. The report lists every test, fixture and config file a change touches, so it began at a change of a few thousand of them. What that did, each seen on 0.2.2 and each a test now:
+
+- `sawbuck check` said "could not run the check here: the engine gave no verdict".
+- At the end of a turn, a test edited to pass was not sent back when the same commit also added 4,000 test files. The hook could not read the report and said nothing.
+- `sawbuck check --json` reached a slow reader cut at 65,536 bytes.
+
+The engine (0.8.16) and `sawbuck check` now end by themselves once what they printed is written. The pull request check was not affected: the Action writes the report to a file.
+
+**`sawbuck status` reads a large debt.** `sawbuck debt --json` had the same fault, and `sawbuck status` reads it through a pipe. In a repo where 560 files each silenced one lint rule, status said "could not read the ledger".
+
+**Try mode where no test command is found.** In such a repo `sawbuck contract --full --comment-only` wrote no workflow, and said a placeholder would fail every pull request. That was not true: the workflow lets a check that could not measure pass. Typed in copies of twelve real repos, six got no workflow, every .NET repo among them. Try mode now writes it there too. That check runs no tests, and still reads the counts of your tests and the protected paths. Without `--comment-only` no workflow is written there, as before, and the command now says how to try it.
+
+Not run on a Mac, and not on GitHub itself.
+
 ## 0.2.2 (2026-11-20): a good guest on a pull request
 
 We looked back at everything measured so far, and at what a stranger's repo would see of Sawbuck. The check on a pull request spoke on every push, under another name, and there was no way to try it without failing someone's pull request.
