@@ -1433,3 +1433,16 @@ test('detach --purge removes the engine\'s record of checked runs too, and a pla
     r = sb2(['detach', '--purge'], d); assert.equal(r.code, 0, r.err); assert.equal(existsSync(f), false, 'the purge removes it');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+test('sawbuck improve --turns keeps a fix that takes two turns, and says so in the help', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'promptwheel.config.json'), JSON.stringify({ linkNodeModules: false, metrics: [{ name: 'both', cmd: 'test -f a.js -a -f b.js && grep -q two b.js', extract: 'exit', direction: 'pass', guard: true }] }));
+    g('add', '-A'); g('commit', '-qm', 'a contract with one pass-or-fail measure'); const base = g('rev-parse', 'HEAD').trim();
+    const step = 'if [ ! -f b.js ]; then echo one > b.js; else echo two > b.js; fi';
+    let r = sb2(['improve', '--attempt', step], d); assert.equal(r.code, 3, 'judged alone, the first half is put back: ' + r.err); assert.equal(existsSync(join(d, 'b.js')), false);
+    r = sb2(['improve', '--turns', '3', '--attempt', step], d);
+    assert.equal(r.code, 0, r.out + r.err); assert.match(r.err, /kept the best of 2 turns \(turn 2\)/); assert.equal(g('rev-list', '--count', `${base}..HEAD`).trim(), '1');
+    assert.match(sb2(['playbook'], d).out, /kept at turn 2 of 2: `both` 0 → 0 → 1/);
+    assert.match(sb2(['improve', '--help'], d).out, /--turns N/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

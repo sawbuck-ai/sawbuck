@@ -12,6 +12,8 @@ Each limit here is held by a test in [`test/claims.test.mjs`](test/claims.test.m
 
 - **The loop is not known to get better with use.** `sawbuck improve` keeps a change only if it measured better: that is tested. That a later attempt is better for the record of earlier ones is not shown. The test for it exists and has not been run on real work.
 - **The loop can fit your own tests.** A loop that keeps what raises a measure will find what raises that measure. The source-only re-run stops the cheapest way (a change to the tests) and no other. Tests the loop never sees are the answer, and Sawbuck does not hold any for you.
+- **More turns are more tries.** A run judged over several turns gets several tries at the measure. The best turn is measured once more before it is kept, which stops a win that was noise. It does not stop a loop from fitting the measure: the longer the run, the more that matters.
+- **A run that is killed outright cannot put the tree back.** An interrupt (Ctrl-C, a stop signal) does. A kill that cannot be caught leaves the tree as the attempt had it. The next `sawbuck improve` says so, prints the one line that puts the tree back, and deletes nothing by itself.
 - **The record is a hint.** It is a file in the repo's git folder. Anything that can write to the repo can write to it, so it never decides a check.
 
 ## In a session

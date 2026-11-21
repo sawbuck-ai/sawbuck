@@ -152,6 +152,12 @@ Usage:
                             the tree is put back as it was. More tests alone is not a win. --goal: only
                             that measure makes a win. Start from a clean tree. Exit 0 kept · 1 a guard
                             got worse · 2 gamed · 3 nothing improved
+  sawbuck improve --attempt "<cmd>" --turns N [--patience P]
+                            Judge over a number of turns, for work bigger than one attempt. Each turn goes
+                            on from where the last left the tree. The whole change so far is checked
+                            against the commit the run started from, the reading is handed to the next
+                            turn (PW_FEEDBACK holds its path), and the best turn is kept as one commit.
+                            If no turn won, the tree is put back. An interrupt puts it back too
   sawbuck playbook [--json] What has paid in this repo, and what the loop tried and threw away, each with
                             the measured reason. Read from the record of checked runs, which is kept in
                             the git folder and never in your files
