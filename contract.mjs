@@ -83,13 +83,23 @@ export function hashOf(repo, file, { store = false } = {}) {
   try { return gitOut(repo, ['hash-object', ...(store ? ['-w'] : []), '--', file]).trim(); } catch { return 'deleted'; }
 }
 
+// Files hidden from git (skip-worktree, assume-unchanged) whose content is not what HEAD holds. `git diff` and `git
+// status` say nothing about a hidden file, so a protected path that a turn hid and then edited was not seen at the end of
+// the turn (found by holding Sawbuck to another session's attack list, 2026-11-21). Only hidden files are read.
+export function hiddenChanged(repo) {
+  let rows = []; try { rows = gitNames(repo, ['ls-files', '-v']); } catch { return []; }
+  const out = [];
+  for (const l of rows) { if (!/^[a-zS] /.test(l)) continue; const f = l.slice(2); if (hashOf(repo, f) !== blobAt(repo, 'HEAD', f)) out.push(f); }
+  return out;
+}
+
 // the protected paths that are dirty right now, each with its content hash: the baseline `turn`
 // records when a prompt begins, so the Stop hook counts only what the turn itself changed and leaves
 // a person's own pre-existing edits alone. {} when nothing protected is dirty (or not a git repo).
 // `store` keeps each file's content in the object database (see hashOf), which the baseline does.
 export function protectedDirty(repo, { store = false } = {}) {
   let changed = [];
-  try { changed = [...new Set([...gitNames(repo, ['diff', '--name-only', '--no-renames', 'HEAD']), ...gitNames(repo, ['ls-files', '--others', '--exclude-standard'])])]; }
+  try { changed = [...new Set([...gitNames(repo, ['diff', '--name-only', '--no-renames', 'HEAD']), ...gitNames(repo, ['ls-files', '--others', '--exclude-standard']), ...hiddenChanged(repo)])]; }
   catch { return {}; }
   const res = mandatesInForce(repo).flatMap((m) => pathsOf(m).map(globToRe));
   const out = {};
