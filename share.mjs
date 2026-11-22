@@ -1,4 +1,4 @@
-// The findings seam: what Sawbuck learns (a rule you accepted, a reverted attempt it recovered, a gamed green it caught) is
+// The findings seam: what Sawbuck finds (a rule you accepted, a reverted attempt it recovered, a gamed green it caught) is
 // handed, once each, to whatever memory the person runs, through small sinks. Today: claude-mem's local worker, Claude
 // Code's own auto-memory notes for the project, and a Markdown folder named in sawbuck.config.json ({"share":{"markdown":
 // "<dir>"}}). A sink that is not there is skipped in silence; nothing is read back. Measured, twin bench 2026-11-08: a
