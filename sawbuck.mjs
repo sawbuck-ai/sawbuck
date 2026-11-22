@@ -21,6 +21,8 @@ import { dependencyEditFromHook } from './deps.mjs';
 import { holdDecision, ownRecordEdit } from './hold.mjs';
 import { steersReport } from './steers.mjs';
 import { rulesCli } from './rules.mjs';
+import { alignCli, alignOnAttach } from './align.mjs';
+import { offerRepo } from './offer.mjs';
 import { shapeCli } from './shape.mjs';
 import { ensureExcluded, clearExcluded, EXCLUDED, RECORD_DIRS } from './exclude.mjs';
 import { repoState, hooksIn, OURS, S_START, WORDS, wordsIn } from './repo-state.mjs';
@@ -102,8 +104,8 @@ const argv = process.argv.slice(2);
 const cmd = argv[0];
 const rest = argv.slice(1);
 const flags = new Set(rest.filter((a) => a.startsWith('--')));
-// `-n N` (status --log) is a flag with a value, not a repo path.
-const positional = rest.filter((a, i) => !a.startsWith('--') && a !== '-n' && rest[i - 1] !== '-n');
+// `-n N` (status --log) and `--since REF` (align) are flags with a value, not a repo path.
+const positional = rest.filter((a, i) => !a.startsWith('--') && a !== '-n' && rest[i - 1] !== '-n' && rest[i - 1] !== '--since');
 const repoArg = () => resolve(positional[0] || '.');
 const dry = flags.has('--dry-run');
 
@@ -151,6 +153,10 @@ Usage:
                             --since, any live debt of that kind) is there (a CI gate)
   sawbuck context [repo]    Relevant history for the files you are changing (reverts, weakened tests, hot spots,
                             and what a person let through there with a reason)
+  sawbuck align [repo] [--since REF] [--json]
+                            Where the work stands when Sawbuck joins late: each commit since this Claude Code
+                            session began (or REF) held against the contract, said once to you and once to the
+                            agent at its next prompt. A reading, never a verdict. attach runs it once
   sawbuck ledger [push|pull] [remote]
                             What git threw away, shared: push puts the erased attempts and their reasons on
                             refs/sawbuck/ledger for the team and CI; pull takes them into this clone; no
@@ -235,14 +241,15 @@ const KNOWN = {
   doctor: ['--all'],
   status: ['--json', '--log', '-n', '--words'],
   steering: ['--json', '--all'],
+  align: ['--since', '--json'],
 };
 const TRY_N = /^--try=\d{1,3}$/;   // contract --try=50: the number rides on the flag, so it is never read as the repo's path
-if (KNOWN[cmd]) { const bad = rest.filter((a) => a.startsWith('-') && !KNOWN[cmd].includes(a) && !(cmd === 'contract' && TRY_N.test(a))); if (bad.length) usage(`unknown flag ${bad.join(' ')} for ${cmd} (it takes ${KNOWN[cmd].filter((f) => f !== '--claude').join(', ')})`); }
+if (KNOWN[cmd]) { const bad = rest.filter((a) => a.startsWith('-') && !KNOWN[cmd].includes(a) && !(cmd === 'contract' && TRY_N.test(a)) && !(cmd === 'align' && /^--since=./.test(a))); if (bad.length) usage(`unknown flag ${bad.join(' ')} for ${cmd} (it takes ${KNOWN[cmd].filter((f) => f !== '--claude').join(', ')})`); }
 
 switch (cmd) {
   case 'contract': {
     const top = gitTop(repoArg());
-    if (!top) usage(gitRefuses(repoArg()) || `${repoArg()} is not a git repository (run it inside your project)`);
+    if (!top) { const no = gitRefuses(repoArg()); if (no) usage(no); await offerRepo(repoArg(), 'sawbuck contract'); }
     try { execFileSync(process.execPath, [join(HERE, 'contract-cmd.mjs'), top, ...rest.filter((a) => KNOWN.contract.includes(a) || TRY_N.test(a))], { stdio: 'inherit' }); }
     catch (e) { process.exit(e.status || 1); }
     break;
@@ -281,7 +288,7 @@ switch (cmd) {
     // leak a scary "fatal:" line before sawbuck's own message.
     const g = (...a) => { try { return execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; } };
     // 64 (EX_USAGE) for every "could not run" below, never a verdict code: a script or CI must not read it as gamed (2).
-    if (!g('rev-parse', '--git-dir')) { out(`sawbuck: ${gitRefuses(repo) || `${repo} is not a git repo. The check re-proves a change against git history, so run it inside one (git init, then commit).`}`); process.exit(64); }
+    if (!g('rev-parse', '--git-dir')) { const no = gitRefuses(repo); if (no) { out(`sawbuck: ${no}`); process.exit(64); } await offerRepo(repo, 'sawbuck check after your first commit'); }
     if (!g('rev-parse', '--verify', 'HEAD')) { out('sawbuck: no commit yet. Make one, then `sawbuck check` verifies your next change against it.'); process.exit(64); }
     const uncommitted = g('status', '--porcelain').length > 0;
     const dirty = !base && !head && uncommitted;
@@ -408,6 +415,12 @@ switch (cmd) {
     catch (e) { process.exit(e.status || 1); }
     break;
   }
+  case 'align': {
+    const top = gitTop(repoArg());
+    if (!top) { const no = gitRefuses(repoArg()); if (no) usage(no); await offerRepo(repoArg(), 'sawbuck contract, then sawbuck align'); }
+    await alignCli(top, rest);
+    break;
+  }
   case 'context': {
     // Nothing to show stays off stdout: an older attach runs this on every prompt and adds its stdout to the prompt.
     // A person or an agent who ran it still learns why, on stderr.
@@ -444,7 +457,7 @@ switch (cmd) {
     // a file still carrying the content the last violation flagged is never baselined; and the
     // baseline's commit does not advance past a flagged commit until a clean stop or a commit the
     // person made between turns that no longer carries the flagged content.
-    let hookEvent = '', session = '', framed = false, promptText = '';
+    let hookEvent = '', session = '', framed = false, promptText = '', alignNote = '';
     if (flags.has('--hook') && !process.stdin.isTTY) { try { const h = JSON.parse(readFileSync(0, 'utf8') || '{}'); hookEvent = String(h.hook_event_name || ''); session = String(h.session_id || ''); promptText = String(h.prompt || ''); } catch {} }
     if (hookEvent === 'UserPromptSubmit' && top) {
       try {
@@ -499,6 +512,8 @@ switch (cmd) {
         }
         framed = !!session && st.framedSession === session;
         if (session) st.framedSession = session;
+        // where the work stood when Sawbuck joined (sawbuck align): handed to the agent once, at the next prompt, and marked
+        { const g = readGuard(repo); if (g.align && g.align.agent && !g.align.delivered) { alignNote = g.align.agent; writeGuard(repo, { align: { ...g.align, delivered: now } }); } }
         // the person's words, for an undo record (local, git-excluded): only where the repo is attached with --words.
         // Without it nothing typed is kept, and words a version before 0.2.0 kept here are taken out once: the prompt
         // text now, the words saved with each undo (the undo itself stays). The end of the turn says so, once.
@@ -519,7 +534,7 @@ switch (cmd) {
     // with the frame, once a session: the rule in AGENTS.md gives the agent a line with no version in it, and beside an
     // older global copy that line is answered by the older copy (copies.mjs). Say which line reaches this one.
     const elder = framed || !top ? null : olderSaid();
-    const o = [framed ? '' : frameBlock(repo), elder ? elder.agent : '', history ? contextBlock(repo, false, named) : (named.length ? [erasedBlock(repo, named), allowedBlock(repo, named)].filter(Boolean).join('\n') : '')].filter(Boolean).join('\n');
+    const o = [framed ? '' : frameBlock(repo), alignNote, elder ? elder.agent : '', history ? contextBlock(repo, false, named) : (named.length ? [erasedBlock(repo, named), allowedBlock(repo, named)].filter(Boolean).join('\n') : '')].filter(Boolean).join('\n');
     if (o) out(o);
     break;
   }
@@ -543,7 +558,7 @@ switch (cmd) {
     const user = flags.has('--user'), shared = flags.has('--shared'), git = flags.has('--git'), codex = flags.has('--codex'), cursor = flags.has('--cursor');
     if (user + shared + git + codex + cursor > 1) usage('attach takes one of --user, --shared, --git, --codex or --cursor');
     const top = gitTop(repoArg());
-    if (!top && !user) usage(gitRefuses(repoArg()) || `${repoArg()} is not a git repository (attach wires one; run it inside your project, or name its path)`);
+    if (!top && !user) { const no = gitRefuses(repoArg()); if (no) usage(no); await offerRepo(repoArg(), 'sawbuck attach'); }
     const repo = top || repoArg();
     const words = flags.has(WORDS), noWords = flags.has('--no-words');
     if (noWords && words) usage('attach takes --words or --no-words, not both');
@@ -553,6 +568,8 @@ switch (cmd) {
     if (cursor) { wireCursor(repo); break; }
     if (git) wireGit(repo); else wireClaude(repo, { user, shared, noWords, words });
     if (!dry) verifyAttach(repo);
+    // Sawbuck joining a repo that already has work in it: once, where that work stands (align.mjs). Never fails attach.
+    if (!dry && !git && top) await alignOnAttach(top);
     break;
   }
   case 'detach': {
