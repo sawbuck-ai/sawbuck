@@ -156,7 +156,7 @@ function deliver(repo, r, { json, onAttach } = {}) {
   // silent on a pass: with nothing of note the agent is handed nothing, so its context grows by nothing
   const forAgent = clean ? null
     : ['▣ align (sawbuck) · where the work stood when Sawbuck joined, said once:', `  ${head}`, ...items.map((x) => `  ${x}`),
-      '  Nothing from before is sent back. For each line above, tell the person whether the change was meant before you go on.'].join('\n');
+      '  Nothing from before is sent back. In your answer, tell the person about each line above and ask whether it was meant.'].join('\n');
   writeGuard(repo, { align: { at: new Date().toISOString(), since: r.start.sha, head: r.head, agent: forAgent, delivered: forAgent ? null : 'nothing of note, so nothing was handed over' } });
   if (json) process.stdout.write(JSON.stringify({ ...r, said: { head, items } }, null, 2) + '\n');
   else process.stdout.write(forPerson.join('\n') + '\n');

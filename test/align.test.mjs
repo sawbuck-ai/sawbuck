@@ -100,7 +100,7 @@ test('attach on a repo with work in it says the reading once, and the agent gets
   const up = JSON.parse(readFileSync(join(d, '.claude', 'settings.local.json'), 'utf8')).hooks.UserPromptSubmit[0].hooks[0].command;
   const prompt = (p) => spawnSync('sh', ['-c', up], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's1', prompt: p, cwd: d }) }).stdout;
   const first = prompt('go');
-  assert.match(first, /▣ align \(sawbuck\)/); assert.match(first, /make the tests pass/); assert.match(first, /tell the person whether the change was meant/);
+  assert.match(first, /▣ align \(sawbuck\)/); assert.match(first, /make the tests pass/); assert.match(first, /In your answer, tell the person about each line above and ask whether it was meant\./); assert.doesNotMatch(first, /before you go on/);
   assert.doesNotMatch(prompt('more'), /align \(sawbuck\)/, 'said once');
   assert.doesNotMatch(sb(['attach'], d).stdout, /sawbuck align:/, 'a second attach does not read again');
 });
