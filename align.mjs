@@ -72,6 +72,20 @@ export function startOf(repo, since, home) {
   return { sha: n > 20 ? tryGit(repo, 'rev-parse', 'HEAD~20') : null, why: n > 20 ? 'the last 20 commits' : 'every commit there is' };
 }
 
+// the commits from a start to HEAD, oldest first, merges left out, first parents; the first commit of a repo has
+// nothing before it to be held against and is left out
+const commitsFrom = (repo, start) => (tryGit(repo, 'log', '--no-show-signature', '--reverse', '--no-merges', '--first-parent', '--date=short', '--format=%H%x09%P%x09%ad%x09%s', start.sha ? `${start.sha}..HEAD` : 'HEAD') || '').split('\n').filter(Boolean)
+  .map((l) => { const [sha, parents, day, ...s] = l.split('\t'); return { sha, parent: (parents || '').split(' ')[0], day, subject: s.join(' ') }; }).filter((c) => c.parent);
+const dirtyCount = (repo) => tryGit(repo, 'status', '--porcelain', '--untracked-files=no').split('\n').filter(Boolean).length;
+
+// would attach read the work here and write its reading down? (attach --dry-run lists that file)
+export function alignWould(repo) {
+  try {
+    if (readGuard(repo).align || !existsSync(join(repo, 'promptwheel.config.json')) || !tryGit(repo, 'rev-parse', 'HEAD')) return false;
+    return commitsFrom(repo, startOf(repo)).length > 0 || dirtyCount(repo) > 0;
+  } catch { return false; }
+}
+
 const COUNT_SAID = { test_count: ['the test count', 'fell'], assertions: ['the assertions', 'fell'], skipped_tests: ['the skipped tests', 'rose'], suppressions: ['the silenced warnings', 'rose'] };
 const said = (b) => [
   ...b.worse.map((name) => { const [what, how] = COUNT_SAID[name] || [name, 'got worse']; const c = b.counts && b.counts[name]; return c ? `${what} ${how} from ${c[0]} to ${c[1]}` : `${what} ${how}`; }),
@@ -84,8 +98,7 @@ export async function align(repo, { since, home } = {}) {
   const head = tryGit(repo, 'rev-parse', 'HEAD');
   if (!head) throw new Error('no commit here yet, so there is no work to read');
   const start = startOf(repo, since, home);
-  const lines = (tryGit(repo, 'log', '--reverse', '--no-merges', '--first-parent', '--date=short', '--format=%H%x09%P%x09%ad%x09%s', start.sha ? `${start.sha}..HEAD` : 'HEAD') || '').split('\n').filter(Boolean);
-  const all = lines.map((l) => { const [sha, parents, day, ...s] = l.split('\t'); return { sha, parent: (parents || '').split(' ')[0], day, subject: s.join(' ') }; }).filter((c) => c.parent);
+  const all = commitsFrom(repo, start);
   const commits = all.slice(-LIMIT);
   const { back, unread, signed } = await readCommits(repo, cfg, commits);
   // over the whole range: tests an earlier commit added, all gone at its end (the engine's note, 0.8.17)
@@ -97,7 +110,7 @@ export async function align(repo, { since, home } = {}) {
       takenOut = check({ repo, base: commits[0].parent, head, config: { ...cfg, mandates: [], metrics: counts }, detectGaming: false, repeat: 1 }).testsTakenOut || null;
     } catch { /* the note is left out, never guessed */ }
   }
-  const dirty = tryGit(repo, 'status', '--porcelain', '--untracked-files=no').split('\n').filter(Boolean).length;
+  const dirty = dirtyCount(repo);
   let dirtyProtected = []; try { dirtyProtected = Object.keys(protectedDirty(repo, {})); } catch { /* none read */ }
   return { start, head, from: commits.length ? commits[0].parent : head, read: commits.length, total: all.length, back, unread, signed, takenOut, dirty, dirtyProtected };
 }
@@ -129,21 +142,22 @@ export async function alignOnAttach(repo) {
     if (readGuard(repo).align || !existsSync(join(repo, 'promptwheel.config.json'))) return;
     const r = await align(repo, {});
     if (!r.read && !r.dirty) return;
-    process.stdout.write('\n'); deliver(repo, r, {});
+    process.stdout.write('\n'); deliver(repo, r, { onAttach: true });
   } catch { /* attach is done; the reading can be had with sawbuck align */ }
 }
 
-function deliver(repo, r, { json }) {
+function deliver(repo, r, { json, onAttach } = {}) {
   const { head, items } = words(r);
   const clean = !items.length;
   const forPerson = ['sawbuck align: where the work stands', `  ${head}`, ...(clean ? ['  Nothing of note: no count kept beside the tests got worse, and nothing that only a person changes was changed.'] : items.map((x) => `  ${x}`)),
-    `  A reading, not a verdict: nothing from before is sent back. The tests were not run. To run the old tests on the new source too: sawbuck check --base ${short(r.from)}`,
-    '  The rules you told Claude before Sawbuck joined: sawbuck rules --prepare gathers your messages so an agent can propose them, and you keep only those with two of your own quotes.'];
-  const forAgent = clean
-    ? `▣ align (sawbuck) · Sawbuck joined here. ${head} Nothing of note in it: no count kept beside the tests got worse, and nothing that only a person changes was changed.`
+    ...(clean && onAttach ? [] : [   // joining work with nothing of note in it takes two lines, no more
+      `  A reading, not a verdict: nothing from before is sent back. The tests were not run. To run the old tests on the new source too: sawbuck check --base ${short(r.from)}`,
+      '  The rules you told Claude before Sawbuck joined: sawbuck rules --prepare gathers your messages so an agent can propose them, and you keep only those with two of your own quotes.'])];
+  // silent on a pass: with nothing of note the agent is handed nothing, so its context grows by nothing
+  const forAgent = clean ? null
     : ['▣ align (sawbuck) · where the work stood when Sawbuck joined, said once:', `  ${head}`, ...items.map((x) => `  ${x}`),
       '  Nothing from before is sent back. For each line above, tell the person whether the change was meant before you go on.'].join('\n');
-  writeGuard(repo, { align: { at: new Date().toISOString(), since: r.start.sha, head: r.head, agent: forAgent, delivered: null } });
+  writeGuard(repo, { align: { at: new Date().toISOString(), since: r.start.sha, head: r.head, agent: forAgent, delivered: forAgent ? null : 'nothing of note, so nothing was handed over' } });
   if (json) process.stdout.write(JSON.stringify({ ...r, said: { head, items } }, null, 2) + '\n');
   else process.stdout.write(forPerson.join('\n') + '\n');
 }

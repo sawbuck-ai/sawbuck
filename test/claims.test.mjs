@@ -2455,6 +2455,7 @@ printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nc3RhbmQtaW4=\\n-----END PGP SIGNAT
   put(d, 'test/add.test.js', TEST.replace('add(2,2),4', 'add(2,2),0')); commit('make it pass');
   const o = run(['__hook', '--by', 'claude', '--stop'], { hook_event_name: 'Stop', cwd: d, session_id: 's', prompt_id: 'p1' }).stdout || '';
   assert.match(o, /"decision":"block"/, 'the gamed commit is still sent back'); assert.equal(run(['check']).status, 2);
+  run(['contract', '--try']); run(['align', '--since', 'HEAD~2']);   // two more looks at the log: the last commits held against the contract, and the work since a commit
   assert.ok(!existsSync(join(t, 'gpg.log')), `gpg was asked to verify ${existsSync(join(t, 'gpg.log')) ? readFileSync(join(t, 'gpg.log'), 'utf8').trim().split('\n').length : 0} times`);
   // and with a remote (0.1.74): a commit the agent pushed is told from one that came in by git's log of the remote
   // branch, and that is a look at a log too. The release's own pack check found it asking gpg, 2026-11-17.

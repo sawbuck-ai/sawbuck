@@ -104,7 +104,7 @@ const run = (args, cwd, stdio = ['ignore', 'pipe', 'pipe']) => execFileSync(proc
 // reading of each commit is lookback.mjs, shared with `sawbuck align`.
 async function tryIt(repo, cfg, n) {
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  let lines = []; try { lines = git('log', '--no-merges', '--first-parent', '-n', String(n), '--date=short', '--format=%H%x09%P%x09%ad%x09%s').split('\n').filter(Boolean); } catch {}
+  let lines = []; try { lines = git('log', '--no-show-signature', '--no-merges', '--first-parent', '-n', String(n), '--date=short', '--format=%H%x09%P%x09%ad%x09%s').split('\n').filter(Boolean); } catch {}
   const commits = lines.map((l) => { const [sha, parents, day, ...s] = l.split('\t'); return { sha, parent: (parents || '').split(' ')[0], day, subject: s.join(' ') }; }).filter((c) => c.parent);
   const { back, unread, signed } = await readCommits(repo, cfg, commits);
   const P = back.filter((b) => b.paths.length).length, W = back.filter((b) => b.worse.length).length;

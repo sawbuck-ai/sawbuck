@@ -49,6 +49,28 @@ test('align: honest work reads as nothing of note', () => {
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /Nothing of note/);
 });
 
+test('silent on a pass: joining honest work takes two lines at attach, and the agent is handed nothing', () => {
+  const d = project({ late: false }); sign(d);
+  const a = sb(['attach'], d);
+  assert.equal(a.status, 0, a.stderr);
+  const said = a.stdout.slice(a.stdout.indexOf('sawbuck align:')).trim().split('\n');
+  assert.equal(said.length, 3, `the heading, what was read, and "nothing of note": ${JSON.stringify(said)}`); assert.match(said[2], /Nothing of note/);
+  const up = JSON.parse(readFileSync(join(d, '.claude', 'settings.local.json'), 'utf8')).hooks.UserPromptSubmit[0].hooks[0].command;
+  const first = spawnSync('sh', ['-c', up], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's1', prompt: 'go', cwd: d }) }).stdout;
+  assert.doesNotMatch(first, /align \(sawbuck\)/, 'nothing about the earlier work is added to the context');
+  const guard = JSON.parse(readFileSync(join(d, '.git', 'sawbuck', 'guard.json'), 'utf8'));
+  assert.equal(guard.align.agent, null); assert.match(guard.align.delivered, /nothing of note/);
+});
+
+test('attach --user is not this repo joining: it reads no work and writes nothing into the repo', () => {
+  const d = project(); sign(d);
+  const home = mkdtempSync(join(tmpdir(), 'user-home-'));   // a home of its own: user-level hooks would reach every later test
+  const a = sb(['attach', '--user'], d, { HOME: home });
+  assert.equal(a.status, 0, a.stderr); assert.doesNotMatch(a.stdout, /sawbuck align:/);
+  const g = join(d, '.git', 'sawbuck', 'guard.json');
+  assert.ok(!existsSync(g) || !JSON.parse(readFileSync(g, 'utf8')).align, 'no reading was written down');
+});
+
 test('align --since reads from the commit named, and no further back', () => {
   const d = project(); sign(d);
   const r = sb(['align', '--since', 'HEAD~1'], d);

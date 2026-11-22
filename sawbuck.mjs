@@ -21,7 +21,7 @@ import { dependencyEditFromHook } from './deps.mjs';
 import { holdDecision, ownRecordEdit } from './hold.mjs';
 import { steersReport } from './steers.mjs';
 import { rulesCli } from './rules.mjs';
-import { alignCli, alignOnAttach } from './align.mjs';
+import { alignCli, alignOnAttach, alignWould } from './align.mjs';
 import { offerRepo } from './offer.mjs';
 import { shapeCli } from './shape.mjs';
 import { ensureExcluded, clearExcluded, EXCLUDED, RECORD_DIRS } from './exclude.mjs';
@@ -569,7 +569,7 @@ switch (cmd) {
     if (git) wireGit(repo); else wireClaude(repo, { user, shared, noWords, words });
     if (!dry) verifyAttach(repo);
     // Sawbuck joining a repo that already has work in it: once, where that work stands (align.mjs). Never fails attach.
-    if (!dry && !git && top) await alignOnAttach(top);
+    if (!dry && !git && !user && top) await alignOnAttach(top);
     break;
   }
   case 'detach': {
@@ -1026,7 +1026,7 @@ function wireClaude(repo, opts) {
       !user && ensureExcluded(repo, true) ? `exclude ${excludeFile(repo)}  (${EXCLUDED.join(', ')})` : null,
       `${existsSync(mp) ? 'modify' : 'create'}  ${mp}  (attach receipt)`,
       baseline ? `write   ${stPath}  (the turn baseline, so this turn's own signing is not read as the agent's)` : null,
-      baseline && !readGuard(repo).baseline ? `write   ${guardPath(repo)}  (the same baseline a second time, in the git folder: what the end of a turn is checked from)` : null,
+      ...((second, joining) => (second || joining ? [`write   ${guardPath(repo)}  (${[second ? 'the same baseline a second time, in the git folder: what the end of a turn is checked from' : '', joining ? 'where the work stands as Sawbuck joins it, for the agent\'s next prompt (sawbuck align)' : ''].filter(Boolean).join('; ')})`] : []))(baseline && !readGuard(repo).baseline, !user && alignWould(repo)),
       `write   ${regPath()}  (the list of attached repos, for detach --all)`,
       keep ? `${WORDS}: the hook lines carry it` : 'these hooks keep none of what you type; words a version before 0.2.0 kept under .sawbuck/ would be removed',
     ].filter(Boolean)));
