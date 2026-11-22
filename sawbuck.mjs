@@ -147,13 +147,14 @@ Usage:
                             wiring is gone and names what is left. --dry-run lists what would go
   sawbuck status [repo]     The inventory: caught over time + debt accruing now + whether it is armed. --json
                             --log [-n N] for the recent checks, newest first
-  sawbuck improve --attempt "<cmd>" [--goal <measure>] [--label "<name>"] [--json]
-                            The loop's one step, for work nobody watches: run any agent or script, check
-                            what it changed, and keep it only if a measure improved (one commit). If a guard
-                            got worse, if the win came from a change to the tests, or if nothing improved,
-                            the tree is put back as it was. More tests alone is not a win. --goal: only
-                            that measure makes a win. Start from a clean tree. Exit 0 kept · 1 a guard
-                            got worse · 2 gamed · 3 nothing improved
+  sawbuck improve --attempt "<cmd>" [--target <measure>] [--label "<name>"] [--json]
+                            The loop, for work nobody watches: run any agent or script, check what it
+                            changed, and keep it only if the target improved (one commit). If a guard got
+                            worse, if the win came from a change to the tests, or if the target did not
+                            improve, the tree is put back as it was. --target names the measure (score if
+                            none; --goal is another name). Also --may-change "src/**", --floor, --cheaper.
+                            Start from a clean tree. Exit 0 kept · 1 a guard got worse · 2 gamed ·
+                            3 nothing improved
   sawbuck improve --attempt "<cmd>" --turns N [--patience P]
                             Judge over a number of turns, for work bigger than one attempt. Each turn goes
                             on from where the last left the tree. The whole change so far is checked
@@ -852,11 +853,15 @@ function syncExclude(repo, manifest) {
 function engineRecord(repo) {
   try { return resolve(repo, execFileSync('git', ['-C', repo, 'rev-parse', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 'promptwheel', 'outcomes.jsonl'); } catch { return ''; }
 }
+// the loop's own record: one line a try, in the git folder of this worktree, and each try kept as refs/improve/<n>
+function loopRecord(repo) {
+  try { return join(execFileSync('git', ['-C', repo, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 'improve'); } catch { return ''; }
+}
 function recordLeft(repo) {
   const tracked = (p) => { try { return !!execFileSync('git', ['-C', repo, 'ls-files', '--', p], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return false; } };
-  const er = engineRecord(repo);
+  const er = engineRecord(repo), lr = loopRecord(repo) && join(loopRecord(repo), 'attempts.jsonl');
   return [...['.sawbuck/', '.promptwheel/outcomes.jsonl', 'events.jsonl', 'annotations.jsonl', 'LOGBOOK.md', 'JOURNEY.md'].filter((p) => there(join(repo, p)) && !tracked(p)),
-    ...(er && there(er) ? [relative(repo, er) || er] : [])];
+    ...(er && there(er) ? [relative(repo, er) || er] : []), ...(lr && there(lr) ? [relative(repo, lr) || lr] : [])];
 }
 // what the block hides that is still there: the record, and a settings.local.json the person keeps
 function hiddenLeft(repo) {
@@ -1288,6 +1293,14 @@ function purgeRecord(repo) {
   }
   purge(join(repo, '.promptwheel', 'outcomes.jsonl'));   // the rest of .promptwheel/ is the signed contract: yours to keep or delete
   const er = engineRecord(repo); if (er) purge(er);        // the engine's record of checked runs, in the git folder
+  // the loop's record (its lines, its floor, its mark) and the tries it kept as refs
+  const lr = loopRecord(repo); if (lr) purge(lr);
+  let tries = []; try { tries = execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(refname)', 'refs/improve'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter(Boolean); } catch { /* none */ }
+  if (tries.length) {
+    if (dry) planned.lines.set('refs/improve', `delete  refs/improve/*  (${tries.length} ref${tries.length === 1 ? '' : 's'}: the changes the loop tried)`);
+    else { for (const ref of tries) { try { execFileSync('git', ['-C', repo, 'update-ref', '-d', ref], { stdio: 'ignore' }); } catch { /* best effort */ } } say(`sawbuck: purged ${tries.length} ref${tries.length === 1 ? '' : 's'} under refs/improve`); }
+    n++;
+  }
   if (!n) say('sawbuck: no record to purge');
 }
 // the path a hook bakes in: the quoted one ending in sawbuck.mjs, in a shell hook or in JSON, where the quotes are escaped

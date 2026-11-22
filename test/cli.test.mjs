@@ -1390,24 +1390,27 @@ const calcRepo = () => {
 };
 const sb2 = (args, cwd) => { const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...process.env, HOME: TMP_HOME } }); return { code: r.status, out: r.stdout, err: r.stderr }; };
 const wheelRows = (d) => { try { return readFileSync(join(d, '.git', 'promptwheel', 'outcomes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+// the loop's own record: one line a try, written by the loop step the engine's improve runs (one keeper, 2026-11-21)
+const loopLines = (d) => { try { return readFileSync(join(d, '.git', 'improve', 'attempts.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
 
 test('sawbuck improve keeps a change only if it measured better, and playbook, insights and suggest read what the loop did', () => {
   const { d, g } = calcRepo();
   try {
     const base = g('rev-parse', 'HEAD').trim();
     // a test edited to pass: put back, exit 2
-    let r = sb2(['improve', '--attempt', "sed -i 's/add(2,2),4/add(2,2),0/' test/calc.test.js"], d);
+    let r = sb2(['improve', '--target', 'tests_pass', '--attempt', "sed -i 's/add(2,2),4/add(2,2),0/' test/calc.test.js"], d);
     assert.equal(r.code, 2, r.out + r.err); assert.equal(g('rev-parse', 'HEAD').trim(), base); assert.equal(porcelain(d), '');
     // the source fixed: kept as one commit, exit 0
-    r = sb2(['improve', '--label', 'fix add', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js"], d);
+    r = sb2(['improve', '--goal', 'tests_pass', '--label', 'fix add', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js"], d);
     assert.equal(r.code, 0, r.out + r.err); assert.equal(g('rev-list', '--count', `${base}..HEAD`).trim(), '1');
-    assert.deepEqual(wheelRows(d).map((x) => x.result), ['gamed', 'kept']);
-    r = sb2(['playbook'], d); assert.equal(r.code, 0, r.err); assert.match(r.out, /## Tried and thrown away/); assert.match(r.out, /went up by a change to the tests/);
+    assert.deepEqual(loopLines(d).map((x) => x.result), ['gamed', 'kept']);
+    assert.ok(wheelRows(d).length >= 2, 'each check the loop asked for is a row in the engine\'s own record');
+    r = sb2(['playbook'], d); assert.equal(r.code, 0, r.err); assert.match(r.out, /## Tried and thrown away/); assert.match(r.out, /moved by changing what it is measured with/);
     for (const c of ['insights', 'suggest']) assert.equal(sb2([c], d).code, 0, c);
     assert.equal(JSON.parse(sb2(['insights', '--json'], d).out).kept, 1);
     r = sb2(['improve'], d); assert.equal(r.code, 64, 'no attempt is a usage error, as in the engine'); assert.match(r.err, /--attempt/);
     assert.match(sb2(['help', '--all'], d).out, /sawbuck improve --attempt/);
-    assert.match(sb2(['improve', '--help'], d).out, /keep it only if a measure improved/);
+    assert.match(sb2(['improve', '--help'], d).out, /keep it only if the target improved/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 test('the record is fed by what the hooks check, a look by a person adds no row, and nothing lands in the working tree', () => {
@@ -1428,9 +1431,14 @@ test('detach --purge removes the engine\'s record of checked runs too, and a pla
     writeFileSync(join(d, 'src/calc.js'), 'exports.add=(a,b)=>a+b\n'); g('commit', '-qam', 'fix add');
     reflect(['--repo', d, '--base', 'HEAD~1', '--head', 'HEAD'], d, { LOGBOOK_NO_CACHE: '1' });
     const f = join(d, '.git', 'promptwheel', 'outcomes.jsonl'); assert.ok(existsSync(f), 'a hook check wrote a row');
-    let r = sb2(['detach'], d); assert.equal(r.code, 0, r.err); assert.match(r.out + r.err, /still on disk: .*\.git\/promptwheel\/outcomes\.jsonl/);
+    // and a try of the loop: its own record, and the change it tried, kept as a ref
+    sb2(['improve', '--target', 'tests_pass', '--attempt', "echo '// note' >> src/calc.js"], d);
+    const loop = join(d, '.git', 'improve', 'attempts.jsonl'); assert.ok(existsSync(loop), 'the loop wrote its line'); assert.ok(g('for-each-ref', 'refs/improve').trim(), 'and kept the try as a ref');
+    let r = sb2(['detach'], d); assert.equal(r.code, 0, r.err); assert.match(r.out + r.err, /still on disk: .*\.git\/promptwheel\/outcomes\.jsonl/); assert.match(r.out + r.err, /\.git\/improve\/attempts\.jsonl/);
     assert.ok(existsSync(f), 'a plain detach keeps the record');
+    r = sb2(['detach', '--purge', '--dry-run'], d); assert.equal(r.code, 0, r.err); assert.match(r.out + r.err, /refs\/improve/); assert.ok(existsSync(loop), 'a dry run removes nothing');
     r = sb2(['detach', '--purge'], d); assert.equal(r.code, 0, r.err); assert.equal(existsSync(f), false, 'the purge removes it');
+    assert.equal(existsSync(join(d, '.git', 'improve')), false, 'and the loop\'s record'); assert.equal(g('for-each-ref', 'refs/improve').trim(), '', 'and the tries it kept as refs');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 test('sawbuck improve --turns keeps a fix that takes two turns, and says so in the help', () => {
@@ -1439,9 +1447,9 @@ test('sawbuck improve --turns keeps a fix that takes two turns, and says so in t
     writeFileSync(join(d, 'promptwheel.config.json'), JSON.stringify({ linkNodeModules: false, metrics: [{ name: 'both', cmd: 'test -f a.js -a -f b.js && grep -q two b.js', extract: 'exit', direction: 'pass', guard: true }] }));
     g('add', '-A'); g('commit', '-qm', 'a contract with one pass-or-fail measure'); const base = g('rev-parse', 'HEAD').trim();
     const step = 'if [ ! -f b.js ]; then echo one > b.js; else echo two > b.js; fi';
-    let r = sb2(['improve', '--attempt', step], d); assert.equal(r.code, 3, 'judged alone, the first half is put back: ' + r.err); assert.equal(existsSync(join(d, 'b.js')), false);
-    r = sb2(['improve', '--turns', '3', '--attempt', step], d);
-    assert.equal(r.code, 0, r.out + r.err); assert.match(r.err, /kept the best of 2 turns \(turn 2\)/); assert.equal(g('rev-list', '--count', `${base}..HEAD`).trim(), '1');
+    let r = sb2(['improve', '--target', 'both', '--attempt', step], d); assert.equal(r.code, 3, 'judged alone, the first half is put back: ' + r.err); assert.equal(existsSync(join(d, 'b.js')), false);
+    r = sb2(['improve', '--target', 'both', '--turns', '3', '--attempt', step], d);
+    assert.equal(r.code, 0, r.out + r.err); assert.match(r.out, / kept .*both 0 to 1 \(turn 2 of 2\)/); assert.equal(g('rev-list', '--count', `${base}..HEAD`).trim(), '1');
     assert.match(sb2(['playbook'], d).out, /kept at turn 2 of 2: `both` 0 → 0 → 1/);
     assert.match(sb2(['improve', '--help'], d).out, /--turns N/);
   } finally { rmSync(d, { recursive: true, force: true }); }
