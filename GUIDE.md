@@ -89,7 +89,8 @@ comment: `sawbuck-allow: <reason>`. The account that opened the pull request can
 How it comments: a plain pass gets no comment. When there is something to say, it says it in one
 comment on the pull request, which it edits in place on each push. Something to say is a send-back, a reason that
 was used, or a note about the tests: a file that lost tests or assertions while the repo's total held is named in
-a note. The whole report is in the job summary on every run.
+a note. So are tests an earlier commit of the pull request added, when none of them is left at its last commit.
+The whole report is in the job summary on every run.
 
 **To try it first.** `sawbuck contract --full --comment-only` writes the workflow so that no pull request fails.
 The comment says what would have been sent back. To make it count, take `comment-only: true` out of the

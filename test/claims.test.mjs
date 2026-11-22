@@ -2800,3 +2800,35 @@ test('claim: where no test command is found, try mode writes the pull request ch
   assert.match(limits, /\*\*Where no test command is found\.\*\* `sawbuck contract --full --comment-only` writes the pull request check there too\. That check runs no tests\. It reads the counts of your tests and the protected paths, and its job summary says it could not measure\. A test that fails is not seen there until your test command is in `promptwheel\.config\.json`\./);
   assert.match(guide, /\*\*Where no test command is found\.\*\* Sawbuck finds npm, pytest, cargo and go tests on its own\. Where it finds none, `contract --full` writes no workflow and says so\. With `--comment-only` it writes the workflow there too\. That check runs no tests: it reads the counts of your tests and the protected paths\. To have your tests run, put your test command in `promptwheel\.config\.json` where the placeholder is\./);
 });
+
+// step 4 (engine 0.8.17): what the note on tests taken out does not see, said in LIMITS.md and run here
+test('claim: the note on tests taken out counts a test made from a table as one, reads no test written in a way it does not know, and says nothing for a change of one commit or when one other test is added at the end', () => {
+  const limits = readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8'), guide = readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8');
+  assert.match(limits, lit('**What the note on tests taken out does not see.** The note reads each test by its name, with a small reader for each language. A test made from a table in JavaScript, Python or C# has one name, so it counts as one test. A language the reader does not know is not read, and neither is a test written in a way it does not know.'));
+  assert.match(limits, lit('It speaks only when the pull request as it stands adds no tests, so it also says nothing when the tests an earlier commit added are taken out and one other test is added. It is a note: it never sends a change back.'));
+  assert.match(guide, lit('So are tests an earlier commit of the pull request added, when none of them is left at its last commit.'));
+  const repo = () => {
+    const d = mkdtempSync(join(tmpdir(), 'claims-')); git(d, 'init', '-q', '-b', 'main');
+    put(d, 'package.json', '{"name":"x","version":"1.0.0","scripts":{"test":"node --test test/a.test.js"}}\n'); put(d, 'test/a.test.js', "require('node:test').test('a', () => {})\n");
+    git(d, 'add', '-A'); git(d, 'commit', '-qm', 'a test'); return { d, base: git(d, 'rev-parse', 'HEAD') };
+  };
+  const commit = (d, m) => { git(d, 'add', '-A'); git(d, 'commit', '-qm', m); };
+  const note = (d, base) => { const r = spawnSync(process.execPath, [CLI, 'check', '--base', base, '--json'], { cwd: d, encoding: 'utf8', env: ENV }); assert.equal(r.status, 0, r.stdout + r.stderr); return JSON.parse(r.stdout).testsTakenOut ?? null; };
+  // a test made from a table is one name
+  let { d, base } = repo();
+  put(d, 'test/t.test.js', "it.each([[1], [2], [3]])('adds %s', (n) => {});\n"); commit(d, 'a table of three'); rmSync(join(d, 'test/t.test.js')); commit(d, 'taken out');
+  assert.equal(note(d, base).added, 1, 'three rows of a table are one test by name');
+  // the tests taken out and one other added: nothing is said
+  ({ d, base } = repo());
+  put(d, 'test/more.test.js', "const { test } = require('node:test');\ntest('adds two', () => {});\ntest('adds three', () => {});\n"); commit(d, 'two tests');
+  rmSync(join(d, 'test/more.test.js')); put(d, 'test/other.test.js', "const { test } = require('node:test');\ntest('another', () => {});\n"); commit(d, 'out, and one other in');
+  assert.equal(note(d, base), null, 'the pull request as it stands adds a test, so the note says nothing');
+  // a test written in a way the reader does not know is not read: added and taken out, nothing is said
+  ({ d, base } = repo());
+  put(d, 'test/more.test.js', "require('node:test').test('adds two', () => {})\n"); commit(d, 'a test on one line'); rmSync(join(d, 'test/more.test.js')); commit(d, 'taken out');
+  assert.equal(note(d, base), null, 'a form the reader does not know is not read');
+  // a change of one commit has no earlier commit to read
+  ({ d, base } = repo());
+  put(d, 'a.js', 'export const v = 1;\n'); commit(d, 'squashed: tests came and went inside it');
+  assert.equal(note(d, base), null);
+});

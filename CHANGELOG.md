@@ -2,6 +2,10 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
+## 0.2.4 (not released yet): tests a pull request added and took out
+
+- **A note on tests a pull request added and took out.** An agent writes tests early in a pull request, they fail, and a later commit deletes them, so the pull request ends with as many tests as before. Now, when an earlier commit of a pull request added tests and none of them is in it at its last commit, the comment on the pull request says so in a note, with their names. So does `sawbuck check --base` over several commits. With engine 0.8.17. A note never sends a change back, and a pass that carries one is still titled "passes". LIMITS.md says what it does not see.
+
 ## 0.2.3 (2026-11-20): a report that arrived cut, and try mode without a test command
 
 We ran the check's own commands on every commit of 994 pull requests. On one that changed 10,753 files the check said "could not run". The report was whole when it left the engine. It was cut on the way.
