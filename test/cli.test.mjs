@@ -1413,6 +1413,17 @@ test('sawbuck improve keeps a change only if it measured better, and playbook, i
     assert.match(sb2(['improve', '--help'], d).out, /keep it only if the target improved/);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+test('sawbuck improve with no target names the test run: the one measure with no contract, and the one that is not a tripwire in the contract Sawbuck writes', () => {
+  for (const signed of [false, true]) {
+    const { d, g } = calcRepo();
+    try {
+      if (signed) { assert.equal(sb2(['contract'], d).code, 0); g('add', '-A'); g('commit', '-qm', 'contract'); }
+      const r = sb2(['improve', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js"], d);
+      assert.equal(r.code, 0, `${signed ? 'signed' : 'no contract'}: ${r.out}${r.err}`); assert.match(r.out, / kept .*tests_pass 0 to 1/);
+      assert.equal(loopLines(d).pop().target, 'tests_pass');
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }
+});
 test('the record is fed by what the hooks check, a look by a person adds no row, and nothing lands in the working tree', () => {
   const { d, g } = calcRepo();
   try {

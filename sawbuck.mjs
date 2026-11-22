@@ -151,8 +151,10 @@ Usage:
                             The loop, for work nobody watches: run any agent or script, check what it
                             changed, and keep it only if the target improved (one commit). If a guard got
                             worse, if the win came from a change to the tests, or if the target did not
-                            improve, the tree is put back as it was. --target names the measure (score if
-                            none; --goal is another name). Also --may-change "src/**", --floor, --cheaper.
+                            improve, the tree is put back as it was. --target names the measure (--goal is
+                            another name). Name none and, when the contract leaves no choice, it is picked:
+                            the test run, in the contract Sawbuck writes. Also --may-change "src/**",
+                            --floor, --cheaper.
                             Start from a clean tree. Exit 0 kept · 1 a guard got worse · 2 gamed ·
                             3 nothing improved
   sawbuck improve --attempt "<cmd>" --turns N [--patience P]
