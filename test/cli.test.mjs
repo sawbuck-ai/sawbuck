@@ -1424,6 +1424,15 @@ test('sawbuck improve with no target names the test run: the one measure with no
     } finally { rmSync(d, { recursive: true, force: true }); }
   }
 });
+test('sawbuck improve: an attempt that could not run is not a try: exit 64, nothing on the loop\'s record, the tree as it was', () => {
+  const { d, g } = calcRepo();
+  try {
+    const base = g('rev-parse', 'HEAD').trim();
+    const r = sb2(['improve', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js; exit 64"], d);
+    assert.equal(r.code, 64, r.out + r.err); assert.match(r.err, /could not run/);
+    assert.deepEqual(loopLines(d), []); assert.equal(g('rev-parse', 'HEAD').trim(), base); assert.equal(porcelain(d), '');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
 test('the record is fed by what the hooks check, a look by a person adds no row, and nothing lands in the working tree', () => {
   const { d, g } = calcRepo();
   try {

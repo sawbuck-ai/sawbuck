@@ -156,7 +156,8 @@ Usage:
                             the test run, in the contract Sawbuck writes. Also --may-change "src/**",
                             --floor, --cheaper.
                             Start from a clean tree. Exit 0 kept · 1 a guard got worse · 2 gamed ·
-                            3 nothing improved
+                            3 nothing improved · 64 could not run, or the attempt could not (a wrapper
+                            whose agent could not start should end with 64: no try is used up)
   sawbuck improve --attempt "<cmd>" --turns N [--patience P]
                             Judge over a number of turns, for work bigger than one attempt. Each turn goes
                             on from where the last left the tree. The whole change so far is checked
