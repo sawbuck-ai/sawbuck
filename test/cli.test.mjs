@@ -10,7 +10,7 @@ import { execFile } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync, chmodSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1410,6 +1410,10 @@ const calcRepo = () => {
   g('add', '-A'); g('commit', '-qm', 'a failing test');
   return { d, g };
 };
+// An attempt every runner can run. `sed -i 's/a/b/' file` is GNU's: the sed on a Mac takes the word after -i as a backup
+// suffix and reads the file name as its script, so two tests here failed on the Mac runner on the commit the 0.2.5 wave
+// had just pushed ("undefined label 'est/calc.test.js'"). Node is the one tool this suite is sure of on every runner.
+const swap = (file, from, to) => `node -e "const fs=require('fs');fs.writeFileSync('${file}',fs.readFileSync('${file}','utf8').replace('${from}','${to}'))"`;
 const sb2 = (args, cwd) => { const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...process.env, HOME: TMP_HOME } }); return { code: r.status, out: r.stdout, err: r.stderr }; };
 const wheelRows = (d) => { try { return readFileSync(join(d, '.git', 'promptwheel', 'outcomes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
 // the loop's own record: one line a try, written by the loop step the engine's improve runs (one keeper, 2026-11-21)
@@ -1420,10 +1424,10 @@ test('sawbuck improve keeps a change only if it measured better, and playbook, i
   try {
     const base = g('rev-parse', 'HEAD').trim();
     // a test edited to pass: put back, exit 2
-    let r = sb2(['improve', '--target', 'tests_pass', '--attempt', "sed -i 's/add(2,2),4/add(2,2),0/' test/calc.test.js"], d);
+    let r = sb2(['improve', '--target', 'tests_pass', '--attempt', swap('test/calc.test.js', 'add(2,2),4', 'add(2,2),0')], d);
     assert.equal(r.code, 2, r.out + r.err); assert.equal(g('rev-parse', 'HEAD').trim(), base); assert.equal(porcelain(d), '');
     // the source fixed: kept as one commit, exit 0
-    r = sb2(['improve', '--goal', 'tests_pass', '--label', 'fix add', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js"], d);
+    r = sb2(['improve', '--goal', 'tests_pass', '--label', 'fix add', '--attempt', swap('src/calc.js', 'a-b', 'a+b')], d);
     assert.equal(r.code, 0, r.out + r.err); assert.equal(g('rev-list', '--count', `${base}..HEAD`).trim(), '1');
     assert.deepEqual(loopLines(d).map((x) => x.result), ['gamed', 'kept']);
     assert.ok(wheelRows(d).length >= 2, 'each check the loop asked for is a row in the engine\'s own record');
@@ -1440,7 +1444,7 @@ test('sawbuck improve with no target names the test run: the one measure with no
     const { d, g } = calcRepo();
     try {
       if (signed) { assert.equal(sb2(['contract'], d).code, 0); g('add', '-A'); g('commit', '-qm', 'contract'); }
-      const r = sb2(['improve', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js"], d);
+      const r = sb2(['improve', '--attempt', swap('src/calc.js', 'a-b', 'a+b')], d);
       assert.equal(r.code, 0, `${signed ? 'signed' : 'no contract'}: ${r.out}${r.err}`); assert.match(r.out, / kept .*tests_pass 0 to 1/);
       assert.equal(loopLines(d).pop().target, 'tests_pass');
     } finally { rmSync(d, { recursive: true, force: true }); }
@@ -1450,10 +1454,17 @@ test('sawbuck improve: an attempt that could not run is not a try: exit 64, noth
   const { d, g } = calcRepo();
   try {
     const base = g('rev-parse', 'HEAD').trim();
-    const r = sb2(['improve', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js; exit 64"], d);
+    const r = sb2(['improve', '--attempt', `${swap('src/calc.js', 'a-b', 'a+b')}; exit 64`], d);
     assert.equal(r.code, 64, r.out + r.err); assert.match(r.err, /could not run/);
     assert.deepEqual(loopLines(d), []); assert.equal(g('rev-parse', 'HEAD').trim(), base); assert.equal(porcelain(d), '');
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+test('no test here hands the loop an attempt only GNU sed runs', () => {
+  // the Mac runner cannot be run before a wave, so the fault it found is kept out by reading the tests themselves
+  const gnuOnly = new RegExp("--attempt'" + ",\\s*[\"'`]" + "sed " + "-i\\b");
+  for (const f of readdirSync(dirname(fileURLToPath(import.meta.url))).filter((n) => n.endsWith('.mjs'))) {
+    assert.doesNotMatch(readFileSync(join(dirname(fileURLToPath(import.meta.url)), f), 'utf8'), gnuOnly, `${f}: use swap() or another command every runner has`);
+  }
 });
 test('the record is fed by what the hooks check, a look by a person adds no row, and nothing lands in the working tree', () => {
   const { d, g } = calcRepo();

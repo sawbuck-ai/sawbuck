@@ -129,8 +129,12 @@ test('no dead ends: outside a repository, contract, attach, check and align say 
 });
 
 const term = spawnSync('script', ['-qec', 'true', '/dev/null'], { encoding: 'utf8' }).status === 0;
+// The offer is for a person at a terminal, and never under CI (offer.mjs: canAsk). GitHub's runner sets CI=true and this
+// test handed its own environment on, so it passed on every run here and failed on the runner, on the commit the 0.2.5
+// wave had just pushed. So the terminal is given with CI taken out, and what the runner sees is a test of its own.
+const { CI: _ci, ...NO_CI } = ENV;
+const onTerm = (d, keys, env = NO_CI) => spawnSync('script', ['-qec', `"${process.execPath}" "${CLI}" contract`, '/dev/null'], { cwd: d, input: keys, encoding: 'utf8', env, timeout: 60000 });
 test('no dead ends, on a terminal: Enter starts a repository and goes on with the command; q stops and makes nothing', { skip: !term && 'no `script` here to give the command a terminal' }, () => {
-  const onTerm = (d, keys) => spawnSync('script', ['-qec', `"${process.execPath}" "${CLI}" contract`, '/dev/null'], { cwd: d, input: keys, encoding: 'utf8', env: ENV, timeout: 60000 });
   const d = mkdtempSync(join(tmpdir(), 'start-')); put(d, 'package.json', '{"name":"r","scripts":{"test":"node --test"}}\n');
   const r = onTerm(d, '\n');
   assert.equal(r.status, 0, r.stdout); assert.match(r.stdout, /Press Enter to start one here/); assert.match(r.stdout, /Started a git repository/);
@@ -139,4 +143,10 @@ test('no dead ends, on a terminal: Enter starts a repository and goes on with th
   const e = mkdtempSync(join(tmpdir(), 'stop-'));
   const q = onTerm(e, 'q\n');
   assert.equal(q.status, 64, q.stdout); assert.match(q.stdout, /Nothing was done/); assert.ok(!existsSync(join(e, '.git')));
+});
+test('no dead ends, on a terminal under CI: nothing is asked and nothing is made, exit 64', { skip: !term && 'no `script` here to give the command a terminal' }, () => {
+  const d = mkdtempSync(join(tmpdir(), 'ci-')); put(d, 'package.json', '{"name":"r","scripts":{"test":"node --test"}}\n');
+  const r = onTerm(d, '\n', { ...NO_CI, CI: 'true' });
+  assert.equal(r.status, 64, r.stdout); assert.match(r.stdout, /is not a git repository yet/); assert.match(r.stdout, /To start one: git init, then sawbuck/);
+  assert.doesNotMatch(r.stdout, /Press Enter/); assert.ok(!existsSync(join(d, '.git')), 'no repository was made');
 });
