@@ -2,6 +2,41 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
+## 0.2.6 (2026-11-23): the wall at the end of a turn
+
+Five faults in one place: the check at the end of a turn on the paths your contract protects. A second reader of
+0.2.5 found four of them. The first, the oldest and the worst, turned up when the other half of one of that reader's
+cases was typed. Each was run on the published packages before it was fixed.
+
+- **Fixed: a file named `HEAD` blinded the wall.** In any repository, a turn that made an empty file named `HEAD`
+  at the top and then edited a protected path was not sent back, also when it edited the contract and committed.
+  As old as the wall: 0.1.70 has it.
+  Git refuses `git diff HEAD` when a file of that name exists, and the hook read the refusal as "nothing changed".
+  The same with a file named as the commit the turn began at. `sawbuck check` refused to run beside such a file.
+  Every git call that names a revision now says where its revisions end, and a test holds that.
+- **Fixed: a contract that was not yet committed could be deleted or hidden.** Between `sawbuck contract` and your
+  first commit of it, a turn that deleted the contract, or added it to `.gitignore` and emptied it, was not sent
+  back. In a repository that has commits, in every version. In a repository with no commit yet, since 0.2.5: before
+  it every turn there was sent back, which hid this, and 0.2.5 stopped that without reading a deletion. The end of
+  a turn asked git what was changed, and a file that is gone or ignored is on no list. A turn is now read against
+  what it began with. The send-back holds the line that puts the file back.
+- **Fixed: with no commit yet, a contract edit that was staged or went into a first commit was not read.** It ended
+  the turn with nothing said. It is sent back now. So is a protected edit on an orphan branch made in the same turn.
+  With no commit yet the second copy of the turn's baseline was not used either, so the state file alone decided: it
+  is used now.
+- **Fixed: with user-level hooks, a new folder was sent back at every turn.** Where the hooks are wired for every
+  folder (`attach --user`), a turn that began in a folder with no repository and set Sawbuck up there was sent back
+  for the contract it had just written, and so was every turn until a first commit. 0.2.5 fixed this only where
+  the hooks are wired in the project.
+- **Fixed: a link under a protected name.** A link of yours that was not yet committed (a `docker-compose.yml`
+  that points into a folder, say) and that a turn only committed was sent back as changed by the turn.
+- **Still open, and said in LIMITS.md:** with no commit yet, a protected file other than the contract (a workflow,
+  say) that a turn stages, puts in the first commit, or deletes or hides while it is untracked, is not seen at the end
+  of the turn. A pull request reads it.
+- **Still open, and said in LIMITS.md:** after the three send-backs a change is not held when it took its own rule
+  away. A turn that removes every rule and commits is sent back three times, you are told, and the next turn has no
+  rules. The same for a contract that is deleted before its first commit and left deleted.
+
 ## 0.2.5 (2026-11-22): where the work stands, the loop, and pages that agree
 
 Four things in one release. Each is said below.
