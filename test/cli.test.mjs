@@ -1375,6 +1375,16 @@ test('contract --full --comment-only writes the workflow where no test command i
   try { const r = spawnSync(process.execPath, [CLI, 'contract', '--full', '--comment-only'], { cwd: d, encoding: 'utf8' }); assert.equal(wfOf(d), ''); assert.match(r.stdout, /No CI check added: this repo has no github\.com origin\. Run sawbuck contract --full again once it has one\./); } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+// second read of 0.2.7: check passes its flags to the engine, and the engine now knows --pull-request (the Action's). On a
+// person's machine it printed the comment's markdown words at the terminal; it is refused as it was in 0.2.6.
+test('check refuses --pull-request: it is the Action\'s flag, not a check on this machine', () => {
+  const { d } = tmpRepo();
+  try {
+    const r = spawnSync(process.execPath, [CLI, 'check', '--pull-request'], { cwd: d, encoding: 'utf8' });
+    assert.equal(r.status, 64, r.stdout + r.stderr); assert.match(r.stdout + r.stderr, /unknown flag --pull-request for check/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 // ---- 0.2.7: two or more named tests gone from the changed files (engine 0.8.20, the reading R1(c) of
 // proof-bench/per-test). `sawbuck check` prints the engine's note in the comment's own sentence. Never part of the verdict.
 test('check notes two or more named tests the changed files no longer name, and says a rename reads the same way', () => {

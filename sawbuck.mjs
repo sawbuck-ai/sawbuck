@@ -273,6 +273,8 @@ const KNOWN = {
   align: ['--since', '--json'],
 };
 const TRY_N = /^--try=\d{1,3}$/;   // contract --try=50: the number rides on the flag, so it is never read as the repo's path
+// --pull-request is the Action's own flag to the engine (0.8.20); check passes the rest of its flags on, not that one
+if (cmd === 'check' && rest.includes('--pull-request')) usage('unknown flag --pull-request for check');
 if (KNOWN[cmd]) { const bad = rest.filter((a) => a.startsWith('-') && !KNOWN[cmd].includes(a) && !(cmd === 'contract' && TRY_N.test(a)) && !(cmd === 'align' && /^--since=./.test(a))); if (bad.length) usage(`unknown flag ${bad.join(' ')} for ${cmd} (it takes ${KNOWN[cmd].filter((f) => f !== '--claude').join(', ')})`); }
 
 switch (cmd) {
