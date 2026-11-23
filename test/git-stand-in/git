@@ -1,3 +1,44 @@
-#!/bin/sh
-# A stand-in for git that a test puts first on the path: see stand-in.mjs beside it.
-exec node "$(dirname "$0")/stand-in.mjs" "$@"
+#!/bin/bash
+# test/git-stand-in/git: git, with one thing added. A test puts this folder first on the path. Where
+# SAWBUCK_TEST_GIT_CALLS names a file, every call of a command that reads "<revision>... [--] <path>..." and was
+# given a word that could be either, with no `--` to say which, is written down there. Then the real git runs, with the
+# same words, and its answer and exit code are passed on.
+#
+# Why: such a call works until a file of that name exists, and then git refuses it ("ambiguous argument 'HEAD': both
+# revision and filename"). Until 0.2.6 the wall at the end of a turn asked `git diff --name-only HEAD` that way and
+# read the refusal as "nothing changed", so a turn that made an empty file named HEAD and edited a protected path was
+# not sent back, in any repository (proof-bench/no-baseline, 2026-11-23). A claim runs the hooks, the check and the
+# readers of history under this stand-in and holds the list empty, so a new call cannot bring the guess back.
+# One file, and a shell file on purpose: the test runner runs every .mjs under test/ as a test.
+here=$(cd "$(dirname "$0")" && pwd)
+real=""; IFS=: read -r -a dirs <<< "$PATH"
+for d in "${dirs[@]}"; do [ -n "$d" ] && [ "$d" != "$here" ] && [ -x "$d/git" ] && { real="$d/git"; break; }; done
+[ -n "$real" ] || { echo "git-stand-in: no git on the path behind this one" >&2; exit 127; }
+log=${SAWBUCK_TEST_GIT_CALLS:-}
+if [ -n "$log" ]; then
+  args=("$@"); i=0; n=${#args[@]}
+  while [ $i -lt $n ]; do   # git's own options, to reach the command
+    case "${args[$i]}" in
+      -C|-c|--git-dir|--work-tree|--namespace|--exec-path) i=$((i + 2));;
+      -*) i=$((i + 1));;
+      *) break;;
+    esac
+  done
+  cmd=${args[$i]:-}; rest=("${args[@]:$((i + 1))}")
+  case "$cmd" in
+    diff|log|rev-list|show|blame|shortlog|whatchanged|diff-tree|format-patch|reset|range-diff|describe)   # the commands whose words git has to sort into revisions and paths
+      told=0; word=0; skip=0
+      for a in "${rest[@]}"; do
+        if [ $skip = 1 ]; then skip=0; continue; fi
+        case "$a" in
+          --|--no-index) told=1; break;;
+          -n|-L|-S|-G|-O|-U|--max-count|--since|--until|--author|--grep|--format|--pretty|--diff-filter|--unified|--abbrev) skip=1;;   # these take their value as the next word
+          -*) ;;
+          *:*) ;;   # <revision>:<path> can be read one way only
+          *) word=1;;
+        esac
+      done
+      [ $word = 1 ] && [ $told = 0 ] && printf '%s %s\n' "$cmd" "${rest[*]}" >> "$log";;
+  esac
+fi
+exec "$real" "$@"
