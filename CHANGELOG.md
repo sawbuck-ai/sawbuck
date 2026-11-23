@@ -19,7 +19,8 @@ cases was typed. Each was run on the published packages before it was fixed.
   back. In a repository that has commits, in every version. In a repository with no commit yet, since 0.2.5: before
   it every turn there was sent back, which hid this, and 0.2.5 stopped that without reading a deletion. The end of
   a turn asked git what was changed, and a file that is gone or ignored is on no list. A turn is now read against
-  what it began with. The send-back holds the line that puts the file back.
+  what it began with. The send-back holds the line that puts the file back. A turn that takes it out of the folder
+  with `git stash -u` or `git clean -fd` counts as deleting it.
 - **Fixed: with no commit yet, a contract edit that was staged or went into a first commit was not read.** It ended
   the turn with nothing said. It is sent back now. So is a protected edit on an orphan branch made in the same turn.
   With no commit yet the second copy of the turn's baseline was not used either, so the state file alone decided: it
