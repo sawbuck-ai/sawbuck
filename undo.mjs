@@ -52,7 +52,11 @@ const relFile = (repo, p) => {
   let r = relative(repo, abs); if (!r || r.startsWith('..')) r = relative(realPath(repo), realPath(abs));
   return !r || r.startsWith('..') ? '' : r;
 };
-const readText = (p) => { try { return readFileSync(p, 'utf8'); } catch { return null; } };
+// Line endings are not content: under core.autocrlf=true (Git for Windows' default) a checkout writes CRLF where the last
+// commit holds LF, so no line compared equal and an undo by `git checkout` was never recorded (lead L141). Every text
+// the undo record reads is taken with CRLF as LF.
+const norm = (t) => (t === null || t === undefined ? t : String(t).replace(/\r\n/g, '\n'));
+const readText = (p) => { try { return norm(readFileSync(p, 'utf8')); } catch { return null; } };
 
 // what a change added, for the record: the count of new lines and the first one (a set difference of lines)
 export function addedSummary(before, after) {
@@ -98,7 +102,7 @@ function basesFromGit(repo, sess, since, now) {
   }
   fresh.sort((a, b) => b.m - a.m);
   for (const { file, p, tracked } of fresh.slice(0, Math.max(0, Math.min(BASES, BASES_ALL - have)))) {
-    const base = tracked ? gitText(repo, 'show', `HEAD:${file}`) : null;   // null: the last commit does not hold it
+    const base = tracked ? norm(gitText(repo, 'show', `HEAD:${file}`)) : null;   // null: the last commit does not hold it
     const t = readText(join(repo, file));
     if ((base !== null && (base.length > BIG || base.includes('\0'))) || (t !== null && t.includes('\0'))) continue;
     mkdirSync(dir, { recursive: true });
@@ -116,7 +120,7 @@ export function undoObserve(repo, { session = 's', file, event, before = undefin
     const sess = sessOf(session);
     const dir = join(repo, '.sawbuck', 'snap', sess); const p = join(dir, `${sha(file)}.json`);
     if (existsSync(p)) return null;
-    mkdirSync(dir, { recursive: true }); const t = before !== undefined ? before : readText(join(repo, file));
+    mkdirSync(dir, { recursive: true }); const t = before !== undefined ? norm(before) : readText(join(repo, file));
     // a file the agent first touches inside a turn held nothing of the agent's when the person spoke
     writeFileSync(p, JSON.stringify({ file, baseText: t, baseHash: t === null ? '' : sha(t), at: new Date().toISOString(), atPrompt: { hash: t === null ? '' : sha(t), lines: [], at: '' } }));
     return null;

@@ -1035,6 +1035,16 @@ test('claim: the copies a session keeps of the files it changed are removed two 
   for (const f of ['.', ...readdirSync(snap('old'))]) utimesSync(join(snap('old'), f), days(15), days(15));
   wired(d, 'new2').prompt('hello'); assert.ok(!existsSync(snap('old')), 'fifteen days: removed'); assert.ok(existsSync(snap('new1')), 'a newer session is left alone');
 });
+// lead L141: under core.autocrlf=true (Git for Windows' default) `git checkout` writes the file back with CRLF while the base
+// read from the last commit has LF, so no line compared equal and the undo was never recorded (old: 0.2.0 to 0.2.6).
+test('claim: under core.autocrlf=true an undo of a change a shell command wrote is recorded, whole, as without it', () => {
+  const d = signed(true); git(d, 'config', 'core.autocrlf', 'true'); const w = wired(d);
+  edit(d, 'src/add.js', (s) => s + "exports.sub=(a,b)=>a-b\nexports.mul=(a,b)=>a*b\n"); save(d, 'more lines in src/add.js');
+  w.prompt('add a small cache to add in src/add.js'); edit(d, 'src/add.js', (s) => s + CACHE1); w.stop();   // written by a shell command: no edit hook runs
+  w.prompt('undo that, all of it'); git(d, 'checkout', '--', 'src/add.js'); w.stop();
+  assert.match(readFileSync(join(d, 'src/add.js'), 'utf8'), /\r\n/, 'the checkout wrote the file back with CRLF');
+  const u = undos(d); assert.equal(u.length, 1, 'recorded'); assert.equal(u[0].kind, 'whole'); assert.match(u[0].first, /cache/);
+});
 test('limit: a change a shell command wrote and committed, then taken back with git revert, leaves no undo line (the revert is in git); taken back with a reset, it is told as erased', () => {
   const d = signed(true); const w = wired(d);
   w.prompt('add a small cache to add in src/add.js and commit it'); edit(d, 'src/add.js', (s) => s + CACHE1); save(d, 'add a cache to add'); w.stop();
