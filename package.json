@@ -71,7 +71,7 @@
     "sawbuck-hook.mjs",
     "rank.mjs",
     "debt.mjs",
-    "status.mjs",
+    "status.mjs", "align.mjs", "lookback.mjs", "offer.mjs",
     "memory.mjs",
     "README.md",
     "GUIDE.md",

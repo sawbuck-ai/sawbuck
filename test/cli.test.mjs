@@ -1514,3 +1514,23 @@ test('a protected path that is hidden from git and then edited is still seen as 
     assert.equal(mandateHits(d, Object.keys(protectedDirty(d)))[0].name, 'images-frozen');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+// ---- what is packed is what runs ------------------------------------------------------------------------------------
+// The package holds the files its `files` list names and no others. A module the code names that is not in the list
+// is in every checkout and in no install. 0.2.5 as first assembled left out align.mjs, lookback.mjs and offer.mjs:
+// every suite passed, because a suite runs from the tree, and the packed copy could not start. The pack check found
+// it on 2026-11-22. This finds it in the suite, and by name. Two forms are read: a module that is imported
+// ('./name.mjs') and one that is started as its own process (join(HERE, 'name.mjs')).
+test('package: every module the packed code names is in the files list', () => {
+  const root = join(HERE, '..'); const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const listed = new Set(pkg.files); const missing = [];
+  for (const b of Object.values(pkg.bin)) assert.ok(listed.has(b), `the command's own file, ${b}, is packed`);
+  for (const f of pkg.files) assert.ok(existsSync(join(root, f)), `${f} is in the files list and is in the tree`);
+  for (const f of pkg.files.filter((x) => x.endsWith('.mjs'))) {
+    const src = readFileSync(join(root, f), 'utf8');
+    for (const m of src.matchAll(/['"`](?:\.\/)?([A-Za-z0-9_-]+\.mjs)['"`]/g)) {
+      if (!listed.has(m[1]) && existsSync(join(root, m[1]))) missing.push(`${f} names ${m[1]}`);
+    }
+  }
+  assert.deepEqual([...new Set(missing)], [], 'named by the packed code, in the tree, and not in the files list');
+});
