@@ -2834,8 +2834,8 @@ test('claim: --solo, as the README and the guide give it, and sawbuck check in s
   const plain = signed(true); put(plain, '.github/workflows/ci.yml', 'name: ci\non: push\njobs: {}\n'); save(plain, 'a workflow');
   json(d, 'package.json', (o) => { o.scripts.postinstall = 'x'; }); save(d, 'an install script');
   json(plain, 'package.json', (o) => { o.scripts.postinstall = 'x'; }); save(plain, 'an install script');
-  assert.match(sb(d, 'check').out, /or on a pull request, comment sawbuck-allow: [^\n]*<reason> \(one person works here, so your own comment counts\)/);
-  assert.match(sb(plain, 'check').out, /or on a pull request someone who did not open it comments sawbuck-allow:/, 'a contract with more than one person in it says what it always said');
+  assert.match(sb(d, 'check').out, /For a pull request, comment sawbuck-allow: [^\n]*<reason> there \(one person works here, so your own comment counts\)/);
+  assert.match(sb(plain, 'check').out, /For a pull request, someone who did not open it comments sawbuck-allow:/, 'a contract with more than one person in it names someone who did not open it');
   const page = flat(README);
   assert.match(page, /Working alone, add `--solo`\./);
   assert.match(page, /GitHub cannot tell you from your agent there/, 'the guide says it in the words the command prints');
