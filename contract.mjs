@@ -93,17 +93,20 @@ export function hiddenChanged(repo) {
   return out;
 }
 
-// Every path that is not as HEAD holds it: changed, staged, untracked, or hidden from git and changed. The baseline a
-// prompt takes and the end of a turn both ask this, and they must get one answer, so both ask it here.
-// In a repository with no commit yet there is no HEAD to hold a file against: every file git has staged, or can see,
-// is new. Each question is put to git by itself. Until 0.2.5 the baseline asked them in one go and threw every answer
-// away when the first failed for want of a HEAD, while the end of a turn asked each alone: in a new repository the
-// baseline was empty, and every protected file there (the contract `sawbuck contract` had just written) read as
-// changed in the turn, at every turn, until a first commit. Found in a real session, proof-bench/live/rehearse-0.2.5.
+// Every path that is not as HEAD holds it: changed, untracked, or hidden from git and changed. The baseline a prompt
+// takes and the end of a turn both ask this, and they must get one answer, so both ask it here.
+// Each question is put to git by itself, and one that cannot be answered adds nothing. Until 0.2.5 the baseline asked
+// them in one go and threw every answer away when the first failed, which it does wherever there is no HEAD (a
+// repository with no commit yet, an orphan branch just made), while the end of a turn asked each alone. So in a new
+// repository the baseline was empty, and every protected file there (the contract `sawbuck contract` had just
+// written) read as changed in the turn, at every turn, until a first commit. Found in a real session,
+// proof-bench/live/rehearse-0.2.5.
+// What this does NOT read, where there is no HEAD: what is staged. (Listing the index there was tried the same night
+// and taken out: after `git checkout --orphan` the index holds every file, and a turn that had edited nothing was
+// sent back for the contract.)
 export function dirtyNames(repo) {
-  const names = (...a) => { try { return gitNames(repo, a); } catch { return null; } };
-  const againstHead = names('diff', '--name-only', '--no-renames', 'HEAD');
-  return [...new Set([...(againstHead ?? names('ls-files', '--cached') ?? []), ...(names('ls-files', '--others', '--exclude-standard') ?? []), ...hiddenChanged(repo)])];
+  const names = (...a) => { try { return gitNames(repo, a); } catch { return []; } };
+  return [...new Set([...names('diff', '--name-only', '--no-renames', 'HEAD'), ...names('ls-files', '--others', '--exclude-standard'), ...hiddenChanged(repo)])];
 }
 
 // the protected paths that are dirty right now, each with its content hash: the baseline `turn`

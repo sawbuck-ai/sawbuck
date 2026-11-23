@@ -3050,14 +3050,31 @@ test('claim: in a repository with no commit yet, the turn that ran contract and 
   save(d, 'the first commit, by the person, between two turns'); prompt('go on'); put(d, 'src/third.js', 'exports.third = 1;\n');
   assert.ok(!sentBackFor(stop()), 'and after the person made the first commit');
 });
-test('claim: in a repository with no commit yet, an edit to the contract by the agent is sent back, in the folder, staged, and when the agent makes the first commit with it', () => {
+test('claim: in a repository with no commit yet, an edit to the contract that sits in the folder is sent back, and a contract the agent commits as the person had it is not', () => {
   const loosen = (d) => edit(d, 'promptwheel.config.json', (s) => { const c = JSON.parse(s); c.mandates = (c.mandates || []).filter((m) => m.name !== 'workflows-frozen'); return JSON.stringify(c, null, 2) + '\n'; });
   const a = noCommitYet(); let h = ownHooks(a); h.prompt('loosen the rules'); loosen(a);
   assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'while it sits in the folder');
-  const b = noCommitYet(); h = ownHooks(b); h.prompt('loosen the rules'); loosen(b); git(b, 'add', '-A');
-  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'staged');
-  const c = noCommitYet(); h = ownHooks(c); h.prompt('loosen the rules and commit'); loosen(c); save(c, 'the first commit, made in the turn');
-  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'in the first commit of the repository, made in the turn');
   const e = noCommitYet(); h = ownHooks(e); h.prompt('commit everything'); save(e, 'the first commit, made in the turn, with the contract as the person had it');
   assert.ok(!sentBackFor(h.stop()), 'the contract committed as it stood is the person\'s own file: not sent back');
+});
+// A second reader of the first form of this fix (the same night) showed that reading more with no commit costs more
+// than it buys. Listing what is staged when there is no HEAD also listed every tracked file after `git checkout
+// --orphan` in an ordinary repo, and sent that turn back for a contract nobody touched. Reading a repository's first
+// commit against the empty tree sent a new repo back for a protected path that is a symlink. Both were taken out
+// again. So with no commit yet two things are still NOT seen, as before this release, and they are held here as they
+// are, so that the design that closes them (the queue has the row) changes these lines knowingly:
+test('not seen yet, with no commit: an edit to the contract that is staged, and one the agent commits as the repository\'s first commit in the same turn', () => {
+  const loosen = (d) => edit(d, 'promptwheel.config.json', (s) => { const c = JSON.parse(s); c.mandates = (c.mandates || []).filter((m) => m.name !== 'workflows-frozen'); return JSON.stringify(c, null, 2) + '\n'; });
+  const b = noCommitYet(); let h = ownHooks(b); h.prompt('loosen the rules'); loosen(b); git(b, 'add', '-A');
+  assert.ok(!sentBackFor(h.stop()), 'staged, with no commit: not seen');
+  const c = noCommitYet(); h = ownHooks(c); h.prompt('loosen the rules and commit'); loosen(c); save(c, 'the first commit, made in the turn');
+  assert.ok(!sentBackFor(h.stop()), 'in the first commit of the repository, made in the turn: not seen');
+});
+test('claim: a turn that only makes an orphan branch in a signed repo is not sent back (git checkout --orphan leaves no HEAD and every file staged, and nothing was edited)', () => {
+  const d = repo(true); put(d, '.github/workflows/ci.yml', 'name: ci\non: push\njobs: {}\n'); save(d, 'ci'); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); assert.equal(sb(d, 'attach').code, 0);
+  const { prompt, stop } = ownHooks(d);
+  prompt('make a pages branch'); git(d, 'checkout', '-q', '--orphan', 'gh-pages');
+  assert.ok(!sentBackFor(stop()), 'no HEAD is not a change');
+  prompt('and add a workflow there'); put(d, '.github/workflows/pages.yml', 'name: pages\non: push\njobs: {}\n');
+  assert.ok(sentBackFor(stop(), 'workflows-frozen'), 'a new workflow file on that branch is still a protected path');
 });
