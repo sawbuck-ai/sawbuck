@@ -11,12 +11,14 @@ import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-import { mandateHits, hashOf, protectedAmong, lockState, gitNames } from './contract.mjs';
+import { mandateHits, hashOf, protectedAmong, lockState, gitNames, hiddenChanged } from './contract.mjs';
 import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { readAllowed, keptOnTree } from './allowed.mjs';
 import { cli, olderSaid } from './copies.mjs';
 import { undoJudge, redoJudge, redoDue, redoTold, redoLine, undoHintNote, undoHintDue, undoHintTold } from './undo.mjs';
+import { ownGitOn } from './own-git.mjs';
+ownGitOn();   // when this file is run by itself; under sawbuck it is on already (own-git.mjs)
 const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : d; };
 const by = flag('--by', '');   // attribution from the harness wiring: the Claude hook passes 'claude', the raw-git hook passes nothing
 // nothing this hook finds is handed on to any notes unless the repo is attached with --words (share.mjs reads this)
@@ -318,7 +320,7 @@ const sendBack = (idKey, countKey, reason, stillOpen) => {
 if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   const now = new Date().toISOString();
   const names = (...a) => { try { return gitNames(repo, a); } catch { return []; } };   // NUL-separated: a name git would quote is still a path
-  const dirty = [...new Set([...names('diff', '--name-only', '--no-renames', 'HEAD'), ...names('ls-files', '--others', '--exclude-standard')])];
+  const dirty = [...new Set([...names('diff', '--name-only', '--no-renames', 'HEAD'), ...names('ls-files', '--others', '--exclude-standard'), ...hiddenChanged(repo)])];   // a file hidden from git is read too
   const base = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null;
   const baseline = (base && base.files && typeof base.files === 'object') ? base.files : {};
   const committedSince = (base && base.sha && head && base.sha !== head) ? names('diff', '--name-only', '--no-renames', base.sha, 'HEAD') : [];

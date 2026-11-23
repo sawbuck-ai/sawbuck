@@ -64,6 +64,7 @@
     "repo-state.mjs",
     "contract-cmd.mjs",
     "bins.mjs",
+    "own-git.mjs",
     "contract.mjs",
     "init.mjs",
     "reflect.mjs",

@@ -8,7 +8,7 @@
 // gone and names what is left; `doctor` runs what each hook runs.
 
 import './pipe.mjs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { erasedBlock, erasedCommits } from './rewrites.mjs';
 import { shareFinding, handedOnNotes } from './share.mjs';
 import { ledgerCli } from './ledger.mjs';
@@ -30,9 +30,11 @@ import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, rmdirSyn
 import { basename, join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { ownGitOn, personEnv } from './own-git.mjs';
 import { PW } from './bins.mjs';
 import { frameBlock, mandatesInForce, protectedDirty, protectedAmong, blobAt, lockState, gitNames, gitRefuses } from './contract.mjs';
 import { cli, onPath, olderOnPath, newerOnPath, olderSaid } from './copies.mjs';
+ownGitOn();   // Sawbuck's own git calls, and those of the processes it starts: no hook, no fsmonitor, no replace object (own-git.mjs)
 
 const SELF = fileURLToPath(import.meta.url);
 // the npx form a hook runs: offline or on a bad network a plain `npx -y` asks the registry first and retries for about
@@ -57,7 +59,7 @@ const HOOK = join(HERE, 'sawbuck-hook.mjs');
 const CHECK_TIMEOUT = +(process.env.SAWBUCK_CHECK_TIMEOUT_MS) || 600000;
 function gateReport(repo, a) {
   let o = '', err = '', code = 0;
-  try { o = execFileSync(process.execPath, [PW, ...a, '--no-record', '--json'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PROMPTWHEEL_NO_ALLOW_TRAILER: '1' }, timeout: CHECK_TIMEOUT }); }
+  try { o = execFileSync(process.execPath, [PW, ...a, '--no-record', '--json'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...personEnv(), PROMPTWHEEL_NO_ALLOW_TRAILER: '1' }, timeout: CHECK_TIMEOUT }); }
   catch (e) { o = (e.stdout || '').toString(); err = e.signal ? `the check took longer than ${CHECK_TIMEOUT / 1000} seconds and was stopped. It runs your tests at each commit it compares. Give it longer with SAWBUCK_CHECK_TIMEOUT_MS (milliseconds), or point it at a faster test command in promptwheel.config.json.` : (e.stderr || '').toString(); code = e.status || 0; }
   let rep = null; try { rep = JSON.parse(o.slice(o.indexOf('{'))); } catch {}
   // the engine's own reason, without its zero-config notice
@@ -147,6 +149,30 @@ Usage:
                             wiring is gone and names what is left. --dry-run lists what would go
   sawbuck status [repo]     The inventory: caught over time + debt accruing now + whether it is armed. --json
                             --log [-n N] for the recent checks, newest first
+  sawbuck improve --attempt "<cmd>" [--target <measure>] [--label "<name>"] [--json]
+                            The loop, for work nobody watches: run any agent or script, check what it
+                            changed, and keep it only if the target improved (one commit). If a guard got
+                            worse, if the win came from a change to the tests, or if the target did not
+                            improve, the tree is put back as it was. --target names the measure (--goal is
+                            another name). Name none and, when the contract leaves no choice, it is picked:
+                            the test run, in the contract Sawbuck writes. Also --may-change "src/**",
+                            --floor, --cheaper.
+                            Start from a clean tree. Exit 0 kept · 1 a guard got worse · 2 gamed ·
+                            3 nothing improved · 64 could not run, or the attempt could not (a wrapper
+                            whose agent could not start should end with 64: no try is used up)
+  sawbuck improve --attempt "<cmd>" --turns N [--patience P]
+                            Judge over a number of turns, for work bigger than one attempt. Each turn goes
+                            on from where the last left the tree. The whole change so far is checked
+                            against the commit the run started from, the reading is handed to the next
+                            turn (PW_FEEDBACK holds its path), and the best turn is kept as one commit.
+                            If no turn won, the tree is put back. An interrupt puts it back too
+  sawbuck playbook [--json] What has paid in this repo, and what the loop tried and threw away, each with
+                            the measured reason. Read from the record of checked runs, which is kept in
+                            the git folder and never in your files
+  sawbuck insights [--json] How each measure has responded over the checked runs
+  sawbuck suggest [--json]  Where to spend the next attempt: a lever that has paid, or what was tried least
+  sawbuck backfill [-n N | --since REF]
+                            Fill the record from past commits
   sawbuck debt [repo] [--since REF] [--fail-on undocumented|test|any|N]
                             The live suppression debt in HEAD, risk-ranked, undocumented flagged. --since REF
                             shows only what a branch adds; --fail-on exits 1 when that debt (or, without
@@ -199,7 +225,9 @@ function gitTop(p) { try { return execFileSync('git', ['-C', p, 'rev-parse', '--
 const repoRoot = () => gitTop(repoArg()) || repoArg();
 // paths inside the repository's git dir, asked of git: a worktree or a submodule keeps its git dir
 // elsewhere (.git is a FILE there), so join(repo, '.git', ...) is wrong in exactly the repos where it hurts
-function gitPath(repo, rel) { try { return resolve(repo, execFileSync('git', ['-C', repo, 'rev-parse', '--git-path', rel], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()); } catch { return join(repo, '.git', rel); } }
+// where git keeps a file of its own, by the person's real settings: a hooks folder is found through core.hooksPath,
+// which Sawbuck's own git calls set to nothing (own-git.mjs)
+function gitPath(repo, rel) { try { return resolve(repo, execFileSync('git', ['-C', repo, 'rev-parse', '--git-path', rel], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: personEnv() }).trim()); } catch { return join(repo, '.git', rel); } }
 function gitDir(repo) { try { return resolve(repo, execFileSync('git', ['-C', repo, 'rev-parse', '--git-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()); } catch { return join(repo, '.git'); } }
 const out = (s) => process.stdout.write(s.endsWith('\n') ? s : s + '\n');
 // `detach --dry-run` walks the same path as the real detach and lists what it would touch, so the two cannot drift.
@@ -549,7 +577,7 @@ switch (cmd) {
     // copy after this one was wired in; an older one on PATH is never handed to. Once only (SAWBUCK_HANDED).
     if (!rest.includes('--stop') && !process.env.SAWBUCK_HANDED) {
       const newer = newerOnPath();
-      if (newer) { try { execFileSync(newer.path, ['__hook', ...rest], { stdio: 'inherit', env: { ...process.env, SAWBUCK_HANDED: '1' } }); } catch (e) { process.exit(e.status || 0); } break; }
+      if (newer) { try { execFileSync(newer.path, ['__hook', ...rest], { stdio: 'inherit', env: { ...personEnv(), SAWBUCK_HANDED: '1' } }); } catch (e) { process.exit(e.status || 0); } break; }
     }
     try { execFileSync(process.execPath, [HOOK, ...rest], { stdio: 'inherit' }); } catch (e) { process.exit(e.status || 0); }
     break;
@@ -723,6 +751,13 @@ switch (cmd) {
     } catch {}
     break;
   }
+  // The loop and the views over the record are the engine's own. Sawbuck hands these five through as they are: the
+  // contract is the one `sawbuck contract` wrote, the exit codes are the check's, and no reason in a commit is read.
+  case 'improve': case 'playbook': case 'insights': case 'suggest': case 'backfill': {
+    const r = spawnSync(process.execPath, [PW, cmd, ...rest], { stdio: 'inherit', env: { ...personEnv(), PROMPTWHEEL_NO_ALLOW_TRAILER: '1' } });
+    process.exitCode = r.status ?? 1;
+    break;
+  }
   default: die(`unknown command '${cmd}'\n\n${help}`);
 }
 
@@ -835,9 +870,20 @@ function syncExclude(repo, manifest) {
   return changed;
 }
 // the record paths still on disk and not tracked (a committed LOGBOOK.md is the person's file)
+// the engine's record of checked runs: one short row for each check a hook ran and each attempt of the loop. It is in
+// the git folder every worktree shares, never in the working tree, so it is found by asking git and shown by its path.
+function engineRecord(repo) {
+  try { return resolve(repo, execFileSync('git', ['-C', repo, 'rev-parse', '--git-common-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 'promptwheel', 'outcomes.jsonl'); } catch { return ''; }
+}
+// the loop's own record: one line a try, in the git folder of this worktree, and each try kept as refs/improve/<n>
+function loopRecord(repo) {
+  try { return join(execFileSync('git', ['-C', repo, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(), 'improve'); } catch { return ''; }
+}
 function recordLeft(repo) {
   const tracked = (p) => { try { return !!execFileSync('git', ['-C', repo, 'ls-files', '--', p], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return false; } };
-  return ['.sawbuck/', '.promptwheel/outcomes.jsonl', 'events.jsonl', 'annotations.jsonl', 'LOGBOOK.md', 'JOURNEY.md'].filter((p) => there(join(repo, p)) && !tracked(p));
+  const er = engineRecord(repo), lr = loopRecord(repo) && join(loopRecord(repo), 'attempts.jsonl');
+  return [...['.sawbuck/', '.promptwheel/outcomes.jsonl', 'events.jsonl', 'annotations.jsonl', 'LOGBOOK.md', 'JOURNEY.md'].filter((p) => there(join(repo, p)) && !tracked(p)),
+    ...(er && there(er) ? [relative(repo, er) || er] : []), ...(lr && there(lr) ? [relative(repo, lr) || lr] : [])];
 }
 // what the block hides that is still there: the record, and a settings.local.json the person keeps
 function hiddenLeft(repo) {
@@ -1268,6 +1314,15 @@ function purgeRecord(repo) {
     purge(join(repo, d));
   }
   purge(join(repo, '.promptwheel', 'outcomes.jsonl'));   // the rest of .promptwheel/ is the signed contract: yours to keep or delete
+  const er = engineRecord(repo); if (er) purge(er);        // the engine's record of checked runs, in the git folder
+  // the loop's record (its lines, its floor, its mark) and the tries it kept as refs
+  const lr = loopRecord(repo); if (lr) purge(lr);
+  let tries = []; try { tries = execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(refname)', 'refs/improve'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter(Boolean); } catch { /* none */ }
+  if (tries.length) {
+    if (dry) planned.lines.set('refs/improve', `delete  refs/improve/*  (${tries.length} ref${tries.length === 1 ? '' : 's'}: the changes the loop tried)`);
+    else { for (const ref of tries) { try { execFileSync('git', ['-C', repo, 'update-ref', '-d', ref], { stdio: 'ignore' }); } catch { /* best effort */ } } say(`sawbuck: purged ${tries.length} ref${tries.length === 1 ? '' : 's'} under refs/improve`); }
+    n++;
+  }
   if (!n) say('sawbuck: no record to purge');
 }
 // the path a hook bakes in: the quoted one ending in sawbuck.mjs, in a shell hook or in JSON, where the quotes are escaped

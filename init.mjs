@@ -23,6 +23,8 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { PW } from './bins.mjs';
 import { events as history } from './memory.mjs';
+import { ownGitOn, personEnv } from './own-git.mjs';
+ownGitOn();   // when this file is run by itself; under sawbuck it is on already (own-git.mjs)
 
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes(f);
@@ -50,7 +52,7 @@ const restore = () => { try { if (prior != null) writeFileSync(cfgPath, prior); 
 // sawbuck-flavored contract block below, so the user does not get two overlapping agent guides.
 const pwArgs = ['init', '--force', '--no-agent-block'];
 if (preset) pwArgs.push('--preset', preset);
-try { execFileSync(process.execPath, [PW, ...pwArgs], { cwd: repo, stdio: 'ignore' }); }
+try { execFileSync(process.execPath, [PW, ...pwArgs], { cwd: repo, stdio: 'ignore', env: personEnv() }); }
 catch { restore(); out('sawbuck init: could not generate the base contract (promptwheel init failed).'); process.exit(1); }
 let cfg;
 try { cfg = JSON.parse(readFileSync(cfgPath, 'utf8')); } catch { restore(); out('sawbuck init: base contract unreadable.'); process.exit(1); }
