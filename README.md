@@ -56,16 +56,7 @@ No model reads your code. No account. Nothing leaves your CI.
 
 Try it with `--comment-only`: nothing fails. Working alone, add `--solo`. Both, and what it sends back: [GUIDE.md](GUIDE.md#with---full-the-supply-chain-and-pull-requests).
 
-## Which line is for you
-
-| You want | Use | The line |
-|---|---|---|
-| it wired into Claude Code | the plugin `sawbuck-reins` | `/plugin marketplace add sawbuck-ai/reins`, then `/plugin install sawbuck-reins@sawbuck` |
-| the commands only, nothing wired (the edition made for Anthropic's directory) | the plugin `sawbuck` | `/plugin install sawbuck@sawbuck` |
-| a terminal, or another agent | the command | `npx sawbuck check`, or `npm i -g sawbuck` then `sawbuck contract` and `sawbuck attach` |
-| a check on every pull request | the workflow `contract --full` writes | `npx -y sawbuck contract --full`, then commit and push |
-| a pull request to fail on new suppressions or disabled tests | the Action in Sawbuck's repo | `uses: sawbuck-ai/sawbuck@v0` |
-| the engine alone, in CI or a loop, on any number | promptwheel | `npx promptwheel run`, or `uses: promptwheel-ai/promptwheel@v0` |
+Which line is for you (the plugin, the commands alone, a terminal, a pull request, the engine by itself): [GUIDE.md](GUIDE.md#which-line-is-for-you).
 
 ## What it does
 
