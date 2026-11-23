@@ -3022,3 +3022,42 @@ test('claim: sawbuck align is in the guide in the help\'s own words, and what it
   const r = sb(d, 'align', '--since', git(d, 'rev-list', '--max-parents=0', 'HEAD'));
   assert.match(r.out, /: 100 commits, the last 100 of 10\d\./, r.out); assert.match(r.out, /The tests were not run\./, r.out);
 });
+
+// ---------------------- a repository with no commit yet (found by the rehearsal of 0.2.5 in a real session, 2026-11-22)
+// proof-bench/live/rehearse-0.2.5: in a folder with no repository the person said yes to git init, the agent ran
+// contract and attach, and the end of that same turn sent it back three times for promptwheel.config.json, the file
+// contract had just written. With no commit there is no HEAD: one git call asks about HEAD, and its failure threw the
+// other answers away, so the list of protected files as they stand came back empty. Every protected file in the
+// folder then read as changed in the turn, at every turn, until a first commit. Every fixture above starts from a
+// commit, so no claim had stood there.
+const noCommitYet = () => {
+  const d = mkdtempSync(join(tmpdir(), 'claims-'));
+  put(d, 'package.json', JSON.stringify({ name: 'demo', version: '1.0.0', scripts: { test: 'node --test' } }, null, 2) + '\n');
+  put(d, 'src/add.js', 'exports.add=(a,b)=>a+b\n'); put(d, 'test/add.test.js', "const t=require('node:test'),a=require('node:assert');const {add}=require('../src/add.js')\nt.test('add',()=>a.equal(add(2,2),4))\n");
+  assert.equal(sb(d, 'contract').code, 64, 'a folder that is no repository yet');
+  git(d, 'init', '-q', '-b', 'main'); git(d, 'config', 'user.email', 't@example.com'); git(d, 'config', 'user.name', 't');
+  assert.equal(sb(d, 'contract').code, 0); assert.equal(sb(d, 'attach').code, 0);
+  return d;
+};
+const sentBackFor = (o, rule) => /"decision":"block"/.test(o) && (!rule || o.includes(rule));
+test('claim: in a repository with no commit yet, the turn that ran contract and attach is not sent back for the contract it wrote, and neither is the next turn, with the files untracked or staged', () => {
+  const d = noCommitYet(); const { prompt, stop } = ownHooks(d);
+  assert.ok(!sentBackFor(stop()), 'the turn that set Sawbuck up');
+  prompt('add a function'); put(d, 'src/more.js', 'exports.more = 1;\n');
+  assert.ok(!sentBackFor(stop()), 'the next turn, with nothing committed yet');
+  git(d, 'add', '-A'); prompt('one more'); put(d, 'src/again.js', 'exports.again = 1;\n');
+  assert.ok(!sentBackFor(stop()), 'and with every file staged and still no commit');
+  save(d, 'the first commit, by the person, between two turns'); prompt('go on'); put(d, 'src/third.js', 'exports.third = 1;\n');
+  assert.ok(!sentBackFor(stop()), 'and after the person made the first commit');
+});
+test('claim: in a repository with no commit yet, an edit to the contract by the agent is sent back, in the folder, staged, and when the agent makes the first commit with it', () => {
+  const loosen = (d) => edit(d, 'promptwheel.config.json', (s) => { const c = JSON.parse(s); c.mandates = (c.mandates || []).filter((m) => m.name !== 'workflows-frozen'); return JSON.stringify(c, null, 2) + '\n'; });
+  const a = noCommitYet(); let h = ownHooks(a); h.prompt('loosen the rules'); loosen(a);
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'while it sits in the folder');
+  const b = noCommitYet(); h = ownHooks(b); h.prompt('loosen the rules'); loosen(b); git(b, 'add', '-A');
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'staged');
+  const c = noCommitYet(); h = ownHooks(c); h.prompt('loosen the rules and commit'); loosen(c); save(c, 'the first commit, made in the turn');
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'in the first commit of the repository, made in the turn');
+  const e = noCommitYet(); h = ownHooks(e); h.prompt('commit everything'); save(e, 'the first commit, made in the turn, with the contract as the person had it');
+  assert.ok(!sentBackFor(h.stop()), 'the contract committed as it stood is the person\'s own file: not sent back');
+});

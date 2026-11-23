@@ -93,14 +93,26 @@ export function hiddenChanged(repo) {
   return out;
 }
 
+// Every path that is not as HEAD holds it: changed, staged, untracked, or hidden from git and changed. The baseline a
+// prompt takes and the end of a turn both ask this, and they must get one answer, so both ask it here.
+// In a repository with no commit yet there is no HEAD to hold a file against: every file git has staged, or can see,
+// is new. Each question is put to git by itself. Until 0.2.5 the baseline asked them in one go and threw every answer
+// away when the first failed for want of a HEAD, while the end of a turn asked each alone: in a new repository the
+// baseline was empty, and every protected file there (the contract `sawbuck contract` had just written) read as
+// changed in the turn, at every turn, until a first commit. Found in a real session, proof-bench/live/rehearse-0.2.5.
+export function dirtyNames(repo) {
+  const names = (...a) => { try { return gitNames(repo, a); } catch { return null; } };
+  const againstHead = names('diff', '--name-only', '--no-renames', 'HEAD');
+  return [...new Set([...(againstHead ?? names('ls-files', '--cached') ?? []), ...(names('ls-files', '--others', '--exclude-standard') ?? []), ...hiddenChanged(repo)])];
+}
+
 // the protected paths that are dirty right now, each with its content hash: the baseline `turn`
 // records when a prompt begins, so the Stop hook counts only what the turn itself changed and leaves
 // a person's own pre-existing edits alone. {} when nothing protected is dirty (or not a git repo).
 // `store` keeps each file's content in the object database (see hashOf), which the baseline does.
 export function protectedDirty(repo, { store = false } = {}) {
-  let changed = [];
-  try { changed = [...new Set([...gitNames(repo, ['diff', '--name-only', '--no-renames', 'HEAD']), ...gitNames(repo, ['ls-files', '--others', '--exclude-standard']), ...hiddenChanged(repo)])]; }
-  catch { return {}; }
+  const changed = dirtyNames(repo);
+  if (!changed.length) return {};
   const res = mandatesInForce(repo).flatMap((m) => pathsOf(m).map(globToRe));
   const out = {};
   for (const f of changed) if (res.some((re) => re.test(f))) out[f] = hashOf(repo, f, { store });

@@ -11,7 +11,7 @@ import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-import { mandateHits, hashOf, protectedAmong, lockState, gitNames, hiddenChanged } from './contract.mjs';
+import { mandateHits, hashOf, protectedAmong, lockState, gitNames, dirtyNames } from './contract.mjs';
 import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { readAllowed, keptOnTree } from './allowed.mjs';
@@ -320,10 +320,14 @@ const sendBack = (idKey, countKey, reason, stillOpen) => {
 if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   const now = new Date().toISOString();
   const names = (...a) => { try { return gitNames(repo, a); } catch { return []; } };   // NUL-separated: a name git would quote is still a path
-  const dirty = [...new Set([...names('diff', '--name-only', '--no-renames', 'HEAD'), ...names('ls-files', '--others', '--exclude-standard'), ...hiddenChanged(repo)])];   // a file hidden from git is read too
+  const dirty = dirtyNames(repo);   // the one list the baseline was taken from too (a file hidden from git is in it, and with no commit yet every file is)
   const base = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null;
   const baseline = (base && base.files && typeof base.files === 'object') ? base.files : {};
-  const committedSince = (base && base.sha && head && base.sha !== head) ? names('diff', '--name-only', '--no-renames', base.sha, 'HEAD') : [];
+  // The baseline may stand where there was no commit yet (sha ''). A first commit made since then holds every file in
+  // it: those are read against the empty tree, so the repository's first commit does not walk a protected edit through.
+  const emptyTree = () => { try { return execFileSync('git', ['hash-object', '-t', 'tree', '--stdin'], { cwd: repo, input: '', encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim(); } catch { return ''; } };
+  const since = (base && base.sha) ? base.sha : (base && base.sha === '' && head ? emptyTree() : '');
+  const committedSince = (since && head && since !== head) ? names('diff', '--name-only', '--no-renames', since, 'HEAD') : [];
   const hashNow = {}; for (const f of dirty) if (Object.prototype.hasOwnProperty.call(baseline, f)) hashNow[f] = hashOf(repo, f);
   const untouched = (f) => Object.prototype.hasOwnProperty.call(baseline, f) && hashNow[f] === baseline[f];
   // a person's own uncommitted file (in the baseline) that the turn only committed, content unchanged, is still theirs:
