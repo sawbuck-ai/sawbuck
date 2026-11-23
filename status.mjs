@@ -182,7 +182,7 @@ const refuses = isGit ? gitRefuses(repo) : '';   // a repo another user owns: gi
 if (refuses) {
   out.push(`   ${refuses[0].toUpperCase()}${refuses.slice(1)}`);
 } else if (!isGit) {
-  out.push(`   Not a git repo here, so there is nothing to verify or remember. cd into your project.`);
+  out.push(`   Not a git repository here, so there is nothing to check yet. cd into your project, or run \`${cli('contract')}\` here: it offers to start one.`);
 } else if (state === 'watching' && wired === 'user' && !hasConfig) {
   out.push('   Measuring here  ·  wired in at user level, and that check runs only in a repo that has a promptwheel.config.json. \`' + cli('contract') + '\` writes one.');
 } else if (state === 'watching') {

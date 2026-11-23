@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PW } from './bins.mjs';
 import { cli } from './copies.mjs';
 import { mandateHits, gitNames } from './contract.mjs';
+import { readCommits } from './lookback.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // The check's own action is pinned by commit, like GitHub's: the commit the engine's release tag points at. A moving
@@ -99,28 +100,13 @@ const run = (args, cwd, stdio = ['ignore', 'pipe', 'pipe']) => execFileSync(proc
 // TRY IT ON YOUR OWN PAST. Each of the last n commits (merges left out, first parents) is put to the engine with the
 // contract a real run would write: its protected paths, and the counts it keeps beside the tests. The test run itself
 // is not replayed: it is slow, and on 340 real commits every one of the 82 that were sent back was sent back for a
-// protected path or a count (proof-bench/contract-replay). Read-only: the engine measures in throwaway copies.
-const COUNTS = new Set(['test_count', 'skipped_tests', 'suppressions', 'assertions']);
+// protected path or a count (proof-bench/contract-replay). Read-only: the engine measures in throwaway copies. The
+// reading of each commit is lookback.mjs, shared with `sawbuck align`.
 async function tryIt(repo, cfg, n) {
-  const { check } = await import(pathToFileURL(PW).href);
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  let lines = []; try { lines = git('log', '--no-merges', '--first-parent', '-n', String(n), '--date=short', '--format=%H%x09%P%x09%ad%x09%s').split('\n').filter(Boolean); } catch {}
+  let lines = []; try { lines = git('log', '--no-show-signature', '--no-merges', '--first-parent', '-n', String(n), '--date=short', '--format=%H%x09%P%x09%ad%x09%s').split('\n').filter(Boolean); } catch {}
   const commits = lines.map((l) => { const [sha, parents, day, ...s] = l.split('\t'); return { sha, parent: (parents || '').split(' ')[0], day, subject: s.join(' ') }; }).filter((c) => c.parent);
-  const counts = (cfg.metrics || []).filter((m) => m && COUNTS.has(m.name));
-  const fast = { ...cfg, mandates: [], metrics: counts };
-  const back = []; let unread = 0, signed = 0;
-  // the commit that signed the contract adds the very files the contract protects, and a rule a change adds does not
-  // apply to that change: it is counted apart, not as sent back
-  const holds = (ref) => { try { execFileSync('git', ['-C', repo, 'cat-file', '-e', `${ref}:promptwheel.config.json`], { stdio: 'ignore' }); return true; } catch { return false; } };
-  for (const c of commits) {
-    if (!holds(c.parent) && holds(c.sha)) { signed++; continue; }
-    // protected paths: the diff's own file names against the rules as they would be written. (The engine applies a rule
-    // only where it was already in force at the commit before, and here it never was.)
-    let paths = []; try { paths = mandateHits(repo, gitNames(repo, ['diff', '--name-only', '--no-renames', c.parent, c.sha]), { list: cfg.mandates || [] }).map((m) => ({ name: m.name, files: m.files || [] })); } catch { unread++; continue; }
-    let rep = { metrics: [] }; if (counts.length) { try { rep = check({ repo, base: c.parent, head: c.sha, config: fast, detectGaming: false, repeat: 1 }); } catch { unread++; continue; } }
-    const worse = (rep.metrics || []).filter((m) => m.guard && m.ok === false && m.status === 'regressed').map((m) => m.name);
-    if (paths.length || worse.length) back.push({ ...c, paths, worse });
-  }
+  const { back, unread, signed } = await readCommits(repo, cfg, commits);
   const P = back.filter((b) => b.paths.length).length, W = back.filter((b) => b.worse.length).length;
   const tally = (list) => { const t = new Map(); for (const x of list) t.set(x, (t.get(x) || 0) + 1); return [...t].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '); };
   const o = [`sawbuck contract --try: nothing was written. Your last ${commits.length} commit${commits.length === 1 ? '' : 's'}, held against the contract a real run would write:`];
