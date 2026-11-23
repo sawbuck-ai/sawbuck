@@ -398,7 +398,7 @@ test('claim: a failing test a person asked to have deleted: their reason ends th
 });
 test('claim: a test a person removes on purpose passes the check with their reason on a signed repo, a passing one or a failing one, and a trailer does not', () => {
   let d = signed(true); edit(d, 'test/add.test.js', dropTest('mul')); save(d, 'drop the mul test');
-  let r = sb(d, 'check'); assert.equal(r.code, 1, r.out); assert.match(r.out, /needs a look: fewer tests\. If you meant this: --allow "<reason>"/, r.out);
+  let r = sb(d, 'check'); assert.equal(r.code, 1, r.out); assert.match(r.out, /needs a look: fewer tests\. If you meant this: for a commit on your machine, --allow "<reason>"\. For a pull request, someone who did not open it comments sawbuck-allow: <reason>$/m, r.out);
   r = sb(d, 'check', '--allow', 'that test is obsolete'); assert.equal(r.code, 0, r.out); assert.match(r.out, /allowed with --allow: "that test is obsolete"/);
   // the failing test, deleted on purpose: the green and the count are one act, and one plain reason takes both
   d = signed(false); edit(d, 'test/add.test.js', dropTest('add')); save(d, 'drop the add test');
