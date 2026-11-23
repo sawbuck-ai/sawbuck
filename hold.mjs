@@ -45,8 +45,8 @@ export function ownRecordEdit(hookJson, repo) {
   const gp = guardPath(repo);
   const under = (abs, dir) => !!dir && (abs === dir || abs.startsWith(dir + sep));
   const typed = resolve(repo, f), real = realPath(typed);
-  const began = beganDir();   // in the person's home: where a turn's beginning is kept when there was no repository
-  return (under(typed, began) || under(real, realPath(began)) || under(typed, join(resolve(repo), '.sawbuck')) || under(typed, gp ? dirname(gp) : '')
+  let began = ''; try { began = beganDir(); } catch { /* no home to name: nothing there to guard */ }   // in the person's home: where a turn's beginning is kept when there was no repository
+  return ((began && (under(typed, began) || under(real, realPath(began)))) || under(typed, join(resolve(repo), '.sawbuck')) || under(typed, gp ? dirname(gp) : '')
     || under(real, realPath(join(resolve(repo), '.sawbuck'))) || under(real, gp ? realPath(dirname(gp)) : '')) ? askOwn() : null;
 }
 export const OUTWARD = [

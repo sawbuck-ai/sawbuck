@@ -11,7 +11,7 @@ import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-import { mandateHits, hashOf, protectedAmong, lockState, sinceBegan } from './contract.mjs';
+import { mandateHits, hashOf, hashFollowing, isLink, protectedAmong, lockState, sinceBegan } from './contract.mjs';
 import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { beganWithoutRepo, forgetBegan } from './began.mjs';
@@ -342,7 +342,8 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   // files where it had none or where git no longer lists them
   const { dirty, committedSince } = sinceBegan(repo, base, head);
   const hashNow = {}; for (const f of dirty) if (Object.prototype.hasOwnProperty.call(baseline, f)) hashNow[f] = hashOf(repo, f);
-  const untouched = (f) => Object.prototype.hasOwnProperty.call(baseline, f) && hashNow[f] === baseline[f];
+  // a link is hashed as git keeps it since 0.2.6; a baseline 0.2.5 took hashed what it points at: either reads untouched
+  const untouched = (f) => Object.prototype.hasOwnProperty.call(baseline, f) && (hashNow[f] === baseline[f] || (isLink(repo, f) && hashFollowing(repo, f) === baseline[f]));
   // a person's own uncommitted file (in the baseline) that the turn only committed, content unchanged, is still theirs:
   // after /contract, the agent's `git add -A` sweeps the new contract into its commit, and that is not a protected edit
   const committedAsTheyWere = (f) => Object.prototype.hasOwnProperty.call(baseline, f)

@@ -127,28 +127,27 @@ export function dirtyNames(repo) {
   return [...new Set([...names('diff', '--name-only', '--no-renames', 'HEAD', '--'), ...names('ls-files', '--others', '--exclude-standard'), ...hiddenChanged(repo)])];
 }
 
-// THE BASELINE IS A SNAPSHOT (0.2.6): what a turn begins with, and what has changed since it began.
-// Until then "changed in this turn" was whatever git listed at the end of the turn, against HEAD. Three things were on
-// no list. A file git was not tracking when the turn began, and that is gone or ignored at its end: a contract not yet
-// committed could be deleted, or added to .gitignore and emptied, and the turn was not sent back. Where the turn began
-// with no commit: what is staged, and all of a first commit made in the turn. And a turn that ends on a branch with no
-// commit (git checkout --orphan, then an edit). Found by a second reader of 0.2.5 and typed against the published
-// package before a line of this was written (proof-bench/no-baseline).
-// The rule: a turn is read against what it BEGAN with, its commit where it had one and the baseline's own files where
-// it had none. Which reading is used is decided by the baseline, never by whether HEAD exists at the end: a first try
-// at this (the night of 0.2.5) asked the second question, and sent back a turn that had only made an orphan branch.
+// WHAT A TURN BEGAN WITH (0.2.6). Until then "changed in this turn" was whatever git listed at the end of the turn,
+// against HEAD, and two things were on no list: the contract while it is not yet committed, once a turn deleted it or
+// hid it in .gitignore; and anything at all of a turn that ends on a branch with no commit (git checkout --orphan, then an
+// edit). Now the contract's own files are read by name, and a turn that began on a commit is read against that commit
+// even where HEAD names none at its end. Which reading is used is decided by the baseline, never by whether HEAD exists at
+// the end: a first try at this (the night of 0.2.5) asked the second question, and sent back a turn that had only made an
+// orphan branch. NOT read, as in 0.2.5: with no commit yet, a protected file other than the contract that is staged, put
+// in a first commit, deleted or hidden while untracked (proof-bench/no-baseline, PLAN.md, amendment of 2026-11-23).
 const hasHead = (repo) => { try { gitOut(repo, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']); return true; } catch { return false; } };
 // the contract's own files are read by name: a turn that adds one to .gitignore does not take it out of the next baseline
 const OWN_FILES = ['promptwheel.config.json', 'sawbuck.config.json'];
 const here = (repo, f) => { try { lstatSync(join(repo, f)); return true; } catch { return false; } };
 
-// Every path a baseline may have to hold. On a commit: what is not as that commit holds it (dirtyNames). With no commit
-// yet: everything git knows or sees, staged or not, because there is nothing to be "not as" and the end of the turn can
-// then only compare by content. And the contract's own files wherever they are not as the commit holds them.
+// Every path a baseline may have to hold: what is not as HEAD holds it (dirtyNames), and the contract's own files
+// wherever they are there and not as HEAD holds them (with no commit yet: wherever they are there), whether git lists
+// them or not. A first form (2026-11-23) listed everything git knew where there was no commit, and read all of it by
+// content at the end of the turn: a second reader showed it sent back a person's ordinary work there (a staged file's
+// unstaged edit put back, a pull into a new repository, a .gitattributes added). Taken out again; see sinceBegan.
 export function standingNames(repo) {
-  const names = (...a) => { try { return gitNames(repo, a); } catch { return []; } };
+  const out = dirtyNames(repo);
   const head = hasHead(repo);
-  const out = head ? dirtyNames(repo) : [...new Set([...names('ls-files', '--cached'), ...names('ls-files', '--others', '--exclude-standard')])];
   for (const f of OWN_FILES) if (!out.includes(f) && here(repo, f) && (!head || hashOf(repo, f) !== blobAt(repo, 'HEAD', f))) out.push(f);
   return out;
 }
@@ -161,11 +160,7 @@ export function sinceBegan(repo, base, head) {
   const files = (base && base.files && typeof base.files === 'object') ? base.files : {};
   const began = (base && typeof base.sha === 'string') ? base.sha : null;
   let dirty; let committedSince = [];
-  if (began === '') {
-    // the turn began with no commit: everything git knows or sees now, and all of a first commit if one was made
-    dirty = [...names('ls-files', '--cached'), ...names('ls-files', '--others', '--exclude-standard')];
-    if (head) committedSince = names('ls-tree', '-r', '--name-only', 'HEAD');
-  } else if (began && !head) {
+  if (began && !head) {
     // it began on a commit and HEAD names none now (an orphan branch made in the turn): the working tree against the
     // commit it began at, for what is there. What is gone is not read: `git switch --orphan` empties the tree itself.
     dirty = [...names('diff', '--name-only', '--no-renames', '--diff-filter=d', began, '--'), ...names('ls-files', '--others', '--exclude-standard')];
@@ -173,8 +168,13 @@ export function sinceBegan(repo, base, head) {
     dirty = dirtyNames(repo);
     if (began && head && began !== head) committedSince = names('diff', '--name-only', '--no-renames', began, 'HEAD', '--');
   }
-  // what the baseline holds and git was not tracking when the turn began is read whether or not git still lists it
-  for (const f of Object.keys(files)) if (!dirty.includes(f) && (!began || blobAt(repo, began, f) === '')) dirty.push(f);
+  // the contract's own files, where the baseline holds them, are read whether or not git still lists them: deleted,
+  // hidden in .gitignore, staged, or carried into a first commit. Only those. A first form read every protected file the
+  // baseline held this way, and a second reader showed it sent back a person's untracked file that `git stash -u` or
+  // `git clean -fd` took out of the tree, and a dependency's Dockerfile under node_modules in a new repository.
+  // And only while the contract is not yet committed where the turn began: a committed one that changes shows in git's
+  // own lists, and one put back to what was committed (a person's edit stashed or discarded) is read as 0.2.5 read it.
+  for (const f of OWN_FILES) if (Object.prototype.hasOwnProperty.call(files, f) && !dirty.includes(f) && (!began || blobAt(repo, began, f) === '')) dirty.push(f);
   return { dirty: [...new Set(dirty)], committedSince };
 }
 
@@ -245,3 +245,10 @@ export function lockState(repo) {
   const run = (...a) => execFileSync(process.execPath, [tool, ...a], { cwd: repo, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   try { return { drift: JSON.parse(run('drift', '.', '--json')), pins: run('pins', '.') }; } catch { return null; }
 }
+
+// What `git hash-object <path>` gives, following a link: how 0.2.5 hashed one. A baseline taken by that version and read
+// at the end of a turn by this one is compared both ways, so an untouched link is not sent back across the upgrade.
+export function hashFollowing(repo, file) {
+  try { return gitOut(repo, ['hash-object', '--', file]).trim(); } catch { return 'deleted'; }
+}
+export function isLink(repo, file) { try { return lstatSync(join(repo, file)).isSymbolicLink(); } catch { return false; } }
