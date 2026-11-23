@@ -2973,3 +2973,26 @@ test('claim: one table says which line is for whom, the same in the README and t
   for (const line of ['/plugin install sawbuck-reins@sawbuck', '/plugin install sawbuck@sawbuck', 'npx sawbuck check', 'npx -y sawbuck contract --full', 'uses: sawbuck-ai/sawbuck@v0', 'npx promptwheel run'])
     assert.ok(table('README.md').includes(line), `the table holds: ${line}`);
 });
+
+// A person swaps a test tool: the tool leaves the dependencies, and the script that called it is rewritten. The check
+// measures the commit before with what is installed NOW, where the tool is gone, so the earlier tests cannot run and
+// the change reads as a move from failing to passing made by config files. Found on a real commit (yargs 9588a76436,
+// proof-bench/replay, 2026-11-22); ten small cases are in proof-bench/could-not-measure. This holds today's reading so
+// the limits page stays true. The fix turns its middle round: the check will say it could not run the earlier tests.
+test('limit: a change that swaps a test tool reads gamed, and a person\'s reason is the way through', () => {
+  const d = mkdtempSync(join(tmpdir(), 'claims-swap-')); git(d, 'init', '-q', '-b', 'main');
+  put(d, '.gitignore', 'node_modules\n'); put(d, 'src/add.js', 'exports.add = (a, b) => a + b;\n');
+  put(d, 'test/add.test.js', "const t = require('node:test'), a = require('node:assert');\nconst { add } = require('../src/add.js');\nt.test('add', () => { a.equal(add(2, 2), 4); });\n");
+  put(d, 'package.json', JSON.stringify({ name: 'n', version: '1.0.0', scripts: { test: 'node --test', posttest: 'linty' }, devDependencies: { linty: '1.0.0' } }) + '\n');
+  put(d, 'node_modules/linty/package.json', '{"name":"linty","version":"1.0.0","bin":{"linty":"cli.js"}}\n'); put(d, 'node_modules/linty/cli.js', '#!/usr/bin/env node\nprocess.exit(0)\n');
+  chmodSync(join(d, 'node_modules/linty/cli.js'), 0o755); mkdirSync(join(d, 'node_modules/.bin'), { recursive: true }); symlinkSync('../linty/cli.js', join(d, 'node_modules/.bin/linty'));
+  save(d, 'base'); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); const base = git(d, 'rev-parse', 'HEAD');
+  assert.equal(check(d).verdict !== 'gamed', true, 'before the swap nothing reads gamed');
+  put(d, 'lint.js', 'process.exit(0);\n'); put(d, 'package.json', JSON.stringify({ name: 'n', version: '1.0.0', scripts: { test: 'node --test', posttest: 'node lint.js' } }) + '\n');
+  rmSync(join(d, 'node_modules/linty'), { recursive: true }); rmSync(join(d, 'node_modules/.bin/linty'));
+  save(d, 'our own lint script');
+  const r = check(d, '--base', base); assert.equal(r.verdict, 'gamed', 'an honest tool swap reads gamed: the limit'); assert.equal(r.code, 2);
+  const a = sb(d, 'check', '--base', base, '--allow', 'swapped linty for our own lint script'); assert.equal(a.code, 0, a.out); assert.match(a.out, /allowed with --allow/);
+  assert.match(flat(README), /A change that swaps a test tool\.\*\* When a commit removes a dependency that the earlier tests need to build or run/, 'the limits page says so');
+  assert.match(flat(README), /Accepting the change with a reason is the way through\./);
+});
