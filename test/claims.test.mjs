@@ -3317,4 +3317,31 @@ test('claim: a contract the person had committed and then edited is read as 0.2.
   const d = signedWithWorkflow(); dropWorkflowRule(d); const h = ownHooks(d); h.prompt('stash my change for now'); git(d, 'stash');
   assert.ok(!sentBackFor(h.stop()), 'a committed contract put back to what was committed is not a protected edit of the turn');
 });
+test('claim: once the contract is committed, a sawbuck.config.json that was never committed is read as 0.2.5 read it: edited where it is ignored, stashed with -u, or cleaned away, the turn is not sent back', () => {
+  const local = (d) => { put(d, 'sawbuck.config.json', '{"enforce":{"maxBlocks":3}}\n'); };
+  let d = signedWithWorkflow(); edit(d, '.gitignore', (s) => s + 'sawbuck.config.json\n'); save(d, 'ignore local settings'); local(d); let h = ownHooks(d);
+  h.prompt('set maxBlocks to 2 in my local settings'); put(d, 'sawbuck.config.json', '{"enforce":{"maxBlocks":2}}\n');
+  assert.ok(!sentBackFor(h.stop()), 'edited where it is ignored, the contract committed');
+  d = signedWithWorkflow(); local(d); h = ownHooks(d); h.prompt('x'); git(d, 'stash', '-u');
+  assert.ok(!sentBackFor(h.stop()), 'git stash -u left in place');
+  d = signedWithWorkflow(); local(d); h = ownHooks(d); h.prompt('x'); git(d, 'clean', '-fdq');
+  assert.ok(!sentBackFor(h.stop()), 'git clean -fd');
+});
+test('claim: while the contract is not yet committed, a turn that takes it out of the tree with git stash -u or git clean -fd is sent back', () => {
+  let d = contractNotCommitted(); let h = ownHooks(d); h.prompt('x'); git(d, 'stash', '-u');
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'git stash -u left in place');
+  d = contractNotCommitted(); h = ownHooks(d); h.prompt('x'); git(d, 'clean', '-fdq');
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'git clean -fd');
+});
+test('claim: with no commit yet, a .gitattributes added beside a staged CRLF contract whose bytes never changed is not sent back', () => {
+  const d = mkdtempSync(join(tmpdir(), 'claims-')); git(d, 'init', '-q', '-b', 'main'); put(d, 'package.json', '{"name":"x","scripts":{"test":"node --test"}}\n');
+  assert.equal(sb(d, 'contract').code, 0); edit(d, 'promptwheel.config.json', (s) => s.replace(/\n/g, '\r\n')); git(d, 'add', '-A'); assert.equal(sb(d, 'attach').code, 0);
+  const h = ownHooks(d); h.prompt('x'); put(d, '.gitattributes', '* text=auto\n');
+  assert.ok(!sentBackFor(h.stop()));
+});
+test('claim: a protected file the person had deleted, that the turn puts back as a link pointing nowhere, is sent back', { skip: process.platform === 'win32' && 'links' }, () => {
+  const d = signedWithWorkflow(); rmSync(join(d, '.github/workflows/ci.yml')); const h = ownHooks(d);
+  h.prompt('x'); symlinkSync('nowhere.yml', join(d, '.github/workflows/ci.yml'));
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'));
+});
 

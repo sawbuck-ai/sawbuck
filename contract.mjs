@@ -174,7 +174,10 @@ export function sinceBegan(repo, base, head) {
   // `git clean -fd` took out of the tree, and a dependency's Dockerfile under node_modules in a new repository.
   // And only while the contract is not yet committed where the turn began: a committed one that changes shows in git's
   // own lists, and one put back to what was committed (a person's edit stashed or discarded) is read as 0.2.5 read it.
-  for (const f of OWN_FILES) if (Object.prototype.hasOwnProperty.call(files, f) && !dirty.includes(f) && (!began || blobAt(repo, began, f) === '')) dirty.push(f);
+  // "not yet committed" is said of the contract (its first file), not of each file alone: a sawbuck.config.json that is
+  // never committed (a person's local settings) is read as 0.2.5 read it once the contract is (a second reader, CN7).
+  const uncommitted = !began || blobAt(repo, began, OWN_FILES[0]) === '';
+  for (const f of OWN_FILES) if (uncommitted && Object.prototype.hasOwnProperty.call(files, f) && !dirty.includes(f)) dirty.push(f);
   return { dirty: [...new Set(dirty)], committedSince };
 }
 
@@ -249,6 +252,12 @@ export function lockState(repo) {
 // What `git hash-object <path>` gives, following a link: how 0.2.5 hashed one. A baseline taken by that version and read
 // at the end of a turn by this one is compared both ways, so an untouched link is not sent back across the upgrade.
 export function hashFollowing(repo, file) {
-  try { return gitOut(repo, ['hash-object', '--', file]).trim(); } catch { return 'deleted'; }
+  try { return gitOut(repo, ['hash-object', '--', file]).trim(); } catch { return isLink(repo, file) ? 'a link to nothing' : 'deleted'; }
+}
+// The file's bytes as they are, with no filter of git's applied (no line-end conversion from .gitattributes). A turn that
+// adds a .gitattributes changes what `git hash-object` gives for bytes that did not change, and a staged CRLF file was
+// sent back for it (a second reader, CN6). Bytes that are as the baseline found them are untouched.
+export function hashRaw(repo, file) {
+  try { return gitOut(repo, ['hash-object', '--no-filters', '--', file]).trim(); } catch { return 'deleted'; }
 }
 export function isLink(repo, file) { try { return lstatSync(join(repo, file)).isSymbolicLink(); } catch { return false; } }
