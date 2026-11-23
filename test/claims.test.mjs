@@ -2944,3 +2944,32 @@ test('claim: the note on tests taken out counts a test made from a table as one,
   put(d, 'a.js', 'export const v = 1;\n'); commit(d, 'squashed: tests came and went inside it');
   assert.equal(note(d, base), null);
 });
+
+// ---- the pages agree (his yes of 2026-11-22 on the words of words-for-your-yes-pages-2026-11-22.md) -----------------
+// Five pages opened five ways, the same commands were listed in pieces on each, and two pages disagreed about where it
+// runs. These hold the pages to one opening, one table, and one sentence about each platform.
+const OPENING = 'Write down the rules your agent follows, and prove they held.';
+const page = (f) => readFileSync(join(HERE, '..', f), 'utf8');
+test('claim: the README, the npm description and the help open with the same sentence', () => {
+  assert.ok(page('README.md').split('\n')[2].startsWith(`**${OPENING}**`), 'the README\'s first sentence');
+  assert.ok(JSON.parse(page('package.json')).description.startsWith(OPENING), 'the npm description');
+  assert.ok(sb(HOME, '--help').out.split('\n')[0].toLowerCase().includes(OPENING.slice(0, -1).toLowerCase()), 'the help banner');
+});
+test('claim: the help names logbook by what it reads', () => {
+  const engines = sb(HOME, 'help', '--all').out.split('\n').find((l) => l.startsWith('Engines:'));
+  assert.match(engines, /@promptwheel\/logbook \(what git history says about a file\)/); assert.doesNotMatch(engines, /memory/);
+});
+test('claim: one sentence says where it has run, and the limits page agrees with it', () => {
+  assert.match(page('README.md'), /^- Run on Linux\. On a Mac the tests pass and no session has been run yet\. Not supported on Windows\.$/m);
+  assert.match(page('LIMITS.md'), /No session has been run on a Mac\./); assert.match(page('LIMITS.md'), /\*\*Windows\.\*\*[^\n]*Not supported yet\./);
+});
+test('claim: Codex and Cursor are said as not yet run end to end, on every page that names them', () => {
+  assert.match(page('GUIDE.md'), /^\*\*Codex too \(not yet run end to end\)\.\*\*/m); assert.match(page('GUIDE.md'), /^\*\*Cursor too \(not yet run end to end\)\.\*\*/m);
+  assert.match(JSON.parse(page('package.json')).description, /Codex untested/);
+});
+test('claim: one table says which line is for whom, the same in the README and the guide', () => {
+  const table = (f) => { const t = page(f); const i = t.indexOf('| You want | Use | The line |'); assert.ok(i > 0, `${f} holds the table`); return t.slice(i).split('\n\n')[0]; };
+  assert.equal(table('README.md'), table('GUIDE.md'));
+  for (const line of ['/plugin install sawbuck-reins@sawbuck', '/plugin install sawbuck@sawbuck', 'npx sawbuck check', 'npx -y sawbuck contract --full', 'uses: sawbuck-ai/sawbuck@v0', 'npx promptwheel run'])
+    assert.ok(table('README.md').includes(line), `the table holds: ${line}`);
+});

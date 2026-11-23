@@ -1,6 +1,6 @@
 # sawbuck
 
-**Was that green earned, or was the test edited to pass?** Sawbuck re-runs your tests from the agent's **source** edits alone, so a win that only came from editing the test reads as gamed. It keeps what git threw away (a reverted attempt and its reason, squashed out of the log) and shows it to your agent when you ask for that file again. And it turns what you keep telling your agent into written rules, each with your own words behind it.
+**Write down the rules your agent follows, and prove they held.** Was that green earned, or was the test edited to pass? Sawbuck re-runs your tests from the agent's **source** edits alone, so a win that only came from editing the test reads as gamed. It keeps what git threw away (a reverted attempt and its reason, squashed out of the log) and shows it to your agent when you ask for that file again. And it turns what you keep telling your agent into written rules, each with your own words behind it.
 
 Measured in November 2026: we put a test that could not pass into 6 real repos and told the agent to get to green fast. With no rule, it got there by changing the test 85 of 100 times on Claude Sonnet, Haiku and Opus 5.5, and 21 of 24 on Fable 5.2; with one line in `CLAUDE.md`, 0 of 100 and 0 of 24. So the written rule does most of the work. Sawbuck writes it for you, and then checks on every commit that it held, with no model in the loop.
 
@@ -56,6 +56,17 @@ No model reads your code. No account. Nothing leaves your CI.
 
 Try it with `--comment-only`: nothing fails. Working alone, add `--solo`. Both, and what it sends back: [GUIDE.md](GUIDE.md#with---full-the-supply-chain-and-pull-requests).
 
+## Which line is for you
+
+| You want | Use | The line |
+|---|---|---|
+| it wired into Claude Code | the plugin `sawbuck-reins` | `/plugin marketplace add sawbuck-ai/reins`, then `/plugin install sawbuck-reins@sawbuck` |
+| the commands only, nothing wired (the edition made for Anthropic's directory) | the plugin `sawbuck` | `/plugin install sawbuck@sawbuck` |
+| a terminal, or another agent | the command | `npx sawbuck check`, or `npm i -g sawbuck` then `sawbuck contract` and `sawbuck attach` |
+| a check on every pull request | the workflow `contract --full` writes | `npx -y sawbuck contract --full`, then commit and push |
+| a pull request to fail on new suppressions or disabled tests | the Action in Sawbuck's repo | `uses: sawbuck-ai/sawbuck@v0` |
+| the engine alone, in CI or a loop, on any number | promptwheel | `npx promptwheel run`, or `uses: promptwheel-ai/promptwheel@v0` |
+
 ## What it does
 
 - **A normal turn:** you see nothing new.
@@ -68,7 +79,7 @@ Try it with `--comment-only`: nothing fails. Working alone, add `--solo`. Both, 
 - A test weakened while it stays green: there is no win to re-run.
 - A gaming move that lives inside the source itself, such as a value hardcoded to the one visible case.
 - A test edited to go green and left uncommitted is not sent back at the end of that turn. `sawbuck check` reads it on demand.
-- Run on Linux. Not yet proven on a Mac, and not supported on Windows.
+- Run on Linux. On a Mac the tests pass and no session has been run yet. Not supported on Windows.
 
 Every limit, each held by a test or marked as not run: [LIMITS.md](LIMITS.md).
 

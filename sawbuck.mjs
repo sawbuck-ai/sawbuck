@@ -215,7 +215,7 @@ Usage:
 
   sawbuck --help | --version
 
-Engines: promptwheel (the check) + @promptwheel/logbook (memory). Zero-LLM, offline, free.`;
+Engines: promptwheel (the check) + @promptwheel/logbook (what git history says about a file). Zero-LLM, offline, free.`;
 
 const die = (msg) => { process.stderr.write(`sawbuck: ${msg}\n`); process.exit(1); };
 const usage = (msg) => { process.stderr.write(`sawbuck: ${msg}\n`); process.exit(64); };   // could not run: never a verdict code

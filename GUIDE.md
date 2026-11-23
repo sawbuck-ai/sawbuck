@@ -2,6 +2,17 @@
 
 Everything the [README](README.md) leaves out, in the order people ask. What Sawbuck cannot see is in [LIMITS.md](LIMITS.md), and what was found and fixed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
+## Which line is for you
+
+| You want | Use | The line |
+|---|---|---|
+| it wired into Claude Code | the plugin `sawbuck-reins` | `/plugin marketplace add sawbuck-ai/reins`, then `/plugin install sawbuck-reins@sawbuck` |
+| the commands only, nothing wired (the edition made for Anthropic's directory) | the plugin `sawbuck` | `/plugin install sawbuck@sawbuck` |
+| a terminal, or another agent | the command | `npx sawbuck check`, or `npm i -g sawbuck` then `sawbuck contract` and `sawbuck attach` |
+| a check on every pull request | the workflow `contract --full` writes | `npx -y sawbuck contract --full`, then commit and push |
+| a pull request to fail on new suppressions or disabled tests | the Action in Sawbuck's repo | `uses: sawbuck-ai/sawbuck@v0` |
+| the engine alone, in CI or a loop, on any number | promptwheel | `npx promptwheel run`, or `uses: promptwheel-ai/promptwheel@v0` |
+
 ## Setting up
 
 **Zero-config:** it finds npm, pytest, cargo and go tests on its own, so in those repos there is nothing to write to start. That includes npm, yarn and pnpm workspaces: each workspace's own `node_modules` is linked into the clean copy the check runs in, and a sibling package is read at the commit being measured, its own command-line tool included. If the tests import a sibling package's built output, they need the build first: `sawbuck init` adds it as `setup`. One case still reads your working tree: a dependency from outside the repo that itself imports one of your workspace packages finds the copy in your checkout, so that path needs your checkout built and is not read at the commit being measured. Anything else (a Makefile target, say) reads inconclusive until you set the command in `promptwheel.config.json`. When it cannot measure, it says which it was: tests that fail before and after, a dependency the clean copy is missing, or a `setup` command that failed.
@@ -152,9 +163,9 @@ not proof of who gave it.
 
 **In a loop, with no person.** `sawbuck check --base <ref> --json` prints one JSON object (base, head, verdict, metrics, gate and more) and exits 0, 1, 2, 3 or 64, as the README lists them. Nothing in it calls a model. The check behind it is the `promptwheel` package: a metric is any command reduced to a number, with a direction and a guard, and a change inside the measured noise is not counted as a win. What Sawbuck adds to an agent's context is small. On a small repo with the plain contract: 531 characters for the rule in AGENTS.md, and 918 once per session. A later prompt gets nothing unless it names a file with history. A loop that scores itself on fixed tasks should know one limit from LIMITS.md: a value hardcoded in the source to fit the visible case is not seen.
 
-**Codex too.** `sawbuck attach --codex` writes the same hooks into `.codex/hooks.json` (kept out of git status): the rules with each prompt, a gamed commit sent back at Stop, and the hold on outward commands. Codex runs a new hook only after you trust it once in its `/hooks` screen. One difference, from Codex's side: it does not support "ask" yet, so the hold denies the command and tells the agent a person runs it. The undo ledger reads the files each apply_patch names.
+**Codex too (not yet run end to end).** `sawbuck attach --codex` writes the same hooks into `.codex/hooks.json` (kept out of git status): the rules with each prompt, a gamed commit sent back at Stop, and the hold on outward commands. Codex runs a new hook only after you trust it once in its `/hooks` screen. One difference, from Codex's side: it does not support "ask" yet, so the hold denies the command and tells the agent a person runs it. The undo ledger reads the files each apply_patch names.
 
-**Cursor too.** `sawbuck attach --cursor` writes `.cursor/hooks.json` (kept out of git status): the check at the end of each agent run, where a gamed commit comes back to the agent as a follow-up message (three at most), and the hold, which asks you before an outward shell command. Cursor's prompt hook can only allow or block, so the rules reach the agent through the AGENTS.md and .cursorrules lines `sawbuck contract` writes, and history does not ride the prompt. The undo ledger rebuilds each file's text before the edit from what Cursor reports.
+**Cursor too (not yet run end to end).** `sawbuck attach --cursor` writes `.cursor/hooks.json` (kept out of git status): the check at the end of each agent run, where a gamed commit comes back to the agent as a follow-up message (three at most), and the hold, which asks you before an outward shell command. Cursor's prompt hook can only allow or block, so the rules reach the agent through the AGENTS.md and .cursorrules lines `sawbuck contract` writes, and history does not ride the prompt. The undo ledger rebuilds each file's text before the edit from what Cursor reports.
 
 ## Your profile and your steering
 
