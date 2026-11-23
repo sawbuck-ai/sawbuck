@@ -10,6 +10,7 @@
 // are all gone. Measured before it was written (proof-bench/align/noise.txt): on 271 ordinary pull requests by an
 // agent these speak on 24 (9%). The old tests run on the new source (10 of 20 ordinary ones) is not run here: the
 // reading says how to run it.
+import { localMinute } from './day.mjs';
 import { execFileSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -59,7 +60,7 @@ export function startOf(repo, since, home) {
   const s = sessionStart(repo, home);
   if (s) {
     const sha = tryGit(repo, 'rev-list', '-1', `--before=${s.at}`, 'HEAD', '--');
-    return { sha: sha || null, why: `where this Claude Code session began (${s.at.replace('T', ' ').slice(0, 16)} UTC)` };
+    return { sha: sha || null, why: `where this Claude Code session began (${localMinute(s.at)})` };
   }
   const branch = tryGit(repo, 'rev-parse', '--abbrev-ref', 'HEAD');
   const remote = tryGit(repo, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD');

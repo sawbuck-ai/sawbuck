@@ -10,3 +10,14 @@ export function localDay(at) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+// A minute as a person reads it on this machine: the local day and time, and the zone's short name. align said the
+// session's start in UTC (queue row Q51, seen in the 0.2.5 rehearsal).
+export function localMinute(at) {
+  const d = new Date(String(at || ''));
+  if (Number.isNaN(d.getTime())) return String(at || '').replace('T', ' ').slice(0, 16);
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short' }).formatToParts(d).map((x) => [x.type, x.value]));
+    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ${p.timeZoneName}`;
+  } catch { return `${d.toISOString().replace('T', ' ').slice(0, 16)} UTC`; }
+}
+

@@ -83,11 +83,13 @@ test('align reads from where this Claude Code session began, by the first time i
   // the session began at 11:30, after "add g" and before "make the tests pass". Its first line holds a time and this folder.
   const dir = join(TMP_HOME, '.claude', 'projects', d.replace(/\//g, '-')); mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'session.jsonl'), JSON.stringify({ type: 'user', timestamp: '2026-01-01T11:30:00.000Z', cwd: d, sessionId: 's', message: { role: 'user', content: 'words that are never read' } }) + '\n');
-  const r = sb(['align', '--json'], d);
+  const r = sb(['align', '--json'], d, { TZ: 'UTC' });
   assert.equal(r.status, 0, r.stderr);
   const j = JSON.parse(r.stdout);
   assert.equal(j.start.sha, git(d, 'rev-parse', 'HEAD~2'), 'read from "add g", the commit the session began at');
   assert.match(j.start.why, /where this Claude Code session began \(2026-01-01 11:30 UTC\)/);
+  // in the person's own time, with the zone named (queue row Q51: it was always UTC)
+  assert.match(JSON.parse(sb(['align', '--json'], d, { TZ: 'America/Los_Angeles' }).stdout).start.why, /where this Claude Code session began \(2026-01-01 03:30 PST\)/);
   assert.equal(j.read, 2); assert.equal(j.back.length, 1); assert.equal(j.back[0].subject, 'make the tests pass');
   assert.doesNotMatch(r.stdout, /words that are never read/);
 });
