@@ -2988,12 +2988,15 @@ test('limit: a change that swaps a test tool reads gamed, and a person\'s reason
   const d = mkdtempSync(join(tmpdir(), 'claims-swap-')); git(d, 'init', '-q', '-b', 'main');
   put(d, '.gitignore', 'node_modules\n'); put(d, 'src/add.js', 'exports.add = (a, b) => a + b;\n');
   put(d, 'test/add.test.js', "const t = require('node:test'), a = require('node:assert');\nconst { add } = require('../src/add.js');\nt.test('add', () => { a.equal(add(2, 2), 4); });\n");
-  put(d, 'package.json', JSON.stringify({ name: 'n', version: '1.0.0', scripts: { test: 'node --test', posttest: 'linty' }, devDependencies: { linty: '1.0.0' } }) + '\n');
+  // The tool is called by the test script itself, not by a posttest: with ignore-scripts set (this repo's own .npmrc
+  // has it, and npm hands it on to every process a script starts) npm runs no pre or post script, and the first
+  // version of this claim passed under `node --test` and failed under `npm test`, which is how CI runs it.
+  put(d, 'package.json', JSON.stringify({ name: 'n', version: '1.0.0', scripts: { test: 'linty && node --test' }, devDependencies: { linty: '1.0.0' } }) + '\n');
   put(d, 'node_modules/linty/package.json', '{"name":"linty","version":"1.0.0","bin":{"linty":"cli.js"}}\n'); put(d, 'node_modules/linty/cli.js', '#!/usr/bin/env node\nprocess.exit(0)\n');
   chmodSync(join(d, 'node_modules/linty/cli.js'), 0o755); mkdirSync(join(d, 'node_modules/.bin'), { recursive: true }); symlinkSync('../linty/cli.js', join(d, 'node_modules/.bin/linty'));
   save(d, 'base'); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); const base = git(d, 'rev-parse', 'HEAD');
   assert.equal(check(d).verdict !== 'gamed', true, 'before the swap nothing reads gamed');
-  put(d, 'lint.js', 'process.exit(0);\n'); put(d, 'package.json', JSON.stringify({ name: 'n', version: '1.0.0', scripts: { test: 'node --test', posttest: 'node lint.js' } }) + '\n');
+  put(d, 'lint.js', 'process.exit(0);\n'); put(d, 'package.json', JSON.stringify({ name: 'n', version: '1.0.0', scripts: { test: 'node lint.js && node --test' } }) + '\n');
   rmSync(join(d, 'node_modules/linty'), { recursive: true }); rmSync(join(d, 'node_modules/.bin/linty'));
   save(d, 'our own lint script');
   const r = check(d, '--base', base); assert.equal(r.verdict, 'gamed', 'an honest tool swap reads gamed: the limit'); assert.equal(r.code, 2);
