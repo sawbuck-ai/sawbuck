@@ -9,7 +9,7 @@ import { execFileSync, spawnSync, execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, rmSync, readdirSync, statSync, lstatSync, chmodSync, symlinkSync, utimesSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, relative } from 'node:path';
+import { join, dirname, relative, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -3077,4 +3077,58 @@ test('claim: a turn that only makes an orphan branch in a signed repo is not sen
   assert.ok(!sentBackFor(stop()), 'no HEAD is not a change');
   prompt('and add a workflow there'); put(d, '.github/workflows/pages.yml', 'name: pages\non: push\njobs: {}\n');
   assert.ok(sentBackFor(stop(), 'workflows-frozen'), 'a new workflow file on that branch is still a protected path');
+});
+
+// ---- 0.2.6, part 1: a question git refuses is not "nothing changed" -----------------------------------------------
+// Until 0.2.6 the wall asked `git diff --name-only HEAD` with no `--`. Git refuses that as soon as a file named HEAD
+// exists ("both revision and filename"), the refusal was read as an empty answer, and a turn that made such a file and
+// then edited a protected path was not sent back, in any repository (proof-bench/no-baseline, 2026-11-23).
+const WF0 = 'name: ci\non: push\njobs: {}\n';
+const signedWithWorkflow = () => { const d = repo(true); put(d, '.github/workflows/ci.yml', WF0); save(d, 'ci'); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); assert.equal(sb(d, 'attach').code, 0); return d; };
+const dropWorkflowRule = (d) => edit(d, 'promptwheel.config.json', (s) => { const c = JSON.parse(s); c.mandates = (c.mandates || []).filter((m) => m.name !== 'workflows-frozen'); return JSON.stringify(c, null, 2) + '\n'; });
+test('claim: a file named HEAD at the top does not blind the wall: a protected edit beside it is sent back, in the working tree and after it is committed', () => {
+  let d = signedWithWorkflow(); let h = ownHooks(d);
+  h.prompt('x'); put(d, 'HEAD', ''); put(d, '.github/workflows/ci.yml', WF0 + '# more\n');
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'), 'the turn made an empty file named HEAD, then edited a workflow');
+  d = signedWithWorkflow(); h = ownHooks(d);
+  h.prompt('x'); put(d, 'HEAD', ''); dropWorkflowRule(d); save(d, 'loosen');
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'the turn made the file, edited the contract and committed');
+  d = signedWithWorkflow(); put(d, 'HEAD', 'x\n'); save(d, 'this repository tracks a file named HEAD'); h = ownHooks(d);
+  h.prompt('x'); put(d, 'src/more.js', 'exports.more = 1;\n');
+  assert.ok(!sentBackFor(h.stop()), 'an honest turn there is not sent back');
+  h.prompt('y'); put(d, '.github/workflows/ci.yml', WF0 + '# more\n');
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'), 'and a protected edit there is');
+});
+test('claim: a file named as the commit the turn began at does not blind the wall: a protected edit committed beside it is sent back', () => {
+  const d = signedWithWorkflow(); const h = ownHooks(d); const began = git(d, 'rev-parse', 'HEAD');
+  h.prompt('x'); put(d, began, ''); put(d, '.github/workflows/ci.yml', WF0 + '# more\n'); save(d, 'ci');
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'));
+});
+test('claim: beside a file named HEAD the check still gives its verdict: gamed for a test edited to pass, verified for the source fixed', () => {
+  let d = repo(); put(d, 'HEAD', ''); edit(d, 'test/add.test.js', (s) => s.replace('add(2,2),4', 'add(2,2),0')); save(d, 'x');
+  let r = check(d); assert.equal(r.code, 2, r.out);
+  d = repo(); put(d, 'HEAD', ''); edit(d, 'src/add.js', (s) => s.replace('a-b', 'a+b')); save(d, 'x');
+  r = check(d); assert.equal(r.code, 0, r.out);
+});
+test('claim: no git call that names a revision leaves git to guess what is a path: under a stand-in that writes down each such call, the hooks, the check and the readers of history leave nothing written', { skip: process.platform === 'win32' && 'the stand-in is a shell file' }, () => {
+  const calls = join(mkdtempSync(join(tmpdir(), 'git-calls-')), 'calls.txt'); writeFileSync(calls, '');
+  const env = { ...ENV, PATH: `${join(HERE, 'git-stand-in')}${delimiter}${ENV.PATH}`, SAWBUCK_TEST_GIT_CALLS: calls };
+  const d = signedWithWorkflow(); edit(d, 'src/add.js', (s) => s.replace('a+b', 'a-b')); save(d, 'the person breaks add');
+  const run = (args, input) => spawnSync(process.execPath, [CLI, ...args], { cwd: d, encoding: 'utf8', env, ...(input ? { input: JSON.stringify(input) } : {}) });
+  // the stand-in is in force: a call it should write down is written down (or an empty list would prove nothing)
+  spawnSync('git', ['diff', '--name-only', 'HEAD'], { cwd: d, env, encoding: 'utf8' });
+  assert.match(readFileSync(calls, 'utf8'), /^diff --name-only HEAD$/m, 'the stand-in writes down a call with no `--`'); writeFileSync(calls, '');
+  // one whole turn: the prompt, an edit through the undo ledger, a commit, the end of the turn (its check, then the wall)
+  run(['turn', '--hook', d], { hook_event_name: 'UserPromptSubmit', prompt: 'fix add', session_id: 's', prompt_id: 'p1', cwd: d });
+  const tool = { tool_name: 'Edit', tool_input: { file_path: join(d, 'src/add.js'), old_string: 'a-b', new_string: 'a+b' }, session_id: 's', cwd: d };
+  run(['undo', '--hook', d], { hook_event_name: 'PreToolUse', ...tool });
+  edit(d, 'src/add.js', (s) => s.replace('a-b', 'a+b'));
+  run(['undo', '--hook', d], { hook_event_name: 'PostToolUse', ...tool });
+  run(['hold', '--hook', d], { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git commit -am fix' }, session_id: 's', cwd: d });
+  save(d, 'fix add');
+  const end = run(['__hook', '--by', 'claude', '--stop'], { hook_event_name: 'Stop', cwd: d, session_id: 's', prompt_id: 'p1' });
+  assert.equal(end.status, 0, end.stderr);
+  // the commands a person or an agent types
+  for (const a of [['check'], ['check', '--base', 'HEAD~2'], ['check', '--allow', 'the test was wrong'], ['align', '--since', 'HEAD~2'], ['debt'], ['status'], ['context', 'src/add.js'], ['playbook'], ['insights'], ['suggest'], ['day'], ['improve', '--attempt', 'true']]) run(a);
+  assert.equal(readFileSync(calls, 'utf8'), '', 'every call that names a revision ends its revisions with `--`');
 });

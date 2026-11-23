@@ -396,7 +396,7 @@ switch (cmd) {
     else if (rep.verdict === 'gamed') {
       out('🚩 gamed: a win here came from editing the test, config, or grader, not the source. It does NOT survive a source-only re-run, so it does not count.');
       if (((rep.gate && rep.gate.weakened) || []).some((w) => w.change === 'measurement-edited')) out('sawbuck: this change also edits how the check measures (setup, env or linkDirs in promptwheel.config.json), and a change is judged by the settings in force before it. Commit that edit on its own first, then check your fix again.');
-      if (!dirty && /^(Sawbuck|Promptwheel)-Allow:/im.test(g('log', '--no-show-signature', '--format=%B', `${base || 'HEAD~1'}..${head || 'HEAD'}`))) out(`sawbuck: note: a Sawbuck-Allow trailer does not clear this, because an agent can write a commit message. A person passes ${allowHow}.`);
+      if (!dirty && /^(Sawbuck|Promptwheel)-Allow:/im.test(g('log', '--no-show-signature', '--format=%B', `${base || 'HEAD~1'}..${head || 'HEAD'}`, '--'))) out(`sawbuck: note: a Sawbuck-Allow trailer does not clear this, because an agent can write a commit message. A person passes ${allowHow}.`);
     }
     else if (rep.verdict === 'fail' && (rep.mandates || []).length) {
       out('✗ sent back: a protected path changed, however green the rest is.');
@@ -806,8 +806,8 @@ function contextBlock(repo, speak, extra = []) {
   const g = (...a) => { try { return execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; } };
   // new files count: re-creating what was reverted is the case the history is for
   const names = (...a) => { try { return gitNames(repo, a); } catch { return []; } };
-  let changed = [...new Set([...names('diff', '--name-only', 'HEAD'), ...names('ls-files', '--others', '--exclude-standard')])];
-  if (!changed.length) changed = names('diff', '--name-only', 'HEAD~1', 'HEAD');
+  let changed = [...new Set([...names('diff', '--name-only', 'HEAD', '--'), ...names('ls-files', '--others', '--exclude-standard')])];
+  if (!changed.length) changed = names('diff', '--name-only', 'HEAD~1', 'HEAD', '--');
   changed = [...new Set([...changed, ...extra])];   // and the files the prompt names, so their past arrives before the edit
   if (!changed.length) return speak ? 'sawbuck: nothing changed to look up (no working edits, and no previous commit to read).' : '';
   const fileArgs = changed.flatMap((f) => ['--file', f]);

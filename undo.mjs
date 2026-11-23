@@ -85,7 +85,7 @@ const setAside = (repo, turn) => { if (!turn) return false; const now = whereGit
 const BASES = 20, BASES_ALL = 200, BIG = 256 * 1024;
 function basesFromGit(repo, sess, since, now) {
   let changed = [], loose = [];
-  try { changed = gitNames(repo, ['diff', '--name-only', '--no-renames', 'HEAD']); loose = gitNames(repo, ['ls-files', '--others', '--exclude-standard']); } catch { return; }
+  try { changed = gitNames(repo, ['diff', '--name-only', '--no-renames', 'HEAD', '--']); loose = gitNames(repo, ['ls-files', '--others', '--exclude-standard']); } catch { return; }
   const dir = join(repo, '.sawbuck', 'snap', sess); let have = 0; try { have = readdirSync(dir).length; } catch {}
   const from = since ? Date.parse(since) - 2000 : NaN; const fresh = [];
   for (const [file, tracked] of [...changed.map((f) => [f, true]), ...loose.map((f) => [f, false])]) {

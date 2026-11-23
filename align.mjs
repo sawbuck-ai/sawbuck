@@ -58,7 +58,7 @@ export function startOf(repo, since, home) {
   }
   const s = sessionStart(repo, home);
   if (s) {
-    const sha = tryGit(repo, 'rev-list', '-1', `--before=${s.at}`, 'HEAD');
+    const sha = tryGit(repo, 'rev-list', '-1', `--before=${s.at}`, 'HEAD', '--');
     return { sha: sha || null, why: `where this Claude Code session began (${s.at.replace('T', ' ').slice(0, 16)} UTC)` };
   }
   const branch = tryGit(repo, 'rev-parse', '--abbrev-ref', 'HEAD');
@@ -68,13 +68,13 @@ export function startOf(repo, since, home) {
     const mb = tryGit(repo, 'merge-base', 'HEAD', d);
     if (mb && mb !== tryGit(repo, 'rev-parse', 'HEAD')) return { sha: mb, why: `where this branch left ${d}` };
   }
-  const n = Number(tryGit(repo, 'rev-list', '--count', 'HEAD')) || 0;
+  const n = Number(tryGit(repo, 'rev-list', '--count', 'HEAD', '--')) || 0;
   return { sha: n > 20 ? tryGit(repo, 'rev-parse', 'HEAD~20') : null, why: n > 20 ? 'the last 20 commits' : 'every commit there is' };
 }
 
 // the commits from a start to HEAD, oldest first, merges left out, first parents; the first commit of a repo has
 // nothing before it to be held against and is left out
-const commitsFrom = (repo, start) => (tryGit(repo, 'log', '--no-show-signature', '--reverse', '--no-merges', '--first-parent', '--date=short', '--format=%H%x09%P%x09%ad%x09%s', start.sha ? `${start.sha}..HEAD` : 'HEAD') || '').split('\n').filter(Boolean)
+const commitsFrom = (repo, start) => (tryGit(repo, 'log', '--no-show-signature', '--reverse', '--no-merges', '--first-parent', '--date=short', '--format=%H%x09%P%x09%ad%x09%s', start.sha ? `${start.sha}..HEAD` : 'HEAD', '--') || '').split('\n').filter(Boolean)
   .map((l) => { const [sha, parents, day, ...s] = l.split('\t'); return { sha, parent: (parents || '').split(' ')[0], day, subject: s.join(' ') }; }).filter((c) => c.parent);
 const dirtyCount = (repo) => tryGit(repo, 'status', '--porcelain', '--untracked-files=no').split('\n').filter(Boolean).length;
 

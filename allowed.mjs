@@ -59,8 +59,8 @@ export function recordAllowed(repo, rep, { dirty = false, base = 'HEAD~1', head 
     if (!cleared.length || !reason) return null;
     if (!existsSync(join(repo, '.sawbuck', 'state.json'))) return null;
     const changed = (dirty
-      ? [...names(repo, 'diff', '--name-only', '--no-renames', 'HEAD'), ...names(repo, 'ls-files', '--others', '--exclude-standard')]
-      : names(repo, 'diff', '--name-only', '--no-renames', base, head));
+      ? [...names(repo, 'diff', '--name-only', '--no-renames', 'HEAD', '--'), ...names(repo, 'ls-files', '--others', '--exclude-standard')]
+      : names(repo, 'diff', '--name-only', '--no-renames', base, head, '--'));
     const hits = cleared.some((l) => l.startsWith('mandate:')) ? mandateHits(repo, changed, { ref: dirty ? 'HEAD' : base }) : [];
     const things = cleared.map((l) => thing(l, rep, changed, hits));
     const files = [...new Set(things.flatMap((t) => t.files))].slice(0, 20);

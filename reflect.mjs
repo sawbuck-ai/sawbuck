@@ -105,7 +105,7 @@ const writeRec = () => { try { mkdirSync(recDir, { recursive: true }); writeFile
 if (wasArg === null && !protectedHere && (gamedHere || (verdict === 'fail' && failedGuards.length))) {
   const needs = gamedHere ? metrics.filter((m) => m.gamed === true).map((m) => m.name) : failedGuards;
   let headSha = ''; try { headSha = git('rev-parse', `${head}^{commit}`); } catch {}
-  let touched = []; try { touched = git('diff', '--name-only', '-z', base, head).split('\0').filter(Boolean); } catch {}
+  let touched = []; try { touched = git('diff', '--name-only', '-z', base, head, '--').split('\0').filter(Boolean); } catch {}
   const posts = goalposts ? goalposts.filter((f) => touched.includes(f)) : touched.filter((f) => /(\.test\.|\.spec\.|__tests__|(^|\/)tests?\/|\.config\.|golden|fixture|snapshot)/i.test(f));
   const kept = headSha ? keptOnTree(repo, { base: baseSha, head: headSha, goalposts: posts, needs }) : null;
   if (kept) {
@@ -125,7 +125,7 @@ const worse = metrics.filter((m) => (m.guard && !m.ok) || m.status === 'regresse
 const gaveBack = gaveBackArg === null ? [] : gaveBackArg.split(',').filter(Boolean);
 if (gaveBack.length && !gamedHere && !protectedHere && verdict === 'fail' && worse.length > 0 && worse.every((n) => gaveBack.includes(n))) {
   let headSha = ''; try { headSha = git('rev-parse', head); } catch {}
-  let touched = []; try { touched = git('diff', '--name-only', '-z', base, head).split('\0').filter(Boolean); } catch {}
+  let touched = []; try { touched = git('diff', '--name-only', '-z', base, head, '--').split('\0').filter(Boolean); } catch {}
   const file = (goalposts || []).find((f) => touched.includes(f)) || touched[0] || '';
   const why = 'a test change caught in an earlier turn was put back; the green it gave went with it, and that is not a regression';
   rec.latest = { sha: headSha.slice(0, 8), kind: 'put back', base: baseSha || null, file, reason: why, at: new Date().toISOString(), by: by || null, takenBack: true };
@@ -181,7 +181,7 @@ const kind = gamedHere ? 'gamed' : 'regression';
 
 // --- 2) build the finding from the result ----------------------------------
 const sha = git('rev-parse', head);
-const changed = git('diff', '--name-only', '-z', base, head).split('\0').filter(Boolean);
+const changed = git('diff', '--name-only', '-z', base, head, '--').split('\0').filter(Boolean);
 const testish = (f) => /(\.test\.|\.spec\.|__tests__|\/tests?\/|\.config\.|golden|fixture|snapshot)/i.test(f);
 const srcFiles = changed.filter((f) => !testish(f));
 // a gamed win is named by the goalpost that moved (a test first, then config or a golden file); a regression by the source
@@ -242,7 +242,7 @@ function appendActivity(v, rep, again = false, as = null) {
   let sha = '', file = '';
   try { sha = git('rev-parse', head).slice(0, 8); } catch {}
   const hit = k === 'regression' ? protectedHit(rep) : null;
-  try { file = (hit && hit.file) || git('diff', '--name-only', '-z', base, head).split('\0').filter(Boolean)[0] || ''; } catch {}
+  try { file = (hit && hit.file) || git('diff', '--name-only', '-z', base, head, '--').split('\0').filter(Boolean)[0] || ''; } catch {}
   const gm = (rep.metrics || []).find((m) => m.gamed === true);
   if (k === 'gamed') { const names = (rep.gate && Array.isArray(rep.gate.goalposts)) ? rep.gate.goalposts : []; if (names.length) file = names.find((f) => /(\.test\.|\.spec\.|__tests__|(^|\/)tests?\/)/i.test(f)) || names[0]; }
   const why = k === 'gamed' ? (gm?.gamingReason || 'the win came from editing the goalposts')

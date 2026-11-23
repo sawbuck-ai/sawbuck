@@ -22,7 +22,9 @@ export function gitRefuses(dir) {
     return `git refuses this repo because another user owns it ("dubious ownership"), so nothing here can be checked. If that is expected (a container with a mounted repo), tell git it is safe: ${line}`;
   }
 }
-export const gitNames = (repo, args) => execFileSync('git', [...args, '-z'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024 }).split('\0').filter(Boolean);
+// -z goes right after the command, never at the end: a call that names a revision ends with `--`, and a word after
+// that is a path. (Until 0.2.6 it was added last, and no such call had a `--`: see dirtyNames.)
+export const gitNames = (repo, args) => execFileSync('git', [args[0], '-z', ...args.slice(1)], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024 }).split('\0').filter(Boolean);
 const validMandate = (m) => m && Array.isArray(m.paths) && m.paths.some((s) => typeof s === 'string' && s.trim());
 const pathsOf = (m) => m.paths.filter((s) => typeof s === 'string' && s.trim());
 
@@ -104,9 +106,14 @@ export function hiddenChanged(repo) {
 // What this does NOT read, where there is no HEAD: what is staged. (Listing the index there was tried the same night
 // and taken out: after `git checkout --orphan` the index holds every file, and a turn that had edited nothing was
 // sent back for the contract.)
+// A REVISION IS FOLLOWED BY `--`, HERE AND IN EVERY GIT CALL THAT NAMES ONE. Without it git has to guess whether a word
+// is a revision or a path, and refuses when a file of that name exists ("ambiguous argument 'HEAD': both revision and
+// filename"). Until 0.2.6 a turn that made an empty file named HEAD at the top and then edited a protected path was not
+// sent back, in any repository: the question was refused, and a refused question was read here as "nothing changed".
+// The same with a file named as the commit the turn began at. Found 2026-11-23 (proof-bench/no-baseline, N31, X3).
 export function dirtyNames(repo) {
   const names = (...a) => { try { return gitNames(repo, a); } catch { return []; } };
-  return [...new Set([...names('diff', '--name-only', '--no-renames', 'HEAD'), ...names('ls-files', '--others', '--exclude-standard'), ...hiddenChanged(repo)])];
+  return [...new Set([...names('diff', '--name-only', '--no-renames', 'HEAD', '--'), ...names('ls-files', '--others', '--exclude-standard'), ...hiddenChanged(repo)])];
 }
 
 // the protected paths that are dirty right now, each with its content hash: the baseline `turn`

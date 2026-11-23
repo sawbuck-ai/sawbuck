@@ -24,7 +24,7 @@ export async function readCommits(repo, cfg, commits) {
     if (!holds(c.parent) && holds(c.sha)) { signed++; continue; }
     // protected paths: the diff's own file names against the rules as they would be written. (The engine applies a rule
     // only where it was already in force at the commit before, and here it never was.)
-    let paths = []; try { paths = mandateHits(repo, gitNames(repo, ['diff', '--name-only', '--no-renames', c.parent, c.sha]), { list: cfg.mandates || [] }).map((m) => ({ name: m.name, files: m.files || [] })); } catch { unread++; continue; }
+    let paths = []; try { paths = mandateHits(repo, gitNames(repo, ['diff', '--name-only', '--no-renames', c.parent, c.sha, '--']), { list: cfg.mandates || [] }).map((m) => ({ name: m.name, files: m.files || [] })); } catch { unread++; continue; }
     let rep = { metrics: [] }; if (counts.length) { try { rep = check({ repo, base: c.parent, head: c.sha, config: fast, detectGaming: false, repeat: 1 }); } catch { unread++; continue; } }
     const worse = (rep.metrics || []).filter((m) => m.guard && m.ok === false && m.status === 'regressed').map((m) => m.name);
     if (paths.length || worse.length) back.push({ ...c, paths, worse, counts: Object.fromEntries((rep.metrics || []).filter((m) => worse.includes(m.name)).map((m) => [m.name, [m.before, m.after]])) });

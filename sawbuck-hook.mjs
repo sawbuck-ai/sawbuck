@@ -205,7 +205,7 @@ if (head && from && head !== from && head !== seen) {
   // Merge commits themselves are not re-proved: the span starts at the agent's first own non-merge commit.
   let base = from; let skip = false;
   const tips = (st.turnBaseline && Array.isArray(st.turnBaseline.refs)) ? st.turnBaseline.refs : [];
-  let mineOwn = git('rev-list', '--no-merges', head, `^${from}`, ...tips.map((t) => `^${t}`), ...fromRemotes(tips, st.turnBaseline && st.turnBaseline.at)).split('\n').filter(Boolean);
+  let mineOwn = git('rev-list', '--no-merges', head, `^${from}`, ...tips.map((t) => `^${t}`), ...fromRemotes(tips, st.turnBaseline && st.turnBaseline.at), '--').split('\n').filter(Boolean);
   // a rebase replays commits that existed before the turn under new shas (the person's own branch commits among them);
   // a replayed commit is patch-equivalent to one reachable from a recorded tip, and `git cherry` marks those "-"
   if (mineOwn.length && tips.length) {
@@ -323,7 +323,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   const dirty = dirtyNames(repo);   // the one list the baseline was taken from too (a file hidden from git is read as well)
   const base = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null;
   const baseline = (base && base.files && typeof base.files === 'object') ? base.files : {};
-  const committedSince = (base && base.sha && head && base.sha !== head) ? names('diff', '--name-only', '--no-renames', base.sha, 'HEAD') : [];
+  const committedSince = (base && base.sha && head && base.sha !== head) ? names('diff', '--name-only', '--no-renames', base.sha, 'HEAD', '--') : [];
   const hashNow = {}; for (const f of dirty) if (Object.prototype.hasOwnProperty.call(baseline, f)) hashNow[f] = hashOf(repo, f);
   const untouched = (f) => Object.prototype.hasOwnProperty.call(baseline, f) && hashNow[f] === baseline[f];
   // a person's own uncommitted file (in the baseline) that the turn only committed, content unchanged, is still theirs:
