@@ -75,11 +75,47 @@ export function outwardHold(command, repo) {
   return null;
 }
 
+// A commit message is words, not a command (lead L48 (c)): a message that named --allow, a publish or the record folder
+// was asked about as if it would run. Before the holds read a command, the message of a `git ... commit` is set aside
+// where nothing in it can run: a word that is one single-quoted string, or one double-quoted string with no `$`,
+// backtick or backslash in it, given to -m (or -am, -qm...) or --message. Anything else is read as it was: a message
+// with a command inside it, a command after the commit, a shell or eval given the whole line, an unclosed quote.
+const LITERAL = (t) => /^'[^']*'$/.test(t) || /^"[^"$`\\]*"$/.test(t);
+export function withoutCommitMessages(command) {
+  const s = String(command || ''); const words = []; let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === ' ' || ch === '\t') { i++; continue; }
+    if (';&|\n'.includes(ch)) { words.push({ sep: true }); i++; continue; }
+    const start = i;
+    while (i < s.length && !' \t;&|\n'.includes(s[i])) {
+      if (s[i] === "'") { const j = s.indexOf("'", i + 1); if (j < 0) return s; i = j + 1; }
+      else if (s[i] === '"') { let j = i + 1; while (j < s.length && s[j] !== '"') j += s[j] === '\\' ? 2 : 1; if (j >= s.length) return s; i = j + 1; }
+      else i += s[i] === '\\' ? 2 : 1;
+    }
+    words.push({ start, end: i, text: s.slice(start, i) });
+  }
+  const blank = []; let git = false, commit = false;
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k];
+    if (w.sep) { git = false; commit = false; continue; }
+    if (!git) { git = w.text === 'git'; continue; }
+    if (!commit) { commit = w.text === 'commit'; continue; }
+    const next = words[k + 1];
+    if ((/^-[a-zA-Z]*m$/.test(w.text) || w.text === '--message') && next && !next.sep && LITERAL(next.text)) { blank.push(next); k++; continue; }
+    const joined = /^(--message=|-[a-zA-Z]*m)(['"].*)$/.exec(w.text);
+    if (joined && LITERAL(joined[2])) blank.push({ start: w.start + joined[1].length, end: w.end });
+  }
+  let out = s;
+  for (const b of blank.sort((x, y) => y.start - x.start)) out = out.slice(0, b.start) + "''" + out.slice(b.end);
+  return out;
+}
+
 // the PreToolUse answer: a question to the person for an outward command, nothing for everything else
 export function holdDecision(hookJson, repo) {
   let h = {}; try { h = JSON.parse(hookJson || '{}'); } catch {}
   if (h.tool_name && h.tool_name !== 'Bash') return null;
-  const cmd = h.tool_input && typeof h.tool_input.command === 'string' ? h.tool_input.command : '';
+  const cmd = withoutCommitMessages(h.tool_input && typeof h.tool_input.command === 'string' ? h.tool_input.command : '');
   // --allow records a person's decision to accept what the check could not prove; the agent typing it is not that.
   // Always asked, holds off or not: it is how a gamed verdict is cleared.
   if (DETACH.test(cmd) || (namesRepoRecord(cmd) && !PLAIN_READ.test(cmd))) return askOwn();

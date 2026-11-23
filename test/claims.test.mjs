@@ -1262,6 +1262,22 @@ test('claim: the person accepting the test change with --allow ends the send-bac
   assert.ok(!blocked(w.stop()), 'allowed by a person: the turn may end');
   const r = JSON.parse(readFileSync(join(d, '.sawbuck/results.json'), 'utf8')).latest; assert.equal(r.kind, 'allowed'); assert.equal(r.allowed.reason, 'the spec changed');
 });
+// lead L48 (c): the hold read a commit message as if it were a command, so a message that named --allow, a publish or the
+// record folder was asked about. A message is set aside only where nothing in it can run.
+test('claim: a commit message that only names --allow or a publish is not asked about; a command that would run them still is', () => {
+  const d = signed(true); const w = wired(d);
+  const asks = (c) => /"permissionDecision":"ask"/.test(w.pre(c));
+  assert.ok(!asks("git commit -qm 'docs: how a person runs sawbuck check --allow'"), 'single quotes: nothing in them runs');
+  assert.ok(!asks('git commit -m "docs: npm publish is the owner\'s to run"'), 'double quotes with nothing in them that runs');
+  assert.ok(!asks("git -C . commit -m 'first line' -m 'later: npx sawbuck check --allow'"), 'a second message, and git options before commit');
+  assert.ok(asks('git commit -m "$(npx sawbuck check --allow x)"'), 'a command inside the message runs');
+  assert.ok(asks('git commit -m "`npx sawbuck check --allow x`"'), 'backticks run too');
+  assert.ok(asks("git commit -m 'x' && npx sawbuck check --allow y"), 'a command after the commit');
+  assert.ok(asks("bash -c 'npx sawbuck check --allow y'"), 'a shell given the command');
+  assert.ok(asks('eval "git commit -m \'sawbuck check --allow\'"'), 'eval runs what it is given');
+  assert.ok(asks('npx sawbuck check --allow y'));
+  assert.ok(asks("git commit -m 'x' .sawbuck/state.json"), 'a path after the message still names the record');
+});
 test('claim: a block does not clear a gamed verdict that still stands', () => { const d = signed(false); const w = wired(d); w.prompt(); edit(d, 'test/add.test.js', (s) => s.replace('add(2,2),4', 'add(2,2),0')); save(d, 'cheat'); assert.ok(blocked(w.stop())); w.prompt(); put(d, '.npmrc', 'x\n'); w.stop(); assert.equal(JSON.parse(readFileSync(join(d, '.sawbuck/results.json'), 'utf8')).latest.kind, 'gamed'); });
 test('claim: the status line names the repo it detected, from any folder of it', () => { const d = signed(true); const w = wired(d); w.prompt(); w.stop(); const n = d.split('/').pop(); assert.match(sb(d, 'statusline').out, new RegExp(`sawbuck · ${n} · watching`)); assert.match(sb(join(d, 'src'), 'statusline').out, new RegExp(n)); });
 test('claim: outside a repository the status line says so', () => { assert.match(sb(mkdtempSync(join(tmpdir(), 'claims-')), 'statusline').out, /no repo here/); });
