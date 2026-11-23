@@ -14,6 +14,7 @@ import { shareFinding, handedOnNotes } from './share.mjs';
 import { ledgerCli } from './ledger.mjs';
 import { recordAllowed, allowedBlock } from './allowed.mjs';
 import { readGuard, writeGuard, detachGuard, ownOf, guardPath, turnOpen } from './guard.mjs';
+import { noteBegan, forgetBegan } from './began.mjs';
 import { ripplesReport } from './ripples.mjs';
 import { profileCli } from './profile.mjs';
 import { undoHook, undoCodex, undoCursor, undoMark, undoJudge, redoJudge, EDIT_MATCHER } from './undo.mjs';
@@ -489,6 +490,10 @@ switch (cmd) {
     // person made between turns that no longer carries the flagged content.
     let hookEvent = '', session = '', framed = false, promptText = '', alignNote = '';
     if (flags.has('--hook') && !process.stdin.isTTY) { try { const h = JSON.parse(readFileSync(0, 'utf8') || '{}'); hookEvent = String(h.hook_event_name || ''); session = String(h.session_id || ''); promptText = String(h.prompt || ''); } catch {} }
+    // where this turn begins: on the record the repository keeps, or, where there is no repository to keep one, on a
+    // line in the person's own folder that the end of the turn can read (began.mjs). A folder git refuses to read
+    // (another user owns it) is a repository all the same: nothing is noted there.
+    if (hookEvent === 'UserPromptSubmit' && session) { if (top) forgetBegan(session); else if (!gitRefuses(repo)) noteBegan(session, repo); }
     if (hookEvent === 'UserPromptSubmit' && top) {
       try {
         ensureExcluded(repo);   // before the first write: under user-level hooks nothing else has done it yet

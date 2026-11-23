@@ -7,6 +7,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { guardPath } from './guard.mjs';
+import { beganDir } from './began.mjs';
 import { realPath } from './repo-state.mjs';
 
 export const ALLOW = /\b(sawbuck|promptwheel)(\.mjs)?\b[^|;&]*\s--allow\b/;
@@ -23,6 +24,7 @@ const PLAIN_READ = /^\s*(?:cat|ls|head|tail|wc|stat|file|less|more)\b[^;&|<>`$]*
 export function namesRepoRecord(command, home = process.env.HOME || homedir()) {
   const c = String(command || '');
   if (/\.git\/sawbuck(?![\w-])/.test(c)) return true;
+  if (/\.sawbuck\/began(?![\w-])/.test(c)) return true;   // where a turn's beginning is kept when there was no repository (began.mjs): in the home folder, and still asked
   const re = /(?:^|[^\w.-])\.sawbuck(?![\w.-])/g; let m;
   while ((m = re.exec(c))) {
     const before = c.slice(0, m.index + m[0].indexOf('.sawbuck'));
@@ -43,7 +45,8 @@ export function ownRecordEdit(hookJson, repo) {
   const gp = guardPath(repo);
   const under = (abs, dir) => !!dir && (abs === dir || abs.startsWith(dir + sep));
   const typed = resolve(repo, f), real = realPath(typed);
-  return (under(typed, join(resolve(repo), '.sawbuck')) || under(typed, gp ? dirname(gp) : '')
+  const began = beganDir();   // in the person's home: where a turn's beginning is kept when there was no repository
+  return (under(typed, began) || under(real, realPath(began)) || under(typed, join(resolve(repo), '.sawbuck')) || under(typed, gp ? dirname(gp) : '')
     || under(real, realPath(join(resolve(repo), '.sawbuck'))) || under(real, gp ? realPath(dirname(gp)) : '')) ? askOwn() : null;
 }
 export const OUTWARD = [

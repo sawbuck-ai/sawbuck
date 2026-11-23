@@ -50,6 +50,7 @@
     "allowed.mjs",
     "day.mjs",
     "guard.mjs",
+    "began.mjs",
     "deps.mjs",
     "ripples.mjs",
     "profile.mjs",

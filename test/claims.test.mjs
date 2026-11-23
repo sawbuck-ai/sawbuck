@@ -3217,3 +3217,81 @@ test('claim: a link under a protected name is read as git keeps it: a person\'s 
   assert.ok(sentBackFor(h.stop(), 'build-images-frozen'), 'the person\'s link pointed at another file by the turn');
 });
 
+// ---- 0.2.6, part 5: a turn that began where there was no repository -----------------------------------------------
+// A baseline is written in the repository, and under hooks that run everywhere (attach --user, the plugin's) a prompt
+// can begin in a folder that is none. The end of that turn found a repository, a contract and no baseline, judged
+// everything by the rules now, and sent the turn back for the contract it had just been asked to write; the next
+// prompt would not take a file up that had been sent back, so every turn was sent back until a first commit. Since
+// 0.2.6 the prompt hook leaves a line in the person's own folder (~/.sawbuck/began/): this session began here, where
+// there was no repository. Each case was typed against the published 0.2.5 first (proof-bench/no-baseline).
+const userLevel = () => { const home = mkdtempSync(join(tmpdir(), 'claims-home-')); const env = { HOME: home, XDG_CONFIG_HOME: join(home, 'cfg') };
+  assert.equal(sbE(repo(true), env, 'attach', '--user').code, 0); return env; };
+const emptyFolder = () => { const d = mkdtempSync(join(tmpdir(), 'claims-new-')); put(d, 'package.json', JSON.stringify({ name: 'demo', version: '1.0.0', scripts: { test: 'node --test' } }, null, 2) + '\n'); put(d, 'src/add.js', 'exports.add=(a,b)=>a+b\n'); return d; };
+// the hooks as user-level wiring runs them: no folder is named, they find it from where they run
+const hooksEverywhere = (d, env, session = 's') => {
+  const hook = (args, ev) => spawnSync(process.execPath, [CLI, ...args], { cwd: d, encoding: 'utf8', env: { ...ENV, ...env }, input: JSON.stringify(ev) }).stdout || '';
+  let n = 0;
+  return { prompt: (text) => { n++; hook(['turn', '--hook'], { hook_event_name: 'UserPromptSubmit', prompt: text, session_id: session, prompt_id: 'p' + n, cwd: d }); },
+    stop: () => hook(['__hook', '--by', 'claude', '--stop'], { hook_event_name: 'Stop', cwd: d, session_id: session, prompt_id: 'p' + n }) };
+};
+const beganFiles = (env) => { try { return readdirSync(join(env.HOME, '.sawbuck', 'began')); } catch { return []; } };
+test('claim: under user-level hooks, a turn that began in a folder with no repository and set Sawbuck up there is not sent back, and neither are the turns after it', () => {
+  const env = userLevel();
+  let d = emptyFolder(); let h = hooksEverywhere(d, env);
+  h.prompt('set this project up with sawbuck'); assert.equal(beganFiles(env).length, 1, 'the prompt hook wrote where the turn began');
+  git(d, 'init', '-q', '-b', 'main'); assert.equal(sbE(d, env, 'contract').code, 0); sbE(d, env, 'attach');
+  for (let i = 0; i < 4; i++) assert.ok(!sentBackFor(h.stop()), `the setup turn, end ${i + 1}`);
+  h.prompt('add a function'); assert.equal(beganFiles(env).length, 0, 'a prompt in a repository takes that line away');
+  put(d, 'src/more.js', 'exports.more = 1;\n'); assert.ok(!sentBackFor(h.stop()), 'the next turn, nothing committed yet');
+  h.prompt('edit the contract'); dropWorkflowRule(d); assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'and from then on the contract is a protected path');
+  // the order turned round, a contract copied in by hand, and a session that sits in a folder below
+  d = emptyFolder(); h = hooksEverywhere(d, env, 't'); h.prompt('set up'); git(d, 'init', '-q', '-b', 'main'); sbE(d, env, 'attach'); assert.equal(sbE(d, env, 'contract').code, 0);
+  assert.ok(!sentBackFor(h.stop()), 'git init, attach, then contract');
+  const usual = readFileSync(join(d, 'promptwheel.config.json'), 'utf8');
+  d = emptyFolder(); h = hooksEverywhere(d, env, 'u'); h.prompt('start a project with my usual contract'); git(d, 'init', '-q', '-b', 'main'); put(d, 'promptwheel.config.json', usual);
+  assert.ok(!sentBackFor(h.stop()), 'git init, then a contract copied in from another project');
+  const top = emptyFolder(); mkdirSync(join(top, 'app')); h = hooksEverywhere(join(top, 'app'), env, 'v'); h.prompt('set up the whole project'); git(top, 'init', '-q', '-b', 'main'); assert.equal(sbE(top, env, 'contract').code, 0);
+  assert.ok(!sentBackFor(h.stop()), 'the session sits in a folder below the one git init ran in');
+});
+test('claim: a turn that began with no repository is not judged by the rules it wrote, as in a repository; a repository that came with commits is judged as before', () => {
+  const env = userLevel();
+  // it signed, and edited what it signed, in one turn: the rules a turn writes do not judge that turn
+  let d = emptyFolder(); put(d, '.github/workflows/ci.yml', WF0); let h = hooksEverywhere(d, env);
+  h.prompt('set up sawbuck, and let workflows change'); git(d, 'init', '-q', '-b', 'main'); assert.equal(sbE(d, env, 'contract').code, 0); dropWorkflowRule(d);
+  assert.ok(!sentBackFor(h.stop()), 'the contract edited in the turn that wrote it');
+  h.prompt('and once more'); edit(d, 'promptwheel.config.json', (s) => s + '\n'); assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'the next turn is judged by it');
+  // a signed repository cloned into the empty folder, then its workflow edited: the commit brought its rules
+  const src = signedWithWorkflow();
+  d = mkdtempSync(join(tmpdir(), 'claims-new-')); h = hooksEverywhere(d, env, 't'); h.prompt('clone the project here and fix its ci'); git(d, 'clone', '-q', src, '.'); put(d, '.github/workflows/ci.yml', WF0 + '# more\n');
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'), 'a clone, then a protected edit');
+  d = mkdtempSync(join(tmpdir(), 'claims-new-')); h = hooksEverywhere(d, env, 'u'); h.prompt('clone the project here'); git(d, 'clone', '-q', src, '.'); put(d, 'src/more.js', 'exports.more = 1;\n');
+  assert.ok(!sentBackFor(h.stop()), 'a clone, then an honest edit');
+  // git init, contract, the first commit, and then a workflow: a commit exists, so the turn is judged as before
+  d = emptyFolder(); h = hooksEverywhere(d, env, 'v'); h.prompt('set up, commit, add ci'); git(d, 'init', '-q', '-b', 'main'); assert.equal(sbE(d, env, 'contract').code, 0); save(d, 'first'); put(d, '.github/workflows/ci.yml', WF0);
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'), 'a workflow added after the first commit');
+});
+test('claim: "no baseline" goes on meaning "judge everything": with both copies of the record removed, with a line from another session, or with one for another folder, the turn is sent back', () => {
+  // project hooks, no commit yet, both copies removed in the turn
+  let d = noCommitWithWorkflow(); let h = ownHooks(d); h.prompt('x'); rmSync(join(d, '.sawbuck'), { recursive: true, force: true }); rmSync(join(d, '.git', 'sawbuck', 'guard.json'), { force: true }); dropWorkflowRule(d);
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'both copies removed, the contract edited');
+  // user-level hooks: another session once began here while it was no repository, and its line is still there
+  const env = userLevel();
+  d = emptyFolder(); hooksEverywhere(d, env, 'another-session').prompt('hello'); assert.equal(beganFiles(env).length, 1);
+  git(d, 'init', '-q', '-b', 'main'); assert.equal(sbE(d, env, 'contract').code, 0);
+  h = hooksEverywhere(d, env, 'this-session'); h.prompt('x'); rmSync(join(d, '.sawbuck'), { recursive: true, force: true }); rmSync(join(d, '.git', 'sawbuck', 'guard.json'), { force: true }); dropWorkflowRule(d);
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'another session\'s line is not this turn\'s beginning');
+  // this session began in a folder with no repository, and the turn ends in a repository somewhere else
+  const elsewhere = emptyFolder(); hooksEverywhere(elsewhere, env, 'w').prompt('hello');
+  d = emptyFolder(); git(d, 'init', '-q', '-b', 'main'); assert.equal(sbE(d, env, 'contract').code, 0);
+  assert.ok(sentBackFor(hooksEverywhere(d, env, 'w').stop(), 'contract-frozen'), 'a line for another folder is not this repository\'s beginning');
+});
+test('claim: the hold asks a person before a command or an edit that names the folder where a turn\'s beginning is kept (~/.sawbuck/began)', () => {
+  const d = signed(true); const w = wired(d); const ask = /"permissionDecision":"ask"/;
+  for (const c of ['rm -rf ~/.sawbuck/began', `echo '{}' > ${HOME}/.sawbuck/began/x.json`, 'mkdir -p "$HOME/.sawbuck/began" && cp a.json "$HOME/.sawbuck/began/"']) assert.match(w.pre(c), ask, c);
+  for (const c of ['ls ~/.sawbuck/began', `node x.mjs rules --check ${HOME}/.sawbuck/rule-labels.json`, 'cat docs/began.md']) assert.doesNotMatch(w.pre(c), ask, c);
+  const h = JSON.parse(readFileSync(join(d, '.claude/settings.local.json'), 'utf8')).hooks;
+  const preEdit = (file) => spawnSync('sh', ['-c', h.PreToolUse.find((x) => String(x.matcher || '').includes('Edit')).hooks[0].command], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: file, content: '{}' }, session_id: 's', cwd: d }) }).stdout || '';
+  assert.match(preEdit(join(HOME, '.sawbuck', 'began', 'x.json')), ask);
+  assert.equal(preEdit(join(HOME, '.sawbuck', 'shape-labels.json')), '', 'the rest of that folder is the person\'s own');
+});
+

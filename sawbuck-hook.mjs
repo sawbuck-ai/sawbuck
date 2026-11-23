@@ -14,6 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 import { mandateHits, hashOf, protectedAmong, lockState, sinceBegan } from './contract.mjs';
 import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
+import { beganWithoutRepo, forgetBegan } from './began.mjs';
 import { readAllowed, keptOnTree } from './allowed.mjs';
 import { cli, olderSaid } from './copies.mjs';
 import { undoJudge, redoJudge, redoDue, redoTold, redoLine, undoHintNote, undoHintDue, undoHintTold } from './undo.mjs';
@@ -322,6 +323,19 @@ const sendBack = (idKey, countKey, reason, stillOpen) => {
 // edit COMMITTED since the baseline's commit counts too: a commit mid-turn does not walk through.
 if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   const now = new Date().toISOString();
+  // A TURN THAT BEGAN WHERE THERE WAS NO REPOSITORY (0.2.6, began.mjs). No baseline is on record here and no commit
+  // exists, and the prompt hook of this session left its line for this folder: nothing stood when the turn began, and
+  // the rules it wrote do not judge it (as in a repository whose turn began with no contract). It becomes the turn's
+  // baseline, in both copies, so a second end of the same turn reads it like any other. Where a commit exists (a clone,
+  // a first commit made in the turn) nothing changes: that turn is judged as before, by the rules as they are now.
+  if (!(st.turnBaseline && typeof st.turnBaseline === 'object') && !head) {
+    const w = beganWithoutRepo(hookInput.session_id, repo);
+    if (w) {
+      st.turnBaseline = { at: w.at, sha: '', files: {}, rules: [], by: 'no-repository', ...(hookInput.prompt_id ? { forPrompt: String(hookInput.prompt_id) } : {}) };
+      st.lastPromptAt = w.at;   // the state file is this turn's own: not one that was removed and rebuilt
+      writeGuard(repo, { baseline: st.turnBaseline }); forgetBegan(hookInput.session_id);
+    }
+  }
   const base = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null;
   const baseline = (base && base.files && typeof base.files === 'object') ? base.files : {};
   // read against what the turn began with (contract.mjs, sinceBegan): its commit where it had one, the baseline's own
@@ -338,7 +352,10 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   const leftAlone = [...new Set([...dirty.filter(untouched), ...committedSince.filter(committedAsTheyWere)])];
   // the rules in force when the turn began: a rule this turn adds does not apply to it, so signing a contract does
   // not block itself, and one it deletes or narrows still holds
-  const began = base && Array.isArray(base.rules) ? base.rules : null;
+  // a baseline of that kind speaks for the prompt it was made for. Should the prompt hook not run for a later prompt,
+  // it is still the baseline: then the rules as they are now judge the turn, as with no baseline at all.
+  const forAnother = !!(base && base.by === 'no-repository' && base.forPrompt && hookInput.prompt_id && String(hookInput.prompt_id) !== base.forPrompt);
+  const began = base && Array.isArray(base.rules) && !forAnother ? base.rules : null;
   const hits = changed.length ? mandateHits(repo, changed, began ? { list: began } : {}) : [];
   st.lastStopAt = now;   // the next prompt may take a fresh baseline only because this stop happened
   st.lastStopHead = head || null;   // and where HEAD stood: a commit between turns is the person's, not the agent's
