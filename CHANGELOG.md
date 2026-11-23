@@ -2,7 +2,18 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
-## Unreleased: the loop, and the record it leaves
+## 0.2.5 (2026-11-22): where the work stands, the loop, and pages that agree
+
+Four things in one release. Each is said below.
+
+- **`sawbuck align`: where the work stands when Sawbuck joins late.** You start on a project in a prompt and bring Sawbuck in afterwards. `attach` now reads each commit since the session began against the contract, once, and says what stands out: a count that fell, a protected path that changed, tests an earlier commit added that are gone. It is said to you, and once to the agent at its next prompt, which is asked to tell you and to ask whether it was meant. A reading, never a verdict: nothing from before is sent back. When nothing stands out the agent is told nothing. In two first looks with a real agent, it left the earlier work alone, told the person and asked. Without the reading it said nothing.
+- **No dead ends outside a repository.** `contract`, `attach`, `check` and `align` in a folder with no git repository say how to start one. On a terminal, Enter starts it and the command goes on. Anywhere else nothing waits.
+- **The pages agree.** The README, the npm description and the help open with one sentence. One table in the guide says which line is for whom. The sentence on where it has run is the same on every page. Codex and Cursor are said as not yet run end to end.
+- **The two ways to accept a change are said apart.** `--allow` is for a commit on your machine. On a pull request it is a comment there. The line joined them by "or", and an agent that had only that line told its person to use the first for a change that was on a pull request.
+- **A limit said: a change that swaps a test tool can read `gamed`.** Found on a real commit by a person. The earlier tests cannot be run with what is installed now. A person's reason is the way through, and the engine's report now marks the case (`baseUnrun`).
+- **Fixed: `contract --try` started gpg once for every commit it listed** where git shows signatures by default. Slow, not wrong, since 0.2.1.
+
+### The loop, and the record it leaves
 
 The engine had a loop from June to November: run an agent, check what it changed, keep it only if a measure improved. It was removed before launch with no measurement behind the cut, and Sawbuck never had a command for it. It is back in the engine, and Sawbuck hands it through.
 
