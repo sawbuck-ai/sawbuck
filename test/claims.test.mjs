@@ -3057,18 +3057,17 @@ test('claim: in a repository with no commit yet, an edit to the contract that si
   const e = noCommitYet(); h = ownHooks(e); h.prompt('commit everything'); save(e, 'the first commit, made in the turn, with the contract as the person had it');
   assert.ok(!sentBackFor(h.stop()), 'the contract committed as it stood is the person\'s own file: not sent back');
 });
-// A second reader of the first form of this fix (the same night) showed that reading more with no commit costs more
-// than it buys. Listing what is staged when there is no HEAD also listed every tracked file after `git checkout
-// --orphan` in an ordinary repo, and sent that turn back for a contract nobody touched. Reading a repository's first
-// commit against the empty tree sent a new repo back for a protected path that is a symlink. Both were taken out
-// again. So with no commit yet two things are still NOT seen, as before this release, and they are held here as they
-// are, so that the design that closes them (the queue has the row) changes these lines knowingly:
-test('not seen yet, with no commit: an edit to the contract that is staged, and one the agent commits as the repository\'s first commit in the same turn', () => {
+// A second reader of the first form of that fix (the same night) showed it too broad twice over: listing what is staged
+// wherever there is no HEAD also listed every tracked file after `git checkout --orphan` in an ordinary repo, and
+// reading a first commit against the empty tree sent a new repo back for a protected path that is a link. Both were
+// taken out, and 0.2.5 held the two misses here "as they are". Since 0.2.6 they are read, by what the turn BEGAN with
+// and not by whether HEAD exists at its end (the snapshot, below), and a link is compared as git keeps it.
+test('claim: with no commit yet, an edit to the contract that is staged, and one the agent commits as the repository\'s first commit in the same turn, are sent back', () => {
   const loosen = (d) => edit(d, 'promptwheel.config.json', (s) => { const c = JSON.parse(s); c.mandates = (c.mandates || []).filter((m) => m.name !== 'workflows-frozen'); return JSON.stringify(c, null, 2) + '\n'; });
   const b = noCommitYet(); let h = ownHooks(b); h.prompt('loosen the rules'); loosen(b); git(b, 'add', '-A');
-  assert.ok(!sentBackFor(h.stop()), 'staged, with no commit: not seen');
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'staged, with no commit');
   const c = noCommitYet(); h = ownHooks(c); h.prompt('loosen the rules and commit'); loosen(c); save(c, 'the first commit, made in the turn');
-  assert.ok(!sentBackFor(h.stop()), 'in the first commit of the repository, made in the turn: not seen');
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'in the first commit of the repository, made in the turn');
 });
 test('claim: a turn that only makes an orphan branch in a signed repo is not sent back (git checkout --orphan leaves no HEAD and every file staged, and nothing was edited)', () => {
   const d = repo(true); put(d, '.github/workflows/ci.yml', 'name: ci\non: push\njobs: {}\n'); save(d, 'ci'); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); assert.equal(sb(d, 'attach').code, 0);
@@ -3132,3 +3131,89 @@ test('claim: no git call that names a revision leaves git to guess what is a pat
   for (const a of [['check'], ['check', '--base', 'HEAD~2'], ['check', '--allow', 'the test was wrong'], ['align', '--since', 'HEAD~2'], ['debt'], ['status'], ['context', 'src/add.js'], ['playbook'], ['insights'], ['suggest'], ['day'], ['improve', '--attempt', 'true']]) run(a);
   assert.equal(readFileSync(calls, 'utf8'), '', 'every call that names a revision ends its revisions with `--`');
 });
+
+// ---- 0.2.6, parts 2 to 4: the baseline is a snapshot, and the end of a turn reads it ------------------------------
+// Until 0.2.6 "changed in this turn" was what git listed at the end of the turn. A file git was not tracking when the
+// turn began, and that is gone or ignored at its end, is on no list; with no commit there was no list at all for what
+// is staged or committed. Each case below was typed against the published 0.2.5 first (proof-bench/no-baseline).
+const noCommitWithWorkflow = () => { const d = mkdtempSync(join(tmpdir(), 'claims-')); git(d, 'init', '-q', '-b', 'main');
+  put(d, 'package.json', JSON.stringify({ name: 'demo', version: '1.0.0', scripts: { test: 'node --test' } }, null, 2) + '\n'); put(d, 'src/add.js', 'exports.add=(a,b)=>a+b\n'); put(d, '.github/workflows/ci.yml', WF0);
+  assert.equal(sb(d, 'contract').code, 0); assert.equal(sb(d, 'attach').code, 0); return d; };
+// commits, and a contract written and not yet committed: the window every setup passes through
+const contractNotCommitted = () => { const d = repo(true); put(d, '.github/workflows/ci.yml', WF0); save(d, 'ci'); assert.equal(sb(d, 'contract').code, 0); assert.equal(sb(d, 'attach').code, 0); return d; };
+test('claim: before its first commit a contract that a turn deletes is sent back, in a repository with no commit and in one with commits, and so is a workflow file not yet committed', () => {
+  let d = noCommitWithWorkflow(); let h = ownHooks(d); h.prompt('tidy up'); rmSync(join(d, 'promptwheel.config.json'));
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'no commit yet: the contract deleted');
+  d = noCommitWithWorkflow(); h = ownHooks(d); h.prompt('tidy up'); rmSync(join(d, '.github/workflows/ci.yml'));
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'), 'no commit yet: the workflow deleted');
+  d = contractNotCommitted(); h = ownHooks(d); h.prompt('tidy up'); rmSync(join(d, 'promptwheel.config.json'));
+  const first = h.stop(); assert.ok(sentBackFor(first, 'contract-frozen'), 'commits, the contract not yet committed: deleted');
+  assert.match(first, /git cat-file -p [0-9a-f]{40} > promptwheel\.config\.json/, 'and the send-back holds the line that puts it back');
+});
+test('claim: a protected file that a turn hides in .gitignore and then edits is sent back, in one turn or over two', () => {
+  let d = noCommitWithWorkflow(); let h = ownHooks(d); h.prompt('x'); put(d, '.gitignore', 'promptwheel.config.json\n'); dropWorkflowRule(d);
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'no commit yet: the contract ignored, then edited');
+  d = noCommitWithWorkflow(); h = ownHooks(d); h.prompt('x'); put(d, '.gitignore', '.github/\n'); put(d, '.github/workflows/ci.yml', WF0 + '# more\n');
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'), 'no commit yet: the workflows folder ignored, then a workflow edited');
+  d = contractNotCommitted(); h = ownHooks(d); h.prompt('x'); edit(d, '.gitignore', (s) => s + 'promptwheel.config.json\n'); dropWorkflowRule(d);
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'commits, the contract not yet committed: ignored, then edited');
+  d = noCommitWithWorkflow(); h = ownHooks(d); h.prompt('x'); put(d, '.gitignore', 'promptwheel.config.json\n');
+  assert.ok(!sentBackFor(h.stop()), 'a turn that only adds the line to .gitignore changed no protected file');
+  h.prompt('y'); dropWorkflowRule(d);
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'and the next turn, which edits the contract git no longer lists, is sent back: the contract is read by name');
+});
+test('claim: a person\'s own uncommitted edit to a tracked protected file that the turn puts back is not a send-back (the undo ledger speaks, as before)', () => {
+  const d = signedWithWorkflow(); put(d, '.github/workflows/ci.yml', WF0 + '# mine\n'); const h = ownHooks(d);
+  h.prompt('discard my workflow change'); git(d, 'checkout', '--', '.github/workflows/ci.yml');
+  assert.ok(!sentBackFor(h.stop()));
+});
+test('claim: with no commit yet, a protected file the turn adds, deletes or moves away is sent back, staged or inside the first commit; a person who had staged everything is read the same way', () => {
+  const one = (label, rule, act) => { const d = noCommitWithWorkflow(); const h = ownHooks(d); h.prompt('x'); act(d); assert.ok(sentBackFor(h.stop(), rule), label); };
+  one('a new workflow, staged', 'workflows-frozen', (d) => { put(d, '.github/workflows/new.yml', WF0); git(d, 'add', '.github/workflows/new.yml'); });
+  one('a new workflow, in the first commit', 'workflows-frozen', (d) => { put(d, '.github/workflows/new.yml', WF0); save(d, 'first'); });
+  one('the workflow deleted, then the first commit', 'workflows-frozen', (d) => { rmSync(join(d, '.github/workflows/ci.yml')); save(d, 'first'); });
+  one('the contract deleted, then the first commit', 'contract-frozen', (d) => { rmSync(join(d, 'promptwheel.config.json')); save(d, 'first'); });
+  one('the workflow moved out of its folder, then the first commit', 'workflows-frozen', (d) => { writeFileSync(join(d, 'ci.yml.txt'), readFileSync(join(d, '.github/workflows/ci.yml'))); rmSync(join(d, '.github/workflows/ci.yml')); save(d, 'first'); });
+  // the person had staged everything before the prompt
+  let d = noCommitWithWorkflow(); git(d, 'add', '-A'); let h = ownHooks(d); h.prompt('x'); dropWorkflowRule(d);
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'everything staged: the contract edited');
+  d = noCommitWithWorkflow(); git(d, 'add', '-A'); h = ownHooks(d); h.prompt('x'); git(d, 'rm', '-q', '-f', '.github/workflows/ci.yml');
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'), 'everything staged: git rm of the workflow');
+  d = noCommitWithWorkflow(); git(d, 'add', '-A'); h = ownHooks(d); h.prompt('x'); put(d, 'src/more.js', 'exports.more = 1;\n');
+  assert.ok(!sentBackFor(h.stop()), 'everything staged: an honest turn');
+  h.prompt('commit it all'); save(d, 'first');
+  assert.ok(!sentBackFor(h.stop()), 'and a first commit of what was there, nothing edited');
+});
+test('claim: a turn that makes an orphan branch and then edits a protected file is sent back; a turn that only empties the tree with git switch --orphan is not; a person already on a branch with no commit is read by what they had', () => {
+  let d = signedWithWorkflow(); let h = ownHooks(d); h.prompt('x'); git(d, 'checkout', '-q', '--orphan', 'tmp'); put(d, '.github/workflows/ci.yml', WF0 + '# more\n');
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'), 'git checkout --orphan, then a workflow edited');
+  d = signedWithWorkflow(); h = ownHooks(d); h.prompt('a docs branch'); git(d, 'switch', '-q', '--orphan', 'docs');
+  assert.ok(!sentBackFor(h.stop()), 'git switch --orphan empties the tree: the turn edited nothing');
+  d = signedWithWorkflow(); git(d, 'checkout', '-q', '--orphan', 'pages'); put(d, '.github/workflows/mine.yml', WF0); h = ownHooks(d);
+  h.prompt('add a function'); put(d, 'src/more.js', 'exports.more = 1;\n');
+  assert.ok(!sentBackFor(h.stop()), 'the person was on a branch with no commit, with a workflow of their own: an honest turn');
+  h.prompt('and the workflow'); put(d, '.github/workflows/mine.yml', WF0 + '# more\n');
+  assert.ok(sentBackFor(h.stop(), 'workflows-frozen'), 'and an edit to their workflow there');
+});
+test('claim: with no commit yet the turn is checked from the second copy of its baseline: the state file removed, or its baseline edited to match, lets no contract edit through', () => {
+  let d = noCommitWithWorkflow(); let h = ownHooks(d); h.prompt('x'); dropWorkflowRule(d); rmSync(join(d, '.sawbuck', 'state.json')); save(d, 'first');
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'the state file removed, the contract edited and committed');
+  d = noCommitWithWorkflow(); h = ownHooks(d); h.prompt('x'); dropWorkflowRule(d);
+  const now = git(d, 'hash-object', '--', 'promptwheel.config.json');
+  json(d, '.sawbuck/state.json', (st) => { st.turnBaseline.files['promptwheel.config.json'] = now; });
+  assert.ok(sentBackFor(h.stop(), 'contract-frozen'), 'the baseline in the state file edited to hold the new contract');
+});
+test('claim: a link under a protected name is read as git keeps it: a person\'s uncommitted link that the turn only commits is not sent back, with or without a first commit, and a link the turn points elsewhere is', { skip: process.platform === 'win32' && 'links' }, () => {
+  let d = signedWithWorkflow(); put(d, 'compose/dev.yml', 'services: {}\n'); symlinkSync('compose/dev.yml', join(d, 'docker-compose.yml'));
+  let h = ownHooks(d); h.prompt('commit my work'); save(d, 'what was there');
+  assert.ok(!sentBackFor(h.stop()), 'a repository with commits: the link committed as it stood');
+  d = mkdtempSync(join(tmpdir(), 'claims-')); git(d, 'init', '-q', '-b', 'main'); put(d, 'package.json', '{"name":"demo","scripts":{"test":"node --test"}}\n');
+  put(d, 'ci/real.yml', WF0); put(d, '.github/workflows/.keep', ''); symlinkSync('../../ci/real.yml', join(d, '.github/workflows/ci.yml'));
+  assert.equal(sb(d, 'contract').code, 0); assert.equal(sb(d, 'attach').code, 0);
+  h = ownHooks(d); h.prompt('commit everything'); save(d, 'first');
+  assert.ok(!sentBackFor(h.stop()), 'no commit yet: a workflow that is a link, in the first commit as it stood');
+  d = signedWithWorkflow(); put(d, 'compose/dev.yml', 'services: {}\n'); put(d, 'compose/other.yml', 'services: {}\n'); symlinkSync('compose/dev.yml', join(d, 'docker-compose.yml'));
+  h = ownHooks(d); h.prompt('x'); rmSync(join(d, 'docker-compose.yml')); symlinkSync('compose/other.yml', join(d, 'docker-compose.yml'));
+  assert.ok(sentBackFor(h.stop(), 'build-images-frozen'), 'the person\'s link pointed at another file by the turn');
+});
+

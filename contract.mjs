@@ -1,7 +1,7 @@
 // contract.mjs: the contract's hard rules, read the way promptwheel reads them. Shared by the CLI
 // (frame / turn) and the Stop hook (the turn-level wall), so there is one resolver and one renderer.
 // Read-only, never throws, zero-dep.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, lstatSync, readlinkSync } from 'node:fs';
 import { join, dirname, resolve, isAbsolute, posix } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -72,17 +72,28 @@ export function mandatesInForce(repo, ref = 'HEAD') {
   return [...wt, ...committed];
 }
 
-// the paths among `paths` that a mandate in force covers (any rule, working tree or committed)
-export function protectedAmong(repo, paths) {
-  const res = mandatesInForce(repo).flatMap((m) => pathsOf(m).map(globToRe));
+// the paths among `paths` that a mandate in force covers (any rule, working tree or committed). `list`: the rules to
+// read instead, when the caller judged by rules of its own (the end of a turn judges by the rules the turn began with,
+// and a turn that deleted a contract not yet committed leaves none in force to name what it changed).
+export function protectedAmong(repo, paths, list = null) {
+  const res = (Array.isArray(list) ? list.filter(validMandate) : mandatesInForce(repo)).flatMap((m) => pathsOf(m).map(globToRe));
   return paths.filter((f) => res.some((re) => re.test(f)));
 }
 
 // a working-tree file's content hash as git would store it; 'deleted' when it is gone. With `store`,
 // the content is also written into the object database (`hash-object -w`), so a person's edit that
 // the baseline recorded can be restored by hash later even after the agent overwrote the file.
+// A link is hashed as git keeps it: the name it points to, not what is there. `git hash-object <path>` follows a link,
+// so until 0.2.6 a link's hash here never matched the blob a commit holds for it, and a person's uncommitted link under
+// a protected name that a turn only committed read as changed by the turn (proof-bench/no-baseline, E2).
 export function hashOf(repo, file, { store = false } = {}) {
-  try { return gitOut(repo, ['hash-object', ...(store ? ['-w'] : []), '--', file]).trim(); } catch { return 'deleted'; }
+  const w = store ? ['-w'] : [];
+  let link = null;
+  try { if (lstatSync(join(repo, file)).isSymbolicLink()) link = readlinkSync(join(repo, file), { encoding: 'buffer' }); } catch { return 'deleted'; }
+  try {
+    if (link) return execFileSync('git', ['hash-object', ...w, '--stdin'], { cwd: repo, input: link, stdio: ['pipe', 'pipe', 'ignore'] }).toString('utf8').trim();
+    return gitOut(repo, ['hash-object', ...w, '--', file]).trim();
+  } catch { return 'deleted'; }
 }
 
 // Files hidden from git (skip-worktree, assume-unchanged) whose content is not what HEAD holds. `git diff` and `git
@@ -116,12 +127,63 @@ export function dirtyNames(repo) {
   return [...new Set([...names('diff', '--name-only', '--no-renames', 'HEAD', '--'), ...names('ls-files', '--others', '--exclude-standard'), ...hiddenChanged(repo)])];
 }
 
+// THE BASELINE IS A SNAPSHOT (0.2.6): what a turn begins with, and what has changed since it began.
+// Until then "changed in this turn" was whatever git listed at the end of the turn, against HEAD. Three things were on
+// no list. A file git was not tracking when the turn began, and that is gone or ignored at its end: a contract not yet
+// committed could be deleted, or added to .gitignore and emptied, and the turn was not sent back. Where the turn began
+// with no commit: what is staged, and all of a first commit made in the turn. And a turn that ends on a branch with no
+// commit (git checkout --orphan, then an edit). Found by a second reader of 0.2.5 and typed against the published
+// package before a line of this was written (proof-bench/no-baseline).
+// The rule: a turn is read against what it BEGAN with, its commit where it had one and the baseline's own files where
+// it had none. Which reading is used is decided by the baseline, never by whether HEAD exists at the end: a first try
+// at this (the night of 0.2.5) asked the second question, and sent back a turn that had only made an orphan branch.
+const hasHead = (repo) => { try { gitOut(repo, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']); return true; } catch { return false; } };
+// the contract's own files are read by name: a turn that adds one to .gitignore does not take it out of the next baseline
+const OWN_FILES = ['promptwheel.config.json', 'sawbuck.config.json'];
+const here = (repo, f) => { try { lstatSync(join(repo, f)); return true; } catch { return false; } };
+
+// Every path a baseline may have to hold. On a commit: what is not as that commit holds it (dirtyNames). With no commit
+// yet: everything git knows or sees, staged or not, because there is nothing to be "not as" and the end of the turn can
+// then only compare by content. And the contract's own files wherever they are not as the commit holds them.
+export function standingNames(repo) {
+  const names = (...a) => { try { return gitNames(repo, a); } catch { return []; } };
+  const head = hasHead(repo);
+  const out = head ? dirtyNames(repo) : [...new Set([...names('ls-files', '--cached'), ...names('ls-files', '--others', '--exclude-standard')])];
+  for (const f of OWN_FILES) if (!out.includes(f) && here(repo, f) && (!head || hashOf(repo, f) !== blobAt(repo, 'HEAD', f))) out.push(f);
+  return out;
+}
+
+// The two lists the wall reads at the end of a turn: `dirty`, every path to hold against the baseline's files, and
+// `committedSince`, every path a commit made in the turn may have changed. `base` is the baseline (null when there is
+// none on record), `head` the commit HEAD names now ('' when it names none).
+export function sinceBegan(repo, base, head) {
+  const names = (...a) => { try { return gitNames(repo, a); } catch { return []; } };
+  const files = (base && base.files && typeof base.files === 'object') ? base.files : {};
+  const began = (base && typeof base.sha === 'string') ? base.sha : null;
+  let dirty; let committedSince = [];
+  if (began === '') {
+    // the turn began with no commit: everything git knows or sees now, and all of a first commit if one was made
+    dirty = [...names('ls-files', '--cached'), ...names('ls-files', '--others', '--exclude-standard')];
+    if (head) committedSince = names('ls-tree', '-r', '--name-only', 'HEAD');
+  } else if (began && !head) {
+    // it began on a commit and HEAD names none now (an orphan branch made in the turn): the working tree against the
+    // commit it began at, for what is there. What is gone is not read: `git switch --orphan` empties the tree itself.
+    dirty = [...names('diff', '--name-only', '--no-renames', '--diff-filter=d', began, '--'), ...names('ls-files', '--others', '--exclude-standard')];
+  } else {
+    dirty = dirtyNames(repo);
+    if (began && head && began !== head) committedSince = names('diff', '--name-only', '--no-renames', began, 'HEAD', '--');
+  }
+  // what the baseline holds and git was not tracking when the turn began is read whether or not git still lists it
+  for (const f of Object.keys(files)) if (!dirty.includes(f) && (!began || blobAt(repo, began, f) === '')) dirty.push(f);
+  return { dirty: [...new Set(dirty)], committedSince };
+}
+
 // the protected paths that are dirty right now, each with its content hash: the baseline `turn`
 // records when a prompt begins, so the Stop hook counts only what the turn itself changed and leaves
 // a person's own pre-existing edits alone. {} when nothing protected is dirty (or not a git repo).
 // `store` keeps each file's content in the object database (see hashOf), which the baseline does.
 export function protectedDirty(repo, { store = false } = {}) {
-  const changed = dirtyNames(repo);
+  const changed = standingNames(repo);
   if (!changed.length) return {};
   const res = mandatesInForce(repo).flatMap((m) => pathsOf(m).map(globToRe));
   const out = {};

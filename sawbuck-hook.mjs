@@ -11,7 +11,7 @@ import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-import { mandateHits, hashOf, protectedAmong, lockState, gitNames, dirtyNames } from './contract.mjs';
+import { mandateHits, hashOf, protectedAmong, lockState, sinceBegan } from './contract.mjs';
 import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { readAllowed, keptOnTree } from './allowed.mjs';
@@ -75,7 +75,10 @@ const inHead = (sha) => !!(sha && head && hasCommit(sha) && (sha === head || isA
 // checked from the commit it began at, with the baseline it began with.
 let recordRemoved = false;
 const stateUsable = stateRead && !!st.lastPromptAt && !(guard.baseline && guard.baseline.at && Date.parse(st.lastPromptAt) < Date.parse(guard.baseline.at));
-if (enforcing && guard.baseline && guard.baseline.sha && hasCommit(guard.baseline.sha)) {
+// With or without a commit (0.2.6): a baseline taken where there was none names no commit (sha ''), and until then the
+// second copy was passed over there, so the state file alone decided where such a turn began (no-baseline, D1, D2).
+const guardBase = (guard.baseline && typeof guard.baseline === 'object' && !Array.isArray(guard.baseline) && typeof guard.baseline.sha === 'string') ? guard.baseline : null;
+if (enforcing && guardBase && (guardBase.sha === '' || hasCommit(guardBase.sha))) {
   if (!stateUsable) {
     st = { lastSha: guard.baseline.sha, turns: 0, shownTotal: 0 }; st.lastPromptAt = guard.baseline.at || st.lastPromptAt; recordRemoved = true;
     logActivity({ kind: 'note', sha: (head || '').slice(0, 8), file: '', reason: 'the record under .sawbuck/ was removed or made unreadable during the turn; it was rebuilt, and the turn is checked again from the commit it began at', by: by || 'hook' });
@@ -319,11 +322,11 @@ const sendBack = (idKey, countKey, reason, stillOpen) => {
 // edit COMMITTED since the baseline's commit counts too: a commit mid-turn does not walk through.
 if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   const now = new Date().toISOString();
-  const names = (...a) => { try { return gitNames(repo, a); } catch { return []; } };   // NUL-separated: a name git would quote is still a path
-  const dirty = dirtyNames(repo);   // the one list the baseline was taken from too (a file hidden from git is read as well)
   const base = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null;
   const baseline = (base && base.files && typeof base.files === 'object') ? base.files : {};
-  const committedSince = (base && base.sha && head && base.sha !== head) ? names('diff', '--name-only', '--no-renames', base.sha, 'HEAD', '--') : [];
+  // read against what the turn began with (contract.mjs, sinceBegan): its commit where it had one, the baseline's own
+  // files where it had none or where git no longer lists them
+  const { dirty, committedSince } = sinceBegan(repo, base, head);
   const hashNow = {}; for (const f of dirty) if (Object.prototype.hasOwnProperty.call(baseline, f)) hashNow[f] = hashOf(repo, f);
   const untouched = (f) => Object.prototype.hasOwnProperty.call(baseline, f) && hashNow[f] === baseline[f];
   // a person's own uncommitted file (in the baseline) that the turn only committed, content unchanged, is still theirs:
@@ -335,7 +338,8 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   const leftAlone = [...new Set([...dirty.filter(untouched), ...committedSince.filter(committedAsTheyWere)])];
   // the rules in force when the turn began: a rule this turn adds does not apply to it, so signing a contract does
   // not block itself, and one it deletes or narrows still holds
-  const hits = changed.length ? mandateHits(repo, changed, base && Array.isArray(base.rules) ? { list: base.rules } : {}) : [];
+  const began = base && Array.isArray(base.rules) ? base.rules : null;
+  const hits = changed.length ? mandateHits(repo, changed, began ? { list: began } : {}) : [];
   st.lastStopAt = now;   // the next prompt may take a fresh baseline only because this stop happened
   st.lastStopHead = head || null;   // and where HEAD stood: a commit between turns is the person's, not the agent's
   if (hits.length) {
@@ -344,7 +348,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // cannot adopt any of it. Only the turn's own changes: a person's file the baseline spared stays
     // spared, or the next clean turn would be blocked over work that was never the agent's.
     const files = {};
-    for (const f of protectedAmong(repo, changed)) files[f] = hashOf(repo, f);
+    for (const f of protectedAmong(repo, changed, began)) files[f] = hashOf(repo, f);   // by the rules the hits were judged by
     // a flagged file the person had dirty before the prompt: keep the hash of THEIR content (the
     // baseline stored it in the object database), so the block can name the exact restore and the
     // next baseline can recognise the restored file as theirs
