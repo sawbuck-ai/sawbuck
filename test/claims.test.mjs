@@ -3345,3 +3345,34 @@ test('claim: a protected file the person had deleted, that the turn puts back as
   assert.ok(sentBackFor(h.stop(), 'workflows-frozen'));
 });
 
+// ---- 0.2.7: the activity line says who checked what, in a fixed shape (asked by the deskblock session) ------------
+// A reader that shows a handoff beside the check of its writer's work needs to know which session the line is about,
+// exactly what was checked, and that the hook checked it, not the agent. And nothing else: no test output, no code.
+const activity = (d) => readFileSync(join(d, '.sawbuck', 'activity.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const ACTIVITY_KEYS = ['schema', 'at', 'kind', 'session', 'caller', 'base', 'head', 'sha', 'file', 'reason', 'by', 'metric', 'retained', 'again'];
+test('claim: a verdict line from the end of a turn names its schema, the session, the full span it checked, that the hook checked it, and the deciding metric; nothing else', () => {
+  const d = signed(false); const w = wired(d, 'session-gamed');
+  w.prompt('make the tests pass'); edit(d, 'test/add.test.js', (s) => s.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make the test pass');
+  w.stop();
+  const line = activity(d).filter((l) => l.kind === 'gamed').pop();
+  assert.ok(line, 'a gamed line is written');
+  assert.equal(line.schema, 1); assert.equal(line.session, 'session-gamed'); assert.equal(line.caller, 'harness');
+  assert.equal(line.head, git(d, 'rev-parse', 'HEAD')); assert.equal(line.base, git(d, 'rev-parse', 'HEAD~1'));
+  assert.equal(line.metric, 'tests_pass'); assert.equal(typeof line.retained, 'number');
+  for (const k of Object.keys(line)) assert.ok(ACTIVITY_KEYS.includes(k), `no other field: ${k}`);
+  const e = signed(true); const v = wired(e, 'session-ok');
+  v.prompt('add sub'); edit(e, 'src/add.js', (s) => s + 'exports.sub=(a,b)=>a-b\n'); edit(e, 'test/add.test.js', (s) => s + "t.test('sub',()=>a.equal(require('../src/add.js').sub(3,1),2))\n"); save(e, 'sub');
+  v.stop();
+  const ok = activity(e).filter((l) => ['verified', 'inconclusive', 'regression'].includes(l.kind)).pop();
+  assert.ok(ok, 'a verdict line is written for an honest commit');
+  assert.equal(ok.schema, 1); assert.equal(ok.session, 'session-ok'); assert.equal(ok.caller, 'harness'); assert.equal(ok.head, git(e, 'rev-parse', 'HEAD'));
+});
+test('claim: the lines the hook writes for a protected path and for its notes carry the schema, the session, the caller and the full head', () => {
+  const d = signed(true); put(d, '.github/workflows/ci.yml', 'name: ci\non: push\njobs: {}\n'); save(d, 'ci'); const w = wired(d, 'session-wall');
+  w.prompt('x'); put(d, '.github/workflows/ci.yml', 'name: ci\non: push\njobs: { x: {} }\n'); w.stop();
+  const line = activity(d).filter((l) => l.kind === 'mandate').pop();
+  assert.ok(line, 'a mandate line is written');
+  assert.equal(line.schema, 1); assert.equal(line.session, 'session-wall'); assert.equal(line.caller, 'harness'); assert.equal(line.head, git(d, 'rev-parse', 'HEAD'));
+  for (const k of Object.keys(line)) assert.ok(ACTIVITY_KEYS.includes(k), `no other field: ${k}`);
+});
+

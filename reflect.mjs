@@ -39,6 +39,9 @@ const by = flag('--by', '');   // the agent that authored the change (Claude-fir
 const noAuto = process.argv.includes('--no-auto');   // user-level wiring: measure only where a contract exists, never auto-gate a stranger's suite
 const wasArg = flag('--was', null);
 const gaveBackArg = flag('--gave-back', null);
+// the session whose turn this is (the Stop hook passes the harness's session_id): a reader can tie a line to the work of one
+// session where two work in one repo
+const sessionArg = String(flag('--session', '') || '').replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 80);
 let answered = false;
 const answer = (o) => { if (!process.argv.includes('--answer') || answered) return; answered = true; process.stdout.write(JSON.stringify({ sawbuck: o }) + '\n'); };
 
@@ -250,7 +253,20 @@ function appendActivity(v, rep, again = false, as = null) {
     : k === 'verified' ? 'the check passed'
     : 'could not certify a pass';
   // `again`: this check judged a turn's commits again after a catch, not a new catch
-  const ev = { at: new Date().toISOString(), kind: k, sha, file: (as && as.file) || file, reason: String((as && as.reason) || why).slice(0, 160), by: by || null, ...(again ? { again: true } : {}) };
+  // ACTIVITY LINE, SCHEMA 1 (0.2.7, asked by a reader that shows a handoff beside the check of its writer's work): which
+  // session, exactly what span (the full shas, so a reader can tell whether the repo is still what was checked), who ran
+  // the check (only the hook writes these lines: `harness`), and the metric that decided, with how much of its win
+  // survived the source-only re-run. The kind words do not change without a new schema number. Nothing else: no test
+  // output, no code, no file contents.
+  let baseFull = '', headFull = '';
+  try { baseFull = git('rev-parse', '--verify', '-q', base + '^{commit}'); } catch {}
+  try { headFull = git('rev-parse', '--verify', '-q', head + '^{commit}'); } catch {}
+  const decided = gm || (rep.metrics || []).find((m) => m.guard && m.status === 'regressed') || (rep.metrics || []).find((m) => m.status === 'improved') || (rep.metrics || [])[0];
+  const ev = { schema: 1, at: new Date().toISOString(), kind: k, ...(sessionArg ? { session: sessionArg } : {}), caller: 'harness',
+    ...(baseFull ? { base: baseFull } : {}), ...(headFull ? { head: headFull } : {}), sha, file: (as && as.file) || file,
+    reason: String((as && as.reason) || why).slice(0, 160), by: by || null,
+    ...(decided && decided.name ? { metric: String(decided.name).slice(0, 60) } : {}), ...(decided && typeof decided.retained === 'number' ? { retained: decided.retained } : {}),
+    ...(again ? { again: true } : {}) };
   const dir = join(repo, '.sawbuck');
   const p = join(dir, 'activity.jsonl');
   try {

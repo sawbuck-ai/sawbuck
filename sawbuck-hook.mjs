@@ -57,7 +57,9 @@ try { if (existsSync(stPath)) { const s = JSON.parse(readFileSync(stPath, 'utf8'
 const head = git('rev-parse', 'HEAD');
 const readRec = () => { try { return JSON.parse(readFileSync(join(stDir, 'results.json'), 'utf8')); } catch { return null; } };
 const writeRec = (r) => { try { mkdirSync(stDir, { recursive: true }); writeFileSync(join(stDir, 'results.json'), JSON.stringify(r, null, 2) + '\n'); } catch {} };
-const logActivity = (ev) => { try { mkdirSync(stDir, { recursive: true }); appendFileSync(join(stDir, 'activity.jsonl'), JSON.stringify({ at: new Date().toISOString(), ...ev }) + '\n'); } catch {} };
+// schema 1 (reflect.mjs says what the fields are): the session, the caller (this hook: `harness`) and the full head, beside what each line says
+const sessionOf = String(hookInput.session_id || '').replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 80);
+const logActivity = (ev) => { try { mkdirSync(stDir, { recursive: true }); const { sha, ...rest } = ev; appendFileSync(join(stDir, 'activity.jsonl'), JSON.stringify({ schema: 1, at: new Date().toISOString(), ...(sessionOf ? { session: sessionOf } : {}), caller: 'harness', ...(head ? { head } : {}), ...(sha !== undefined ? { sha } : {}), ...rest }) + '\n'); } catch {} };
 const hasCommit = (ref) => { try { execFileSync('git', ['-C', repo, 'cat-file', '-e', `${ref}^{commit}`], { stdio: 'ignore' }); return true; } catch { return false; } };
 let rec = readRec();
 // the span re-proved is the TURN's: from the commit HEAD was at when the prompt began (the turn baseline) to HEAD now. Commits
@@ -227,7 +229,7 @@ if (head && from && head !== from && head !== seen) {
   if (!skip) {
     // `--was`: this turn already holds a catch, and these are its commits judged again with what came after it. The
     // metrics that catch was about come from the second copy, not from the record.
-    const ran = answerOf(node(join(HERE, 'reflect.mjs'), ['--repo', repo, '--base', base, '--head', head, '--answer', ...(mine ? ['--was', (Array.isArray(mine.metrics) ? mine.metrics : []).join(',')] : []), ...(gaveBack.length ? ['--gave-back', [...new Set(gaveBack)].join(',')] : []), ...(by ? ['--by', by] : []), ...(userMode ? ['--no-auto'] : [])]));
+    const ran = answerOf(node(join(HERE, 'reflect.mjs'), ['--repo', repo, '--base', base, '--head', head, '--answer', ...(mine ? ['--was', (Array.isArray(mine.metrics) ? mine.metrics : []).join(',')] : []), ...(gaveBack.length ? ['--gave-back', [...new Set(gaveBack)].join(',')] : []), ...(by ? ['--by', by] : []), ...(userMode ? ['--no-auto'] : []), ...(hookInput.session_id ? ['--session', String(hookInput.session_id)] : [])]));
     if (ran && ran.gamed) {
       const at = new Date().toISOString();
       const item = (ran.again && mine) ? { ...mine, sha: head, at }
