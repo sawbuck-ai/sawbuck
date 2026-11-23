@@ -431,6 +431,9 @@ switch (cmd) {
     for (const x of rep.metrics || []) for (const w of x.lostIn || []) out(`sawbuck: note: ${w.file} has ${FEWER[x.name] || x.name} (${w.before} → ${w.after}), though the repo's total did not fall`);
     // tests an earlier commit of the range added, all gone at its end (the engine's testsTakenOut): a note, never a verdict
     if (rep.testsTakenOut) { const t = rep.testsTakenOut; out(`sawbuck: note: an earlier commit of this change (${t.at}) added ${t.added} test${t.added === 1 ? '' : 's'}, and ${t.added === 1 ? 'it is not' : 'none of them is'} in it now: ${t.names.join(', ')}${t.more ? ` and ${t.more} more` : ''}`); }
+    // two or more named tests the changed files no longer name, or a file that stays lost every test (the engine's testsGone,
+    // 0.8.20): a note, never a verdict, in the pull-request comment's own sentence
+    if (rep.testsGone) { const t = rep.testsGone; out(`sawbuck: note: ${t.gone} test${t.gone === 1 ? ' that was' : 's that were'} named in the changed files ${t.gone === 1 ? 'is' : 'are'} not named in them now: ${t.names.join(', ')}${t.more ? ` and ${t.more} more` : ''}. A rename reads the same way.`); }
     if (rep.gate && rep.gate.changed) out(`⚠ the gate definition changed in this change (fingerprint ${rep.gate.fingerprint.base} -> ${rep.gate.fingerprint.head}): a metric, guard, evaluatorPath or mandate was added, removed or edited.`);
     process.exitCode = code;
     break;

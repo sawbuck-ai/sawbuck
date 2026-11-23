@@ -1375,6 +1375,22 @@ test('contract --full --comment-only writes the workflow where no test command i
   try { const r = spawnSync(process.execPath, [CLI, 'contract', '--full', '--comment-only'], { cwd: d, encoding: 'utf8' }); assert.equal(wfOf(d), ''); assert.match(r.stdout, /No CI check added: this repo has no github\.com origin\. Run sawbuck contract --full again once it has one\./); } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+// ---- 0.2.7: two or more named tests gone from the changed files (engine 0.8.20, the reading R1(c) of
+// proof-bench/per-test). `sawbuck check` prints the engine's note in the comment's own sentence. Never part of the verdict.
+test('check notes two or more named tests the changed files no longer name, and says a rename reads the same way', () => {
+  const { d, g } = tmpRepo();
+  try {
+    writeFileSync(join(d, 'package.json'), '{"name":"x","version":"1.0.0","scripts":{"test":"node --test test/a.test.js"}}\n');
+    mkdirSync(join(d, 'test')); writeFileSync(join(d, 'test/a.test.js'), "const { test } = require('node:test');\ntest('one', () => {});\ntest('two', () => {});\ntest('three', () => {});\n");
+    g('add', '-A'); g('commit', '-qm', 'three tests'); const base = g('rev-parse', 'HEAD').trim();
+    writeFileSync(join(d, 'test/a.test.js'), "const { test } = require('node:test');\ntest('one', () => {});\n"); g('add', '-A'); g('commit', '-qm', 'two out');
+    const r = spawnSync(process.execPath, [CLI, 'check', '--base', base], { cwd: d, encoding: 'utf8' });
+    assert.match(r.stdout, /sawbuck: note: 2 tests that were named in the changed files are not named in them now: three, two\. A rename reads the same way\.\n/, r.stdout + r.stderr);
+    const j = JSON.parse(spawnSync(process.execPath, [CLI, 'check', '--base', base, '--json'], { cwd: d, encoding: 'utf8' }).stdout);
+    assert.deepEqual(j.testsGone, { gone: 2, names: ['three', 'two'], more: 0, emptied: [] });
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 // ---- the next version: tests a change added and took out again (engine 0.8.17, proof-bench/per-test). The check holds
 // the head against the base, so tests an agent wrote in one commit and deleted in a later one left no trace. Over a
 // range of commits `sawbuck check --base` now says so in a note, with their names. It is never part of the verdict.
