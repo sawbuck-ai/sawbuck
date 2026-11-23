@@ -3001,3 +3001,21 @@ test('limit: a change that swaps a test tool reads gamed, and a person\'s reason
   assert.match(flat(README), /A change that swaps a test tool\.\*\* When a commit removes a dependency that the earlier tests need to build or run/, 'the limits page says so');
   assert.match(flat(README), /Accepting the change with a reason is the way through\./);
 });
+
+// ---- sawbuck align on the pages (0.2.5): the guide has the command in the help's own words and says what it adds to a
+// prompt; the limits page says what the reading does not see, and each part of that is held here or in test/align.test.mjs.
+test('claim: sawbuck align is in the guide in the help\'s own words, and what it does not see is on the limits page', () => {
+  const guide = page('GUIDE.md'), help = sb(HOME, 'help', '--all').out;
+  assert.match(guide, /^\| `sawbuck align \[repo\] \[--since REF\] \[--json\]` \| /m, 'a row in the guide\'s table of commands');
+  for (const part of ['Where the work stands when Sawbuck joins late', 'A reading, never a verdict'])
+    { assert.ok(flat(help).includes(part), `the help says: ${part}`); assert.ok(flat(guide).toLowerCase().includes(part.toLowerCase()), `the guide says: ${part}`); }
+  assert.match(flat(guide), /When Sawbuck joins work that already has something of note in it, the reading of that work is added to one prompt, once\./);
+  const limits = flat(page('LIMITS.md'));
+  assert.match(limits, /\*\*What `sawbuck align` does not see\.\*\* It reads what each commit did to the counts and the protected paths\. It does not run the tests\./);
+  assert.match(limits, /More than 100 commits are read as the last 100, and the reading says so\./);
+  // held: the reading says the tests were not run, and more than 100 commits are read as the last 100
+  const d = repo(true); assert.equal(sb(d, 'contract').code, 0); save(d, 'contract');
+  for (let i = 0; i < 102; i++) git(d, 'commit', '-q', '--allow-empty', '-m', `step ${i}`);
+  const r = sb(d, 'align', '--since', git(d, 'rev-list', '--max-parents=0', 'HEAD'));
+  assert.match(r.out, /: 100 commits, the last 100 of 10\d\./, r.out); assert.match(r.out, /The tests were not run\./, r.out);
+});
