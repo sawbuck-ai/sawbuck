@@ -2920,8 +2920,8 @@ test('claim: where no test command is found, try mode writes the pull request ch
 test('claim: the note on tests taken out counts a test made from a table as one, reads no test written in a way it does not know, and says nothing for a change of one commit or when one other test is added at the end', () => {
   const limits = readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8'), guide = readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8');
   assert.match(limits, lit('**What the note on tests taken out does not see.** The note reads each test by its name, with a small reader for each language. A test made from a table in JavaScript, Python or C# has one name, so it counts as one test. A language the reader does not know is not read, and neither is a test written in a way it does not know.'));
-  assert.match(limits, lit('It speaks only when the pull request as it stands adds no tests, so it also says nothing when the tests an earlier commit added are taken out and one other test is added. It is a note: it never sends a change back.'));
-  assert.match(guide, lit('So are tests an earlier commit of the pull request added, when none of them is left at its last commit.'));
+  assert.match(limits, lit('It speaks only when the pull request as it stands adds no tests, so it also says nothing when the tests an earlier commit added are taken out and one other test is added. On a pull request it sends the change back, and a person\'s reason lets it through. Everywhere else it is a note.'));
+  assert.match(guide.replace(/\s+/g, ' '), lit('Tests an earlier commit of the pull request added, when none of them is left at its last commit, send it back.'));   // 0.2.7: the approved words; the guide wraps them
   const repo = () => {
     const d = mkdtempSync(join(tmpdir(), 'claims-')); git(d, 'init', '-q', '-b', 'main');
     put(d, 'package.json', '{"name":"x","version":"1.0.0","scripts":{"test":"node --test test/a.test.js"}}\n'); put(d, 'test/a.test.js', "require('node:test').test('a', () => {})\n");
