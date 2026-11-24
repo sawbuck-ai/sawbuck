@@ -63,6 +63,7 @@
     "exclude.mjs",
     "pipe.mjs",
     "repo-state.mjs",
+    "hook-version.mjs",
     "contract-cmd.mjs",
     "bins.mjs",
     "own-git.mjs",

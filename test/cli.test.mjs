@@ -286,6 +286,30 @@ test('the lines a person reads say history, not memory: attach --user, and statu
   } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
 });
 
+test('doctor, status and attach say when the hooks here start an older sawbuck, with the line that brings them up', () => {
+  const { d } = tmpRepo();
+  const home = mkdtempSync(join(tmpdir(), 'sawbuck-uhome-'));
+  try {
+    sawbuck(['attach', '--user', '.'], d, { HOME: home });
+    // the hooks start a copy that says it is 0.0.1: a stand-in for an old checkout (wavecutter's hooks started 0.2.2 so)
+    const f = join(home, '.claude', 'settings.json'); const cfg = readFileSync(f, 'utf8');
+    const baked = /"([^"]*sawbuck\.mjs)\\?"/.exec(cfg); assert.ok(baked, cfg.slice(0, 300));
+    const old = join(home, 'old'); mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, 'sawbuck.mjs'), "if (process.argv.includes('--version')) console.log('0.0.1');\n");
+    writeFileSync(f, cfg.split(baked[1]).join(join(old, 'sawbuck.mjs')));
+    const doc = spawnSync(process.execPath, [CLI, 'doctor', '.'], { cwd: d, encoding: 'utf8', env: { ...process.env, HOME: home } });
+    assert.match(doc.stdout, /OLD\s+user/, doc.stdout); assert.match(doc.stdout, /these hooks start sawbuck 0\.0\.1/, doc.stdout);
+    assert.match(doc.stdout, /attach --user/, doc.stdout); assert.equal(doc.status, 1, 'old hooks are a finding');
+    const st = sawbuck(['status', '.'], d, { HOME: home }); assert.match(st, /hooks here start sawbuck 0\.0\.1/, st);
+    const at = sawbuck(['attach', '.'], d, { HOME: home }); assert.match(at, /already watching here/, at); assert.match(at, /start sawbuck 0\.0\.1/, at);
+    // brought up: nothing said
+    sawbuck(['attach', '--user', '.'], d, { HOME: home });
+    const doc2 = spawnSync(process.execPath, [CLI, 'doctor', '.'], { cwd: d, encoding: 'utf8', env: { ...process.env, HOME: home } });
+    assert.doesNotMatch(doc2.stdout, /OLD|start sawbuck 0\.0\.1/, doc2.stdout);
+    assert.doesNotMatch(sawbuck(['status', '.'], d, { HOME: home }), /start sawbuck/);
+  } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+});
+
 test('attach --claude writes gitignored settings.local.json and keeps git status clean', () => {
   const { d } = tmpRepo();
   const f = join(d, '.claude', 'settings.local.json');

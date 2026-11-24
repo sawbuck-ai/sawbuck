@@ -35,6 +35,7 @@ import { ownGitOn, personEnv } from './own-git.mjs';
 import { PW } from './bins.mjs';
 import { frameBlock, mandatesInForce, protectedDirty, protectedAmong, blobAt, lockState, gitNames, gitRefuses } from './contract.mjs';
 import { cli, onPath, olderOnPath, newerOnPath, olderSaid } from './copies.mjs';
+import { hookVersion, ourCommands, oldestOlder } from './hook-version.mjs';
 ownGitOn();   // Sawbuck's own git calls, and those of the processes it starts: no hook, no fsmonitor, no replace object (own-git.mjs)
 
 const SELF = fileURLToPath(import.meta.url);
@@ -1032,7 +1033,10 @@ function wireClaude(repo, opts) {
   // send-back budget twice as fast. --shared is a deliberate team file, so it is written anyway.
   if (!user && !shared) {
     const uf = claudeFile(repo, { user: true }).f;
-    try { if (OURS.test(readFileSync(uf, 'utf8'))) { out(`sawbuck: already watching here through your user-level hooks (${uf}); nothing to add${existsSync(join(repo, 'promptwheel.config.json')) ? '' : '. The check runs here once this repo has its rules: sawbuck contract'}`); return; } } catch {}
+    try { if (OURS.test(readFileSync(uf, 'utf8'))) { out(`sawbuck: already watching here through your user-level hooks (${uf}); nothing to add${existsSync(join(repo, 'promptwheel.config.json')) ? '' : '. The check runs here once this repo has its rules: sawbuck contract'}`);
+      const behind = oldestOlder(ourCommands(uf).map(hookVersion), version);
+      if (behind) out(`  Those hooks start sawbuck ${behind}, and this is ${version}. Bringing them up changes what watches the agent, so it is a person's step: ${cli('attach --user')}`);
+      return; } } catch {}
   }
   const { dir, f } = claudeFile(repo, opts);
   const dirExisted = existsSync(dir);
@@ -1342,9 +1346,8 @@ function extractBaked(text) { const m = text.match(/"([^"]*sawbuck\.mjs)\\?"/); 
 // Does the hook still work? Run exactly what it runs, with --version in place of the hook's arguments: the same
 // node lookup, the same baked path, the same npx fallback. A hook never looks sawbuck up on PATH, so neither does this.
 function hookRuns(command) {
-  const probe = command.replace(/(sawbuck\.mjs"?|sawbuck@[\w.-]+) [^;]*/g, '$1 --version');
   if (process.platform === 'win32') { const b = extractBaked(JSON.stringify(command)); return !!b && existsSync(b); }
-  try { return /^\d+\.\d+\.\d+/.test(execFileSync('sh', ['-c', probe], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60000 }).trim()); } catch { return false; }
+  return !!hookVersion(command);
 }
 function doctorRepo(repo) {
   const checks = [];
@@ -1367,7 +1370,10 @@ function doctorRepo(repo) {
     const missing = [at('UserPromptSubmit', /\bturn --hook\b/) ? '' : 'UserPromptSubmit', at('SessionStart', /\bturn --hook\b/, 'compact') ? '' : 'SessionStart[compact]', at('Stop', /__hook\b.*--stop\b/) ? '' : 'Stop with --stop', at('PreToolUse', /\bhold --hook\b/, 'Bash') ? '' : 'PreToolUse[Bash] with hold', at('PreToolUse', /\bundo --hook\b/, EDIT_MATCHER) ? '' : 'PreToolUse[edit tools] with undo', at('PostToolUse', /\bundo --hook\b/, EDIT_MATCHER) ? '' : 'PostToolUse[edit tools] with undo',
       // a team file also asks npm for its version where a session starts (the other two files pin what is already here)
       ...(mode === 'claude-shared' ? ['startup', 'resume'].map((s) => (at('SessionStart', /\b__warm\b/, s) ? '' : `SessionStart[${s}]`)) : [])].filter(Boolean);
-    checks.push({ mode, file: f, ok: !missing.length && [...new Set(cmds)].every(hookRuns), missing });
+    // what each command starts, asked once: it runs, and it is not older than this copy (hook-version.mjs)
+    const uniq = [...new Set(cmds)]; const vers = process.platform === 'win32' ? [] : uniq.map(hookVersion);
+    const runs = process.platform === 'win32' ? uniq.every(hookRuns) : vers.every(Boolean);
+    checks.push({ mode, file: f, ok: !missing.length && runs, missing, behind: oldestOlder(vers, version) });
   }
   // the receipt says hooks were wired here, and they are gone: a removal git status cannot show (the file is excluded, or under .git)
   const receipt = Object.keys(readManifest(manifestPath(repo)).attachments || {}).filter((m) => !checks.some((c) => c.mode === m));
@@ -1376,10 +1382,10 @@ function doctorRepo(repo) {
   const again = (m) => `${cli(`attach${{ git: ' --git', 'claude-shared': ' --shared', user: ' --user' }[m] || ''}`)} again`;
   out(`sawbuck doctor, ${repo}:`);
   for (const c of checks) {
-    if (!c.ok || c.elder) bad++;
-    const why = c.ok && c.elder ? `  (an older sawbuck answers this hook: ${c.elder.version} at ${c.elder.path}, and this one is ${version}; run ${again(c.mode)}, or update that copy: npm i -g sawbuck@latest)`
+    if (!c.ok || c.elder || c.behind) bad++;
+    const why = c.ok && c.behind ? `  (these hooks start sawbuck ${c.behind}, and this is ${version}. Bringing them up changes what watches the agent, so it is a person's step: ${again(c.mode)})` : c.ok && c.elder ? `  (an older sawbuck answers this hook: ${c.elder.version} at ${c.elder.path}, and this one is ${version}; run ${again(c.mode)}, or update that copy: npm i -g sawbuck@latest)`
       : c.ok ? '' : c.missing && c.missing.length ? `  (the hook set is incomplete, missing: ${c.missing.join(', ')}; run ${again(c.mode)})` : `  (the hook does not run: what it calls is gone; run ${again(c.mode)})`;
-    out(`  ${c.ok && c.elder ? 'OLD  ' : c.ok ? 'OK   ' : c.missing && c.missing.length ? 'PART ' : 'STALE'} ${c.mode.padEnd(14)} ${c.file}${why}`);
+    out(`  ${c.ok && (c.behind || c.elder) ? 'OLD  ' : c.ok ? 'OK   ' : c.missing && c.missing.length ? 'PART ' : 'STALE'} ${c.mode.padEnd(14)} ${c.file}${why}`);
   }
   // a line with no version in it (the rule's own check, a bare `sawbuck`) is answered by that copy too, hooks or not
   { const said = olderSaid(); if (said) out(`  NOTE  ${said.person.replace(/^Sawbuck: /, '')}`); }

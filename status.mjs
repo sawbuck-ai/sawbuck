@@ -20,7 +20,9 @@ import { readUndone } from './undo.mjs';
 import { readAllowed } from './allowed.mjs';
 import { gitRefuses } from './contract.mjs';
 import { localDay } from './day.mjs';
-import { cli, olderSaid } from './copies.mjs';
+import { cli, olderSaid, VERSION } from './copies.mjs';
+import { hookVersion, ourCommands, oldestOlder } from './hook-version.mjs';
+import { homedir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const flag = (n, d) => { const i = process.argv.indexOf(n); return i > -1 ? (process.argv[i + 1] ?? true) : d; };
@@ -191,6 +193,13 @@ if (refuses) {
   out.push(`   Measuring here  ·  checkable but not wired yet. Try it now: \`${cli('check')}\`  •  make it automatic: \`${cli('attach')}\``);
 } else {
   out.push(`   Measuring here  ·  ${hasConfig ? 'a contract exists' : 'no test command detected yet'}. \`${cli('init')}\` to set up the check, or \`${cli('context')}\` for the history alone.`);
+}
+
+// hooks that start an older copy than this one (hook-version.mjs; wavecutter's started 0.2.2 for two days while 0.2.7 was installed)
+if (state === 'watching' && (wired === 'user' || wired === 'project')) {
+  const files = wired === 'user' ? [join(homedir(), '.claude', 'settings.json')] : [join(repo, '.claude', 'settings.local.json'), join(repo, '.claude', 'settings.json')];
+  const behind = oldestOlder([...new Set(files.flatMap(ourCommands))].map(hookVersion), VERSION);
+  if (behind) out.push(`   The hooks here start sawbuck ${behind}, and this is ${VERSION}. Bringing them up changes what watches the agent, so it is a person's step: \`${cli(wired === 'user' ? 'attach --user' : 'attach')}\``);
 }
 
 // an older copy on this machine: a bare `sawbuck` and the rule's `npx -y sawbuck check` run that one (copies.mjs)
