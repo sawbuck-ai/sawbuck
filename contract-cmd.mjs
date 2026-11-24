@@ -202,6 +202,10 @@ try {
     // --strict on a repo signed with --full: the guards that were notes now block, as the --full output promised
     let hardened = 0;
     if (strict) for (const m of cfg.metrics || []) if (m && m.report && REPORT.has(m.name)) { delete m.report; hardened++; }
+    // --strict also asks for a person's reason where a later commit of a pull request rewrote a test the base had, after an
+    // earlier commit changed the source (the engine's "testRewrites": "ask"; a note in a plain contract). His decision of
+    // 2026-11-24 (proof-bench/ship-vs-check). Kept once set: nothing here takes it out, as with the guards above.
+    if (strict && cfg.testRewrites !== 'ask') { cfg.testRewrites = 'ask'; if (had) hardened++; }
     // a repo signed with --say-why keeps that strength when it is signed again with no switch
     const saidWhy = had && cfg.allowTrailer !== false && (cfg.metrics || []).some((m) => m && TESTS3.includes(m.name) && m.allowable === true);
     const saysWhy = sayWhy || saidWhy;

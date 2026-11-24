@@ -3402,3 +3402,11 @@ test('claim: the lines the hook writes for a protected path and for its notes ca
   for (const k of Object.keys(line)) assert.ok(ACTIVITY_KEYS.includes(k), `no other field: ${k}`);
 });
 
+// His decision, 2026-11-24 (proof-bench/ship-vs-check): on a pull request a test the base had, rewritten in a later commit
+// than one that changed the source, is a note; --strict makes it ask for a person's reason ("testRewrites": "ask").
+test('claim: --strict asks for a person\'s reason on a test the base had and a later commit rewrote; a plain contract leaves it a note; signing again with no switch keeps it', () => {
+  const cfgOf = (d) => JSON.parse(readFileSync(join(d, 'promptwheel.config.json'), 'utf8'));
+  const p = repo(true); assert.equal(sb(p, 'contract').code, 0); assert.equal(cfgOf(p).testRewrites, undefined, 'a plain contract: the note');
+  const s = repo(true); assert.equal(sb(s, 'contract', '--strict').code, 0); assert.equal(cfgOf(s).testRewrites, 'ask', '--strict asks');
+  save(s, 'sign'); assert.equal(sb(s, 'contract').code, 0); assert.equal(cfgOf(s).testRewrites, 'ask', 'signed again with no switch, it keeps the strength');
+});
