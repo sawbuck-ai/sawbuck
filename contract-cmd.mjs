@@ -60,6 +60,9 @@ const full = process.argv.includes('--full') || strict;
 // ordinary work far more often than a cheat: proof-bench/contract-replay, 13 of 340 real commits sent back when it always
 // blocked, and none of them beside a win). --strict makes it block always.
 const REPORT = new Set(['dependency_entries', 'lock_drift', 'pins_changed', 'unpinned_execution', 'install_policy_gaps', 'suppressions']);
+// what --strict asks of a rewritten test, said in its own words: a setting, not a guard (second read of 0.2.8: it was
+// counted among "guards that were notes now block", and a dry run said only that the contract changed)
+const REWRITES = 'on a pull request, a test the base had that a later commit rewrote after the source changed now waits for a person\'s reason ("testRewrites": "ask")';
 // Tests need their dependencies, so an npm lockfile gets an install, with no scripts. Elsewhere tests may not run in
 // CI, so inconclusive does not fail the job: protected paths are checked either way, and a gamed or failed verdict still fails.
 const workflow = (npm) => `# Written by sawbuck contract. Checks every pull request against the contract in promptwheel.config.json.
@@ -173,7 +176,7 @@ try {
       let now = {}; try { if (had) now = JSON.parse(readFileSync(cfgPath, 'utf8')); } catch {}
       const notes = strict ? (now.metrics || []).filter((m) => m && m.report && REPORT.has(m.name)).length : 0;
       const what = {
-        'promptwheel.config.json': `${counts(now)}, ${(after.metrics || []).length} checks in all (${(after.metrics || []).map((m) => m.name).join(', ')})${notes ? `, and ${notes} guards that are notes would block` : ''}`,
+        'promptwheel.config.json': `${counts(now)}, ${(after.metrics || []).length} checks in all (${(after.metrics || []).map((m) => m.name).join(', ')})${notes ? `, and ${notes} guards that are notes would block` : ''}${strict && now.testRewrites !== 'ask' ? `, and ${REWRITES.replace('now waits', 'would wait')}` : ''}`,
         'AGENTS.md': 'the written rule', 'CLAUDE.md': 'the written rule', '.cursorrules': 'the written rule',
         '.github/workflows/sawbuck.yml': commentOnly ? 'a CI check on pull requests, comment only: it fails none' : 'a CI check on pull requests',
         'promptwheel.lock.json': 'the shape of this repo',
@@ -205,7 +208,9 @@ try {
     // --strict also asks for a person's reason where a later commit of a pull request rewrote a test the base had, after an
     // earlier commit changed the source (the engine's "testRewrites": "ask"; a note in a plain contract). His decision of
     // 2026-11-24 (proof-bench/ship-vs-check). Kept once set: nothing here takes it out, as with the guards above.
-    if (strict && cfg.testRewrites !== 'ask') { cfg.testRewrites = 'ask'; if (had) hardened++; }
+    const askedRewrites = strict && cfg.testRewrites !== 'ask';
+    if (askedRewrites) cfg.testRewrites = 'ask';
+    const rewritesLine = askedRewrites ? `  ${REWRITES[0].toUpperCase()}${REWRITES.slice(1)}.\n` : '';
     // a repo signed with --say-why keeps that strength when it is signed again with no switch
     const saidWhy = had && cfg.allowTrailer !== false && (cfg.metrics || []).some((m) => m && TESTS3.includes(m.name) && m.allowable === true);
     const saysWhy = sayWhy || saidWhy;
@@ -249,10 +254,10 @@ try {
     const added = (cfg.mandates.length - before.m) + (cfg.metrics.length - before.g);
     const fresh = added || hardened || ci || (full && !locked);
     // what a switch changed in a contract that was already signed, in words: never "nothing changed" over an edit
-    const changed = [...(turnedOn ? ['the counts of the tests now take a reason written in a commit'] : []), ...(soloNow ? ['on a pull request your own comment now counts ("allowFromAuthor": true)'] : [])];
+    const changed = [...(turnedOn ? ['the counts of the tests now take a reason written in a commit'] : []), ...(soloNow ? ['on a pull request your own comment now counts ("allowFromAuthor": true)'] : []), ...(askedRewrites ? [REWRITES] : [])];
     process.stdout.write(!fresh ? (changed.length ? `sawbuck: already signed. ${changed.length > 1 ? 'Two things' : 'One thing'} changed in promptwheel.config.json: ${changed.join('; ')}.\n  The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n${soloNow ? '  Commit it on your default branch: a pull request cannot turn this on for itself.\n' : ''}` : 'sawbuck: already signed, nothing changed.\n') : full
-      ? `sawbuck: signed. ${counts(cfg)}, and the shape of this repo in promptwheel.lock.json.\n${strict ? (hardened ? `  ${hardened} guards that were notes now block. The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : '') : '  New dependencies and structure changes show as notes for now; protected paths and install scripts block. --strict blocks them all.\n'}${ci ? `  Added .github/workflows/sawbuck.yml, so pull requests are checked in CI. Commit it with the rest.\n${commentOnly ? '  It is comment only (--comment-only): no pull request fails, and the comment says what would have been sent back.\n  To make it count, take "comment-only: true" out of the workflow\'s last line. That is a workflow change, so it takes a person\'s reason.\n' : ''}${realTests ? '' : '  No test command was found here, so the check runs no tests yet. It still reads the counts of your tests and the protected paths.\n  To have your tests run, put your test command in promptwheel.config.json where the placeholder is.\n'}${solo ? '' : `  On a pull request, a change that takes a reason is let through by a comment from someone with write access who did not open it: sawbuck-allow: <reason>. If you are the only person here, sign with --solo so your own comment counts: ${cli('contract --solo')}\n`}` : ''}`
-      : `sawbuck: signed. ${counts(cfg)}, and the rule in AGENTS.md.\n  --full adds supply-chain guards, a repo lock and a CI check.\n`);
+      ? `sawbuck: signed. ${counts(cfg)}, and the shape of this repo in promptwheel.lock.json.\n${strict ? (hardened ? `  ${hardened} guards that were notes now block. The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : '') + rewritesLine : '  New dependencies and structure changes show as notes for now; protected paths and install scripts block. --strict blocks them all.\n'}${ci ? `  Added .github/workflows/sawbuck.yml, so pull requests are checked in CI. Commit it with the rest.\n${commentOnly ? '  It is comment only (--comment-only): no pull request fails, and the comment says what would have been sent back.\n  To make it count, take "comment-only: true" out of the workflow\'s last line. That is a workflow change, so it takes a person\'s reason.\n' : ''}${realTests ? '' : '  No test command was found here, so the check runs no tests yet. It still reads the counts of your tests and the protected paths.\n  To have your tests run, put your test command in promptwheel.config.json where the placeholder is.\n'}${solo ? '' : `  On a pull request, a change that takes a reason is let through by a comment from someone with write access who did not open it: sawbuck-allow: <reason>. If you are the only person here, sign with --solo so your own comment counts: ${cli('contract --solo')}\n`}` : ''}`
+      : `sawbuck: signed. ${counts(cfg)}, and the rule in AGENTS.md.\n  --full adds supply-chain guards, a repo lock and a CI check.\n${rewritesLine}`);
     if ((fresh && sayWhy) || turnedOn) process.stdout.write('  A test may be removed where a commit of the change says why: end its message with\n    Sawbuck-Allow: test_count: <what was removed, and who asked for it>\n  The reason is kept on the record. A protected path still takes a person.\n');
     if ((fresh && solo) || soloNow) process.stdout.write('  One person works here (--solo), so on a pull request your own comment counts: sawbuck-allow: <reason>\n  GitHub cannot tell you from your agent there: the agent works under your account. What is kept is the reason, not proof of who gave it.\n');
     // --comment-only with nothing to write it into: say what to do, and never write over a workflow that is here

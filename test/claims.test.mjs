@@ -3410,3 +3410,15 @@ test('claim: --strict asks for a person\'s reason on a test the base had and a l
   const s = repo(true); assert.equal(sb(s, 'contract', '--strict').code, 0); assert.equal(cfgOf(s).testRewrites, 'ask', '--strict asks');
   save(s, 'sign'); assert.equal(sb(s, 'contract').code, 0); assert.equal(cfgOf(s).testRewrites, 'ask', 'signed again with no switch, it keeps the strength');
 });
+test('claim: --strict on a repo signed strict before it asked about rewritten tests says that change in its own words, never that a guard now blocks; signed again it says nothing changed', () => {
+  const cfgOf = (d) => JSON.parse(readFileSync(join(d, 'promptwheel.config.json'), 'utf8'));
+  const s = repo(true); assert.equal(sb(s, 'contract', '--strict').code, 0);
+  const c = cfgOf(s); delete c.testRewrites; writeFileSync(join(s, 'promptwheel.config.json'), JSON.stringify(c, null, 2) + '\n'); save(s, 'signed strict, as 0.2.7 wrote it');
+  const dry = sb(s, 'contract', '--strict', '--dry-run'); assert.match(dry.out, /"testRewrites": "ask"/, dry.out);
+  const r = sb(s, 'contract', '--strict'); assert.equal(r.code, 0, r.out);
+  assert.doesNotMatch(r.out, /guards that were notes now block/, r.out);
+  assert.match(r.out, /"testRewrites": "ask"/, r.out);
+  assert.match(r.out, /needs a person's reason/, 'the contract is a protected path: ' + r.out);
+  assert.equal(cfgOf(s).testRewrites, 'ask');
+  save(s, 'strict again'); const again = sb(s, 'contract', '--strict'); assert.match(again.out, /already signed, nothing changed/, again.out);
+});
