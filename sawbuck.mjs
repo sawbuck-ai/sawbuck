@@ -1139,7 +1139,7 @@ function wireClaude(repo, opts) {
   if (shared) out(`  commit ${relative(repo, f)} so the team gets the check. It runs sawbuck ${version} through npx on every machine, and asks npm for that version once where a session starts.`);
   if (shared && protectedAmong(repo, [relative(repo, f)]).length) out(`  That file is a protected path in this repo, so the check on its commit reads "sent back" unless a person passes --allow "team hooks" (on a pull request: a comment from someone who did not open it, sawbuck-allow: team hooks).`);
   if (!user && !existsSync(join(repo, 'AGENTS.md')) && !existsSync(join(repo, 'CLAUDE.md'))) out('  no written rule here yet, and that is what changes the agent: run sawbuck contract.');
-  if (user) out('  profile-switches by cwd: memory in any git repo, the check where a promptwheel.config.json exists.');
+  if (user) out('  profile-switches by cwd: the history in any git repo, the check where a promptwheel.config.json exists.');
 }
 // The words already kept in a repo's record, removed where it is attached without --words: the prompt text in the state
 // file, and the words saved with each undo (the undo itself stays: the file, the time, the line that was undone).

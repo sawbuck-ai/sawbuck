@@ -271,6 +271,21 @@ test('attach --user wires cwd-based (profile-switching) hooks at the user level'
   } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
 });
 
+test('the lines a person reads say history, not memory: attach --user, and status where there is history and no check', () => {
+  const { d } = tmpRepo();
+  const home = mkdtempSync(join(tmpdir(), 'sawbuck-uhome-'));
+  try {
+    const a = sawbuck(['attach', '--user', '.'], d, { HOME: home });
+    assert.match(a, /profile-switches by cwd: /, a);
+    assert.doesNotMatch(a, /\bmemory\b/i, a);
+    sawbuck(['detach', '--user', '.'], d, { HOME: home });
+    writeFileSync(join(d, 'LOGBOOK.md'), '# log\n');   // the history files, and no package.json or contract
+    const s = sawbuck(['status', '.'], d, { HOME: home });
+    assert.match(s, /no check configured/, s);
+    assert.doesNotMatch(s, /\bmemory\b/i, s);
+  } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+});
+
 test('attach --claude writes gitignored settings.local.json and keeps git status clean', () => {
   const { d } = tmpRepo();
   const f = join(d, '.claude', 'settings.local.json');

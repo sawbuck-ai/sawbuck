@@ -85,7 +85,7 @@ if (asJson) {
 
 // --- human face ------------------------------------------------------------
 const out = [];
-const stateLabel = { watching: 'watching (wired in)', ready: 'ready (checkable, not wired yet)', memory: 'memory only (history, no check configured)', unarmed: 'not a measurable repo yet' }[state];
+const stateLabel = { watching: 'watching (wired in)', ready: 'ready (checkable, not wired yet)', memory: 'history only (no check configured)', unarmed: 'not a measurable repo yet' }[state];
 out.push(`sawbuck · ${basename(repo)}  ·  ${stateLabel}`);
 
 // Outcomes
