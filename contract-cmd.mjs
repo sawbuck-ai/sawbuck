@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PW } from './bins.mjs';
 import { cli } from './copies.mjs';
-import { mandateHits, gitNames } from './contract.mjs';
+import { mandateHits, gitNames, globToRe } from './contract.mjs';
 import { readCommits } from './lookback.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -63,6 +63,27 @@ const REPORT = new Set(['dependency_entries', 'lock_drift', 'pins_changed', 'unp
 // what --strict asks of a rewritten test, said in its own words: a setting, not a guard (second read of 0.2.8: it was
 // counted among "guards that were notes now block", and a dry run said only that the contract changed)
 const REWRITES = 'on a pull request, a test the base had that a later commit rewrote after the source changed now waits for a person\'s reason ("testRewrites": "ask")';
+// The scripts a test command runs by name, which an agent could cut short as easily as a test. On wavecutter
+// (2026-11-23) a harness ran `bash judge-test.sh`; the gate knows a test script by a few names only, so the script was
+// source, and cut to `exit 0` after a planted fault the change read "verified". Named in evaluatorPaths, the cut reads
+// gamed. A shell script counts, or a file whose name says it tests or checks; a build step the command also runs stays
+// source. Only what the command runs (after an interpreter, or as the command itself), never its other arguments.
+const SCRIPT_INTERP = /^(?:ba|z|da|k)?sh$|^(?:node|bun|deno|python3?|ruby|perl|php|tsx|ts-node)$/;
+function scriptsRun(repo, cmds) {
+  const out = new Set();
+  for (const cmd of cmds) for (const simple of String(cmd || '').split(/&&|\|\||[;|\n(){}]/)) {
+    const words = simple.trim().split(/\s+/).map((w) => w.replace(/^['"]|['"]$/g, '')).filter(Boolean);
+    while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift();   // FOO=bar before the command
+    if (!words.length) continue;
+    let i = 0;
+    if (SCRIPT_INTERP.test(words[0].split('/').pop())) { i = 1; while (i < words.length && words[i].startsWith('-')) i++; }
+    const f = (words[i] || '').replace(/^\.\//, '');
+    if (!f || f.startsWith('-') || f.startsWith('/') || f.split('/').includes('..') || /[$*?`]/.test(f)) continue;
+    if (!/\.(?:sh|bash|zsh)$/.test(f) && !/test|spec|check|judge/i.test(f.split('/').pop())) continue;
+    try { if (statSync(join(repo, f)).isFile()) out.add(f); } catch { /* not a file in this repo */ }
+  }
+  return [...out].sort();
+}
 // Tests need their dependencies, so an npm lockfile gets an install, with no scripts. Elsewhere tests may not run in
 // CI, so inconclusive does not fail the job: protected paths are checked either way, and a gamed or failed verdict still fails.
 const workflow = (npm) => `# Written by sawbuck contract. Checks every pull request against the contract in promptwheel.config.json.
@@ -220,6 +241,12 @@ try {
     // --solo: the opener's own comment counts on a pull request. Kept once set; said when a signed repo gets it now.
     const soloOn = solo && cfg.allowFromAuthor !== true, soloNow = had && soloOn;
     if (solo) cfg.allowFromAuthor = true;
+    // the scripts the test command runs, judged with the tests (scriptsRun); a path an existing glob covers is left as it is
+    const pkgTest = (() => { try { const sc = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).scripts; return sc && typeof sc.test === 'string' ? sc.test : ''; } catch { return ''; } })();
+    const covered = (f) => (cfg.evaluatorPaths || []).some((g) => { try { return globToRe(String(g)).test(f); } catch { return g === f; } });
+    const ranNew = scriptsRun(repo, [...(cfg.metrics || []).filter((m) => m && m.guard === true && typeof m.cmd === 'string').map((m) => m.cmd), pkgTest]).filter((f) => !covered(f));
+    if (ranNew.length) cfg.evaluatorPaths = [...(cfg.evaluatorPaths || []), ...ranNew];
+    const ranSaid = ranNew.length ? `the test command runs ${ranNew.join(', ')}, so ${ranNew.length > 1 ? 'they are' : 'it is'} judged with the tests (evaluatorPaths): a change that cuts ${ranNew.length > 1 ? 'one' : 'it'} short reads gamed` : '';
     writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n');
     const pack = join(repo, '.promptwheel', 'packs', 'supply-chain');
     if (full) {
@@ -254,10 +281,13 @@ try {
     const added = (cfg.mandates.length - before.m) + (cfg.metrics.length - before.g);
     const fresh = added || hardened || ci || (full && !locked);
     // what a switch changed in a contract that was already signed, in words: never "nothing changed" over an edit
-    const changed = [...(turnedOn ? ['the counts of the tests now take a reason written in a commit'] : []), ...(soloNow ? ['on a pull request your own comment now counts ("allowFromAuthor": true)'] : []), ...(askedRewrites ? [REWRITES] : [])];
+    const changed = [...(turnedOn ? ['the counts of the tests now take a reason written in a commit'] : []), ...(soloNow ? ['on a pull request your own comment now counts ("allowFromAuthor": true)'] : []), ...(askedRewrites ? [REWRITES] : []), ...(ranSaid ? [ranSaid] : [])];
     process.stdout.write(!fresh ? (changed.length ? `sawbuck: already signed. ${changed.length > 1 ? 'Two things' : 'One thing'} changed in promptwheel.config.json: ${changed.join('; ')}.\n  The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n${soloNow ? '  Commit it on your default branch: a pull request cannot turn this on for itself.\n' : ''}` : 'sawbuck: already signed, nothing changed.\n') : full
-      ? `sawbuck: signed. ${counts(cfg)}, and the shape of this repo in promptwheel.lock.json.\n${strict ? (hardened ? `  ${hardened} guards that were notes now block. The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : '') + rewritesLine : '  New dependencies and structure changes show as notes for now; protected paths and install scripts block. --strict blocks them all.\n'}${ci ? `  Added .github/workflows/sawbuck.yml, so pull requests are checked in CI. Commit it with the rest.\n${commentOnly ? '  It is comment only (--comment-only): no pull request fails, and the comment says what would have been sent back.\n  To make it count, take "comment-only: true" out of the workflow\'s last line. That is a workflow change, so it takes a person\'s reason.\n' : ''}${realTests ? '' : '  No test command was found here, so the check runs no tests yet. It still reads the counts of your tests and the protected paths.\n  To have your tests run, put your test command in promptwheel.config.json where the placeholder is.\n'}${solo ? '' : `  On a pull request, a change that takes a reason is let through by a comment from someone with write access who did not open it: sawbuck-allow: <reason>. If you are the only person here, sign with --solo so your own comment counts: ${cli('contract --solo')}\n`}` : ''}`
+      ? `sawbuck: signed. ${counts(cfg)}, and the shape of this repo in promptwheel.lock.json.\n${strict ? (hardened ? `  ${hardened} guards that were notes now block. The contract is a protected path, so the commit that carries this needs a person's reason: ${cli('check --allow "<reason>"')}.\n` : '') + rewritesLine : '  New dependencies and structure changes show as notes for now; protected paths and install scripts block. --strict blocks them all.\n'}${ci ? `  Added .github/workflows/sawbuck.yml, so pull requests are checked in CI. Commit it with the rest.\n${commentOnly ? '  It is comment only (--comment-only): no pull request fails, and the comment says what would have been sent back.\n  To make it count, take "comment-only: true" out of the workflow\'s last line. That is a workflow change, so it takes a person\'s reason.\n' : ''}${solo ? '' : `  On a pull request, a change that takes a reason is let through by a comment from someone with write access who did not open it: sawbuck-allow: <reason>. If you are the only person here, sign with --solo so your own comment counts: ${cli('contract --solo')}\n`}` : ''}`
       : `sawbuck: signed. ${counts(cfg)}, and the rule in AGENTS.md.\n  --full adds supply-chain guards, a repo lock and a CI check.\n${rewritesLine}`);
+    if (fresh && ranSaid) process.stdout.write(`  ${ranSaid[0].toUpperCase()}${ranSaid.slice(1)}.\n`);
+    // a placeholder that always fails is never only "signed" (row 17, from wavecutter: the plain path said nothing of it)
+    if (!realTests) process.stdout.write('  No test command was found here, so the check runs no tests yet. It still reads the counts of your tests and the protected paths.\n  To have your tests run, put your test command in promptwheel.config.json where the placeholder is.\n');
     if ((fresh && sayWhy) || turnedOn) process.stdout.write('  A test may be removed where a commit of the change says why: end its message with\n    Sawbuck-Allow: test_count: <what was removed, and who asked for it>\n  The reason is kept on the record. A protected path still takes a person.\n');
     if ((fresh && solo) || soloNow) process.stdout.write('  One person works here (--solo), so on a pull request your own comment counts: sawbuck-allow: <reason>\n  GitHub cannot tell you from your agent there: the agent works under your account. What is kept is the reason, not proof of who gave it.\n');
     // --comment-only with nothing to write it into: say what to do, and never write over a workflow that is here
