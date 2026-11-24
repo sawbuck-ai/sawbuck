@@ -2,6 +2,19 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
+## 0.2.7 (2026-11-23): tests a pull request added and took out, a new note, and the activity feed says who checked
+
+- **On a pull request, tests it added and then took out send it back.** The check `sawbuck contract --full` writes
+  now pins engine 0.8.20: where every test an earlier commit of a pull request added is gone at its head, the job
+  fails and the comment's line needs a look. A person's `sawbuck-allow:` reason lets it through, and `comment-only`
+  leaves the job green. A workflow pinned to an older engine keeps it until its pin moves.
+- **A new note: two or more named tests are gone.** `sawbuck check` and the pull-request comment name the tests the
+  changed files no longer name. A rename reads the same way. It never fails the check.
+- **The activity feed says who checked what.** Each line in `.sawbuck/activity.jsonl` now names its schema, the
+  session it is about, the full commits of the span that was checked, that the hook ran the check, and the measure
+  that decided, with how much of its win survived the re-run from the source alone. Nothing else is in a line: no
+  test output, no code.
+
 ## 0.2.6 (2026-11-23): the wall at the end of a turn
 
 Five faults in one place: the check at the end of a turn on the paths your contract protects. A second reader of
