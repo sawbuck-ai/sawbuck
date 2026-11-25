@@ -2,6 +2,38 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
+## 0.2.8 (2026-11-24): a failed pull-request check says why in its own log, a note on a test rewritten after the source changed, and the hooks say when they start an older sawbuck
+
+- **A failed pull-request check says why in its own log.** The job that fails prints what the comment says and
+  raises one annotation, "Sawbuck sent this back". With `comment-only` it is a warning, "Sawbuck would have sent
+  this back", and the job stays green. An agent working on a failed check reads the check's log, not the comment.
+  A workflow pinned to an older engine keeps the old log until its pin moves.
+- **A new note on pull requests: a test the base had, rewritten after the source changed.** It names the tests and
+  the two commits, and never fails the check. `sawbuck contract --strict` sets `"testRewrites": "ask"`, and then
+  it sends the pull request back until a person gives a reason.
+- **A send-back for a protected path says what to do when the change is not the agent's.** A person can make such a
+  change between the agent's turns, with a line typed with `!` or in an editor. The agent is told to undo nothing,
+  say a reason is owed, and stop; only the person can end it, with a reason or a revert.
+- **doctor, status and attach say when the hooks here start an older sawbuck.** On one machine the user-level hooks
+  started 0.2.2 from a checkout for two days while 0.2.7 was installed. doctor now marks such a set OLD and exits 1,
+  and status and attach say it in a line. Each names the step and says it is a person's: bringing the hooks up
+  changes what watches the agent. status and attach read the version a hook names and never run it, so they reach
+  no network.
+- **`sawbuck contract` says when no test command was found, on every path that leaves the placeholder.** Before,
+  only `--full` with a CI check said so.
+- **The hold no longer asks about a commit message.** A `git commit` whose message named `--allow`, a publish or the
+  record folder was asked about as if the message were a command. A message given as one single-quoted string, or
+  one double-quoted string with no `$`, backtick or backslash, is now set aside. A message that could run something,
+  and the rest of the line, are read as before.
+- **An undo by `git checkout` under `core.autocrlf=true` is recorded.** The checkout writes the file back with CRLF
+  while the last commit has LF, so the file never read as back to its base and the undo was not recorded (since
+  0.2.0). The undo record now reads CRLF as LF.
+- **In a repository with no commit yet,** status says so (it said it could not read the ledger), and an undo of a
+  new file a shell command made is recorded.
+- **align gives the session's start in your own time,** with the zone's short name. It said it in UTC.
+- **Two printed lines use the word history:** the last line of `attach --user`, and the status label for a
+  repository with history and no check. `status --json` keeps its value, so a script that reads it keeps working.
+
 ## 0.2.7 (2026-11-23): tests a pull request added and took out, a new note, and the activity feed says who checked
 
 - **On a pull request, tests it added and then took out send it back.** The check `sawbuck contract --full` writes
