@@ -6,7 +6,7 @@ import { shareFinding } from './share.mjs';
 // Zero-dep. Usage (wired as a Stop hook): node sawbuck-hook.mjs --repo <path>
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -275,9 +275,6 @@ const total = rec ? (rec.regressions || 0) + (rec.gamed || 0) + (rec.mandates ||
 const saveState = (how) => {
   try { mkdirSync(stDir, { recursive: true }); writeFileSync(stPath, JSON.stringify(st, null, 2) + '\n'); } catch {}
   if (stop && how === 'ends' && open.some((o) => o.live)) { for (const o of open) delete o.live; writeGuard(repo, { open }); }
-  // the turn ends: the next one takes its own start at its first tool call (0.2.8, the `!` line); a send-back keeps the
-  // mark, since the turn goes on
-  if (stop && how === 'ends') { try { rmSync(join(stDir, 'acting'), { force: true }); rmSync(join(stDir, 'acting.lock'), { force: true }); } catch {} }
   if (stop && how === 'ends' && G.detached) { clearGuard(repo); return; }
   const was = !!(own && own.turnOpen);
   writeGuard(repo, { own: { ...ownOf(st), turnOpen: !stop ? was : how === 'ends' ? false : how === 'back' ? true : was } });
