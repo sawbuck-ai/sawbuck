@@ -42,7 +42,6 @@
   },
   "files": [
     "sawbuck.mjs",
-    "wall.mjs",
     "copies.mjs",
     "rewrites.mjs",
     "share.mjs",

@@ -96,6 +96,34 @@ export function hashOf(repo, file, { store = false } = {}) {
   } catch { return 'deleted'; }
 }
 
+// 0.2.9: a file's exact state as git keeps it, its mode and its content ('deleted' when it is not there). The wall knows
+// one protected change by this, the way an alert is known by its fingerprint: a change of mode, or a file swapped for a
+// link to its own text, is a change, and a file put back is back only when it is as it was in every part (the third
+// read of 0.2.9: by content alone, the executable bit set and committed read as no change). With core.fileMode off git
+// does not see the executable bit, and neither does this.
+const fileModeOff = new Map();
+const modeSeen = (repo, m) => {
+  if (m !== '100755') return m;
+  if (!fileModeOff.has(repo)) { let off = false; try { off = gitOut(repo, ['config', '--bool', 'core.fileMode']).trim() === 'false'; } catch {} fileModeOff.set(repo, off); }
+  return fileModeOff.get(repo) ? '100644' : m;
+};
+export function stateOf(repo, file) {
+  let st; try { st = lstatSync(join(repo, file)); } catch { return 'deleted'; }
+  const h = hashOf(repo, file);
+  if (h === 'deleted') return 'deleted';
+  return `${modeSeen(repo, st.isSymbolicLink() ? '120000' : (st.mode & 0o100) ? '100755' : '100644')} ${h}`;
+}
+// the same for a path in a commit
+export function stateAt(repo, ref, file) {
+  let row = ''; try { row = gitOut(repo, ['--literal-pathspecs', 'ls-tree', '-z', ref, '--', file]); } catch { return 'deleted'; }
+  const m = /^(\d{6}) \S+ ([0-9a-f]+)\t/.exec(row);
+  return m ? `${modeSeen(repo, m[1])} ${m[2]}` : 'deleted';
+}
+// the branch HEAD is on ('detached' when none): what the wall told is read again on another branch the person checks out
+export function branchOf(repo) { try { return gitOut(repo, ['symbolic-ref', '-q', 'HEAD']).trim() || 'detached'; } catch { return 'detached'; } }
+// two states are one; where one was kept with its content only (a start's own files keep no mode: '? <hash>'), by content
+export const sameState = (a, b) => a === b || (typeof a === 'string' && typeof b === 'string' && (a.startsWith('? ') || b.startsWith('? ')) && a.slice(a.indexOf(' ') + 1) === b.slice(b.indexOf(' ') + 1));
+
 // Files hidden from git (skip-worktree, assume-unchanged) whose content is not what HEAD holds. `git diff` and `git
 // status` say nothing about a hidden file, so a protected path that a turn hid and then edited was not seen at the end of
 // the turn (found by holding Sawbuck to another session's attack list, 2026-11-21). Only hidden files are read.

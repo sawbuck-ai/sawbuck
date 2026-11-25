@@ -21,8 +21,9 @@ export const ALLOW = /\b(sawbuck|promptwheel)(\.mjs)?\b[^|;&]*\s--allow\b/;
 export const DETACH = /\bsawbuck(?:\.mjs)?["']?(?:@[\w.-]+)?["']?\s+detach\b/;
 const BG_COMMIT = /\bgit\b[^|;&]*\s(?:commit|merge|rebase|cherry-pick|am|revert)\b/;
 // the command word, then a space or the end: `cat=1 rm ...` is an assignment and `cat () ( ... )` a function, and both
-// borrowed a read's name (the second read of 0.2.9); nor ( ) or = anywhere in it
-const PLAIN_READ = /^\s*(?:cat|ls|head|tail|wc|stat|file|less|more)(?:\s[^;&|<>`$\n()=]*)?$/;
+// borrowed a read's name (the second read of 0.2.9); nor ( ) anywhere in it (zsh runs code from a glob qualifier). An
+// option's = is a read's: `ls --color=never .sawbuck` was asked about in 0.2.9's first build (its third read)
+const PLAIN_READ = /^\s*(?:cat|ls|head|tail|wc|stat|file|less|more)(?:\s[^;&|<>`$\n()]*)?$/;
 // 0.2.9: a command made only of plain reads, whole or in parts. The parts are split at ; && || and new lines, and each
 // must be a plain read that sends at most its output or its errors to /dev/null (2>/dev/null, >/dev/null, 2>&1). Before,
 // a command of reads joined with && and ; was asked (proof-bench/wall-029 Phase B), and the plain-read test read a
