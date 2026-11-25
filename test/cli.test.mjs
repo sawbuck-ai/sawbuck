@@ -310,6 +310,15 @@ test('doctor, status and attach say when the hooks here start an older sawbuck, 
   } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
 });
 
+test('status in a repository with no commit yet says so, not "could not read the ledger"', () => {
+  const d = mkdtempSync(join(tmpdir(), 'sawbuck-cli-')); execFileSync('git', ['-C', d, 'init', '-q']);
+  writeFileSync(join(d, 'a.js'), 'export const v = 1;\n');
+  try {
+    const o = sawbuck(['status', '.'], d);
+    assert.doesNotMatch(o, /could not read the ledger/, o); assert.match(o, /no commit here yet/, o);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 test('attach --claude writes gitignored settings.local.json and keeps git status clean', () => {
   const { d } = tmpRepo();
   const f = join(d, '.claude', 'settings.local.json');

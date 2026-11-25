@@ -1037,6 +1037,17 @@ test('claim: the copies a session keeps of the files it changed are removed two 
 });
 // lead L141: under core.autocrlf=true (Git for Windows' default) `git checkout` writes the file back with CRLF while the base
 // read from the last commit has LF, so no line compared equal and the undo was never recorded (old: 0.2.0 to 0.2.6).
+// Q47: in a repository with no commit yet, the base for a file a shell command wrote came from one question put to git
+// with the changed files, and that question has no answer where there is no commit: the whole lookup was dropped.
+test('claim: with no commit yet, a new file a shell command made and the person had removed again is recorded as an undo', () => {
+  const d = mkdtempSync(join(tmpdir(), 'claims-')); git(d, 'init', '-q', '-b', 'main');
+  put(d, 'package.json', JSON.stringify({ name: 'n', version: '1.0.0', scripts: { test: 'node --test' } }, null, 2) + '\n');
+  assert.equal(sb(d, 'contract').code, 0, 'signed, with no commit');
+  const y = wired(d);
+  y.prompt('put the cache in a file of its own'); put(d, 'src/cache.js', CACHE1); y.stop();
+  y.prompt('undo that'); rmSync(join(d, 'src/cache.js')); y.stop();
+  const u = undos(d); assert.equal(u.length, 1, 'recorded with no commit: ' + JSON.stringify(u)); assert.equal(u[0].file, 'src/cache.js'); assert.equal(u[0].kind, 'whole');
+});
 test('claim: under core.autocrlf=true an undo of a change a shell command wrote is recorded, whole, as without it', () => {
   const d = signed(true); git(d, 'config', 'core.autocrlf', 'true'); const w = wired(d);
   edit(d, 'src/add.js', (s) => s + "exports.sub=(a,b)=>a-b\nexports.mul=(a,b)=>a*b\n"); save(d, 'more lines in src/add.js');

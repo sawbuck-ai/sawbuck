@@ -60,7 +60,9 @@ const state = kind || 'unarmed';
 // A full-repo HEAD grep + gating; fast on normal repos, can be heavy on a giant one. Bounded so
 // status never hangs; on timeout/failure it degrades to a pointer at `sawbuck debt`.
 let debt = null, debtErr = null;
-if (isGit) {
+// with no commit yet there is no HEAD to read (Q47): said in a sentence, not as a ledger that could not be read
+let hasCommit = false; if (isGit) { try { execFileSync('git', ['-C', repo, 'rev-parse', '--verify', '-q', 'HEAD^{commit}'], { stdio: 'ignore' }); hasCommit = true; } catch { /* no commit yet */ } }
+if (isGit && hasCommit) {
   const ms = +(process.env.SAWBUCK_STATUS_DEBT_MS) || 20000;
   try {
     const o = execFileSync(process.execPath, [join(HERE, 'debt.mjs'), '--repo', repo, '--json'], { encoding: 'utf8', timeout: ms, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
@@ -154,6 +156,8 @@ if (debt && debt.total) {
   out.push(`   Debt accruing now  ·  none live in HEAD (nothing silenced in src/test/config). A clean tree.`);
 } else if (debtErr === 'timeout') {
   out.push(`   Debt accruing now  ·  scan did not finish in time here (a large repo); run \`${cli('debt')}\` directly.`);
+} else if (isGit && !hasCommit) {
+  out.push('   Debt accruing now  ·  no commit here yet, so there is nothing in HEAD to read.');
 } else if (isGit) {
   out.push(`   Debt accruing now  ·  could not read the ledger; run \`${cli('debt')}\` for the detail.`);
 }
