@@ -1987,6 +1987,17 @@ test('claim: the hold asks a person before sawbuck is detached, and before a com
   put(d, 'sawbuck.config.json', JSON.stringify({ holds: { off: true } }) + '\n');
   assert.equal(w.pre('npm publish'), '', 'the outward hold is off'); assert.match(w.pre('sawbuck detach'), ask); assert.match(w.pre('rm -rf .sawbuck'), ask);
 });
+// 0.2.9: a command made only of reads that names the record is not asked, whole or in parts (proof-bench/wall-029
+// Phase B: Opus's first command, three reads joined with && and ; and errors sent to /dev/null, was asked). Anything else
+// that names the record is still asked, a second command on a new line included (a plain read was read as one string).
+test('claim: the hold does not ask about reads of the record joined with ; && or ||, and asks about anything else that names it, a new line included', () => {
+  const d = signed(true); const w = wired(d); const ask = /"permissionDecision":"ask"/;
+  for (const c of ['cat .github/workflows/ci.yml && cat sawbuck.config.json 2>/dev/null; ls -a .sawbuck 2>/dev/null', 'ls .sawbuck && cat .sawbuck/state.json', 'cat .sawbuck/results.json 2>&1', 'ls .sawbuck || ls'])
+    assert.doesNotMatch(w.pre(c), ask, c);
+  for (const c of ['ls .sawbuck; rm -rf .sawbuck', 'cat .sawbuck/state.json > /tmp/x', 'ls .sawbuck && echo hi > .sawbuck/x', 'cat .sawbuck/state.json | tee .sawbuck/y', 'ls $(rm -rf .sawbuck)',
+    'cat .sawbuck/x; sed -i s/a/b/ .sawbuck/y', 'cat .sawbuck/state.json\nrm -rf .sawbuck', 'ls .sawbuck\n echo {} > .sawbuck/state.json', 'ls .sawbuck &'])
+    assert.match(w.pre(c), ask, JSON.stringify(c));
+});
 // Found in a real session before the 0.1.69 release (2026-11-14, Claude Code 2.1.318). An agent told to wait had its
 // `sleep` moved to a background task and ended its turn. When the task finished, Claude Code gave the hooks a prompt
 // whose text begins <task-notification>. The prompt hook took that for a person and started the turn's baseline again

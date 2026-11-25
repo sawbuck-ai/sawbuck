@@ -20,7 +20,16 @@ export const ALLOW = /\b(sawbuck|promptwheel)(\.mjs)?\b[^|;&]*\s--allow\b/;
 // is not a repo's record, and the plugin's own commands name it: never asked here.
 export const DETACH = /\bsawbuck(?:\.mjs)?["']?(?:@[\w.-]+)?["']?\s+detach\b/;
 const BG_COMMIT = /\bgit\b[^|;&]*\s(?:commit|merge|rebase|cherry-pick|am|revert)\b/;
-const PLAIN_READ = /^\s*(?:cat|ls|head|tail|wc|stat|file|less|more)\b[^;&|<>`$]*$/;
+const PLAIN_READ = /^\s*(?:cat|ls|head|tail|wc|stat|file|less|more)\b[^;&|<>`$\n]*$/;
+// 0.2.9: a command made only of plain reads, whole or in parts. The parts are split at ; && || and new lines, and each
+// must be a plain read that sends at most its output or its errors to /dev/null (2>/dev/null, >/dev/null, 2>&1). Before,
+// a command of reads joined with && and ; was asked (proof-bench/wall-029 Phase B), and the plain-read test read a
+// command with a new line in it as one string, so a read and an `rm` on the next line passed as a read.
+const TO_NULL = /\s+(?:[12]?>\s*\/dev\/null|2>&1)(?=\s|$)/g;
+export function onlyReads(command) {
+  const parts = String(command || '').split(/\n|;|&&|\|\|/).map((p) => p.replace(TO_NULL, '').trim()).filter(Boolean);
+  return parts.length > 0 && parts.every((p) => PLAIN_READ.test(p));
+}
 export function namesRepoRecord(command, home = process.env.HOME || homedir()) {
   const c = String(command || '');
   if (/\.git\/sawbuck(?![\w-])/.test(c)) return true;
@@ -118,7 +127,7 @@ export function holdDecision(hookJson, repo) {
   const cmd = withoutCommitMessages(h.tool_input && typeof h.tool_input.command === 'string' ? h.tool_input.command : '');
   // --allow records a person's decision to accept what the check could not prove; the agent typing it is not that.
   // Always asked, holds off or not: it is how a gamed verdict is cleared.
-  if (DETACH.test(cmd) || (namesRepoRecord(cmd) && !PLAIN_READ.test(cmd))) return askOwn();
+  if (DETACH.test(cmd) || (namesRepoRecord(cmd) && !onlyReads(cmd))) return askOwn();
   // a commit made by a background task lands after the end of the turn, where a commit is read as the person's own
   // (unless the task reports back first: then the prompt hook keeps the turn's baseline). Asked like the two above.
   if (h.tool_input && h.tool_input.run_in_background === true && BG_COMMIT.test(cmd)) return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'Sawbuck: this runs in the background and commits. A commit that lands after the turn has ended is not checked with the turn. Approve only if you asked for it; or have the agent commit in the turn.' } };
