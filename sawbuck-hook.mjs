@@ -11,7 +11,7 @@ import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-import { mandateHits, hashOf, hashFollowing, hashRaw, isLink, protectedAmong, lockState, sinceBegan, stateOf, stateAt, sameState, branchOf } from './contract.mjs';
+import { mandateHits, hashOf, hashFollowing, hashRaw, isLink, protectedAmong, lockState, sinceBegan, stateOf, stateAt, sameState } from './contract.mjs';
 import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { beganWithoutRepo, forgetBegan } from './began.mjs';
@@ -342,12 +342,6 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   }
   const base = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null;
   const baseline = (base && base.files && typeof base.files === 'object') ? base.files : {};
-  // 0.2.9: the files the wall holds at how they were before a flagged change (the prompt hook keeps them in the baseline,
-  // `held`). Each is read by its exact state against that, mode included, whatever git lists as changed since the turn
-  // began: a change it holds is in no diff once the start has moved past the commit that made it.
-  const held = (base && base.held && typeof base.held === 'object' && !Array.isArray(base.held)) ? base.held : {};
-  const isHeld = (f) => Object.prototype.hasOwnProperty.call(held, f);
-  const heldChanged = Object.keys(held).filter((f) => !sameState(stateOf(repo, f), held[f]));
   // read against what the turn began with (contract.mjs, sinceBegan): its commit where it had one, the baseline's own
   // files where it had none or where git no longer lists them
   const { dirty, committedSince } = sinceBegan(repo, base, head);
@@ -361,8 +355,8 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
   const committedAsTheyWere = (f) => Object.prototype.hasOwnProperty.call(baseline, f)
     && (git('rev-parse', '--verify', '-q', `HEAD:${f}`) || 'deleted') === baseline[f]
     && (!dirty.includes(f) || untouched(f));
-  const changed = [...new Set([...dirty.filter((f) => !isHeld(f) && !untouched(f)), ...committedSince.filter((f) => !isHeld(f) && !committedAsTheyWere(f)), ...heldChanged])];
-  const leftAlone = [...new Set([...dirty.filter((f) => !isHeld(f) && untouched(f)), ...committedSince.filter((f) => !isHeld(f) && committedAsTheyWere(f))])];
+  const changed = [...new Set([...dirty.filter((f) => !untouched(f)), ...committedSince.filter((f) => !committedAsTheyWere(f))])];
+  const leftAlone = [...new Set([...dirty.filter(untouched), ...committedSince.filter(committedAsTheyWere)])];
   // the rules in force when the turn began: a rule this turn adds does not apply to it, so signing a contract does
   // not block itself, and one it deletes or narrows still holds
   // a baseline of that kind speaks for the prompt it was made for. Should the prompt hook not run for a later prompt,
@@ -378,7 +372,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // cannot adopt any of it. Only the turn's own changes: a person's file the baseline spared stays
     // spared, or the next clean turn would be blocked over work that was never the agent's.
     const files = {};
-    for (const f of protectedAmong(repo, changed, began)) files[f] = hashOf(repo, f, { store: true });   // by the rules the hits were judged by
+    for (const f of protectedAmong(repo, changed, began)) files[f] = hashOf(repo, f);   // by the rules the hits were judged by
     // a flagged file the person had dirty before the prompt: keep the hash of THEIR content (the
     // baseline stored it in the object database), so the block can name the exact restore and the
     // next baseline can recognise the restored file as theirs
@@ -407,27 +401,28 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // 14 of 14 times, and no repeat in the record ever changed what an agent did). A protected change, a file and what
     // was done to it, is known by the file's exact state, mode and content (contract.mjs, stateOf), the way an alert is
     // known by its fingerprint. It is sent back enforce.maxBlocks times (default 1), counted across prompts. After that,
-    // while it stands, each end of a turn leaves the person a line and the agent goes on. The file back to how it was
-    // before the change ends it (the prompt hook forgets it); the file in any other state is a new change, sent back once
-    // more. A commit of it, a reason, a new prompt or /clear do not make it new. (The first build knew a change by its
-    // lines, through git merge-file; its third read found a change of mode taken into the start.)
+    // while it stands, each end of a turn leaves the person a line and the agent goes on. The change gone ends it (the
+    // prompt hook forgets it); the file in any other state is a new change, sent back once more. A commit of it, a
+    // reason, a new prompt or /clear do not make it new. Whether a protected change stands at all is 0.2.8's reading of
+    // the turn, unchanged: only how often it is sent back is new.
     const wallMax = (() => { const tbl = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null; const raw = (tbl && Object.prototype.hasOwnProperty.call(tbl, 'maxBlocks')) ? tbl.maxBlocks : (cfg.enforce ? cfg.enforce.maxBlocks : undefined); return (raw === undefined || raw === null || raw === '' || !Number.isFinite(+raw)) ? 1 : Math.max(0, Math.floor(+raw)); })();
     const toldBefore = (st.wallTold && typeof st.wallTold === 'object' && !Array.isArray(st.wallTold)) ? st.wallTold : {};
     // Counted in each session (his words 2026-11-25 08:50, "lets make sure that situation doesnt happen"): two sessions
     // share one record, so the one send-back could land on the session that did not make the change while the one that
     // did got only lines. Each session whose turn ends with the change standing is sent back once for it.
     const toldNow = {}; let fresh = false, anyNew = false;
-    // where the turn began, for a file the wall does not hold: the start's own files keep only content (the mode is '?'
-    // there, and only the content is compared), a commit keeps both
+    // where the turn began: the start's own files keep only content (the mode is '?' there, and only the content is
+    // compared), a commit keeps both; and the commit's own state of the file, which a commit of the change must be
+    // taken back to (git revert) for the change to be gone
     const ref = (base && typeof base.sha === 'string') ? base.sha : (head ? 'HEAD' : '');
-    const onNow = branchOf(repo);   // the branch it was told on: a branch the person checks out later is read against its own file
-    const startOf = (f) => isHeld(f) ? held[f] : Object.prototype.hasOwnProperty.call(baseline, f) ? (baseline[f] === 'deleted' ? 'deleted' : `? ${baseline[f]}`) : (ref ? stateAt(repo, ref, f) : 'deleted');
+    const inCommit = (f) => ref ? stateAt(repo, ref, f) : 'deleted';
+    const startOf = (f) => Object.prototype.hasOwnProperty.call(baseline, f) ? (baseline[f] === 'deleted' ? 'deleted' : `? ${baseline[f]}`) : inCommit(f);
     for (const f of Object.keys(st.lastViolation.files)) {
       const cur = stateOf(repo, f);
       const e = (toldBefore[f] && typeof toldBefore[f] === 'object') ? toldBefore[f] : null;
       const same = !!e && e.flagged === cur; if (!same) anyNew = true;
       const by = (same && e.by && typeof e.by === 'object' && !Array.isArray(e.by)) ? Object.fromEntries(Object.entries(e.by).slice(-20)) : {};
-      toldNow[f] = { flagged: cur, before: (e && typeof e.before === 'string') ? e.before : startOf(f), by, at: (same && e.at) ? e.at : now, on: onNow };
+      toldNow[f] = { flagged: cur, before: (e && typeof e.before === 'string') ? e.before : startOf(f), head: (e && typeof e.head === 'string') ? e.head : inCommit(f), by, at: (same && e.at) ? e.at : now };
       if ((Number(by[sessionOf]) || 0) < wallMax) fresh = true;
     }
     if (fresh) for (const f of Object.keys(toldNow)) { const n = Number(toldNow[f].by[sessionOf]) || 0; if (n < wallMax) toldNow[f].by[sessionOf] = n + 1; }

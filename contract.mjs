@@ -119,8 +119,6 @@ export function stateAt(repo, ref, file) {
   const m = /^(\d{6}) \S+ ([0-9a-f]+)\t/.exec(row);
   return m ? `${modeSeen(repo, m[1])} ${m[2]}` : 'deleted';
 }
-// the branch HEAD is on ('detached' when none): what the wall told is read again on another branch the person checks out
-export function branchOf(repo) { try { return gitOut(repo, ['symbolic-ref', '-q', 'HEAD']).trim() || 'detached'; } catch { return 'detached'; } }
 // two states are one; where one was kept with its content only (a start's own files keep no mode: '? <hash>'), by content
 export const sameState = (a, b) => a === b || (typeof a === 'string' && typeof b === 'string' && (a.startsWith('? ') || b.startsWith('? ')) && a.slice(a.indexOf(' ') + 1) === b.slice(b.indexOf(' ') + 1));
 

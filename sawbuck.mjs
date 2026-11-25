@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { ownGitOn, personEnv } from './own-git.mjs';
 import { PW } from './bins.mjs';
-import { frameBlock, mandatesInForce, protectedDirty, protectedAmong, blobAt, lockState, gitNames, gitRefuses, stateOf, stateAt, sameState, branchOf } from './contract.mjs';
+import { frameBlock, mandatesInForce, protectedDirty, protectedAmong, blobAt, lockState, gitNames, gitRefuses, stateOf, stateAt, sameState } from './contract.mjs';
 import { cli, onPath, olderOnPath, newerOnPath, olderSaid } from './copies.mjs';
 import { hookVersion, hookVersionNamed, ourCommands, oldestOlder } from './hook-version.mjs';
 ownGitOn();   // Sawbuck's own git calls, and those of the processes it starts: no hook, no fsmonitor, no replace object (own-git.mjs)
@@ -519,36 +519,41 @@ switch (cmd) {
           const notice = /^\s*<task-notification>/.test(promptText);
           const unfinished = (!!prev && !!st.lastPromptAt && !stoppedSince && prev.by !== 'attach') || (notice && !!prev);
           // 0.2.9, THE WALL'S TOLD RECORD, at every prompt, an interrupted turn's too. It is read from the second copy only:
-          // one written into the state file is never believed (the third read of 0.2.9, W3). A flagged file back to how it
-          // was before its change is forgotten, whoever put it back, so the agent making the change again is a new change.
-          // Between turns, a flagged file in any other state than the one the wall told is a new state: its count starts
-          // again. A state is the file's mode and content (contract.mjs, stateOf).
+          // one written into the state file is never believed (the third read of 0.2.9, W3). A told change that is gone is
+          // forgotten, whoever took it out, so the agent making it again is a new change. Gone is the file back to how it
+          // was before the change, and its commit too (for a commit, git revert: a file put back in the folder while HEAD
+          // still holds the agent's commit is not gone, the fourth read of 0.2.9). Between turns, a told file in any other
+          // state than the one the wall told is a new state, and its count starts again. A state is the file's mode and
+          // content (contract.mjs, stateOf). Where a turn starts is 0.2.8's, below, unchanged: two rebuilds that changed it
+          // were each read and each let an agent's change through.
           const gw = readGuard(repo);
           const toldWas = (gw.own && gw.own.wallTold && typeof gw.own.wallTold === 'object' && !Array.isArray(gw.own.wallTold)) ? gw.own.wallTold : {};
-          // A branch the person checked out between turns is theirs: how the file was before the change is how that
-          // branch has it, so a branch with its own version of the file is not read as changed, and a change carried
-          // across stays held until it is put back as that branch has it.
-          const told = {}; const onNow = branchOf(repo);
-          for (const [f, e0] of Object.entries(toldWas)) {
-            if (!e0 || typeof e0 !== 'object' || typeof e0.before !== 'string' || typeof e0.flagged !== 'string') continue;
-            const e = (!unfinished && typeof e0.on === 'string' && e0.on !== onNow) ? { ...e0, before: stateAt(repo, 'HEAD', f), on: onNow } : e0;
+          const told = {};
+          for (const [f, e] of Object.entries(toldWas)) {
+            if (!e || typeof e !== 'object' || typeof e.before !== 'string' || typeof e.flagged !== 'string') continue;
             const nowState = stateOf(repo, f);
-            if (sameState(nowState, e.before)) continue;
+            if (sameState(nowState, e.before) && (typeof e.head !== 'string' || stateAt(repo, 'HEAD', f) === e.head)) continue;
             told[f] = (!unfinished && nowState !== e.flagged) ? { ...e, flagged: nowState, by: {} } : e;
           }
           if (Object.keys(told).length) st.wallTold = told; else delete st.wallTold;
           if (!unfinished) {
-            // the content is stored (hash-object -w), so a person's edit the agent later overwrites can be restored by hash
+            const flagged = (st.lastViolation && st.lastViolation.files && typeof st.lastViolation.files === 'object') ? st.lastViolation.files : {};
+            const before = (st.lastViolation && st.lastViolation.before && typeof st.lastViolation.before === 'object') ? st.lastViolation.before : {};
+            // the content is stored (hash-object -w), so a person's edit the agent later overwrites can
+            // be restored by hash; a file still carrying the flagged content is baselined at the content
+            // the person had before the agent touched it, or not at all
             const files = protectedDirty(repo, { store: true });
-            // 0.2.9: a file the wall still holds is never taken into the start, in any part. It is held at how it was before
-            // the flagged change (`held`, read by its exact state when the turn ends), and its place among the start's own
-            // files is the person's content from then, or none. Back to how it was, it was forgotten above and is taken in
-            // like any other file. So every commit made between turns is the person's and the start is HEAD (0.2.8 kept the
-            // commit before the flagged change while HEAD still carried it, and with it every commit the person made since).
-            const held = {};
-            for (const [f, e] of Object.entries(told)) { held[f] = e.before; if (e.before.startsWith('? ')) files[f] = e.before.slice(2); else delete files[f]; }
+            for (const f of Object.keys(files)) if (flagged[f] === files[f]) { if (before[f] && before[f] !== 'deleted') files[f] = before[f]; else delete files[f]; }
             let sha = ''; try { sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
-            st.turnBaseline = { at: now, sha, files, ...(Object.keys(held).length ? { held } : {}), lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: maxBlocksIn(repo), remindTurns: remindTurnsIn(repo) };
+            // HEAD moved since the last Stop: the agent was not running, so the commits between turns
+            // are the person's (accepting a change, a pull, a branch switch) and the baseline starts
+            // there, UNLESS HEAD still carries a flagged file's content: then the pin holds (a commit
+            // a background process landed after the Stop does not walk the agent's change through).
+            const moved = !!(sha && st.lastStopHead && sha !== st.lastStopHead);
+            const stillInHead = moved && Object.entries(flagged).some(([f, h]) => { const b = blobAt(repo, sha, f); return h === 'deleted' ? b === '' : (!!h && b === h); });
+            const pin = !!(st.lastViolation && st.lastViolation.sha);
+            if (moved && !stillInHead && st.lastViolation) delete st.lastViolation.sha;
+            st.turnBaseline = { at: now, sha: ((!moved || stillInHead) && pin && st.lastViolation.sha) || sha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: maxBlocksIn(repo), remindTurns: remindTurnsIn(repo) };
             // a new turn: a catch the last turn was still being sent back for is an open item like any other from here
             // on (0.2.0: no turn is sent back for what an earlier turn did). An interrupted turn the person typed over is one.
             { const g0 = readGuard(repo); const was = Array.isArray(g0.open) ? g0.open : []; const patch = { baseline: st.turnBaseline }; if (was.some((o) => o && o.live)) patch.open = was.map((o) => { const c = { ...o }; delete c.live; return c; }); writeGuard(repo, patch); }   // the baseline's second copy in the git folder: the record folder is out of git status, so its loss during a turn must not lose the turn's starting point (guard.mjs)

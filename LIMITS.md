@@ -25,6 +25,15 @@ Each limit here is held by a test in [`test/claims.test.mjs`](test/claims.test.m
   every rule from the contract and commits is sent back once, and you are told. The next turn has no rules
   to be sent back by. The same for a contract that is deleted before its first commit and left deleted. What
   holds: the check on the commit and on a pull request, which read the contract as it was before the change.
+- **A change the agent makes again in the same turn you undid it.** When you undo a sent-back protected change
+  while the agent's turn is still running, and the agent makes it again before that turn ends, you are told at
+  the end of the turn and the agent is not sent back. Undo it between turns, and the agent making it again is
+  sent back.
+- **A committed change you leave on another branch.** A protected change the agent committed is not flagged
+  again when you check out another branch and then come back to the first one.
+- **Your own edit to a file the agent was sent back for.** If you edit a protected file between turns while it
+  still holds a change the agent was sent back for, or commit it with more of your own, the file as you leave it
+  is taken as yours, the agent's change in it included.
 - **Before a repository's first commit, only the contract is read by name.** A workflow or another protected file
   that a turn stages, puts in the first commit, or deletes or hides while it is untracked is not seen at the end of
   the turn. Reading every file there by content sent back ordinary work (a staged file's edit put back, a pull into a

@@ -11,10 +11,6 @@ What was found and fixed in each version, newest first. For versions before 0.1.
   after that the end of each turn tells you while it stands. A further change to the file is sent back once more. Measured
   first, in our own sessions: every agent sent back for its own protected edit undid it after the first send-back,
   and no repeat ever changed what an agent did.
-- **Another edit to the file no longer takes a flagged change in.** Before, any other edit to a flagged file between
-  turns, or a commit that carried the change with more besides, made the new content the turn's start, the flagged
-  change with it. A flagged file is taken back into the turn's start only when it is back to how it was before the
-  change.
 - **The send-back says what to do in each case.** If the agent made the change, it undoes it, and the person makes
   it themselves in their editor or another terminal between turns, never with a `!` line. If it did not, it undoes
   nothing and tells the person that a reason does not end it; a revert does.

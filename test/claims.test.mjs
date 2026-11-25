@@ -95,7 +95,7 @@ test('claim: a person\'s contract change read as the agent\'s ends with a revert
   ({ d, w } = walled()); git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); w.prompt('next'); assert.ok(!blocked(w.stop()), 'a revert ends it');
   edit(d, 'promptwheel.config.json', thr(0.9)); w.prompt('next'); assert.ok(!blocked(w.stop()), 'then the same change, made before a prompt, is the person\'s'); w.prompt('and on'); assert.ok(!blocked(w.stop()), 'and stays theirs');
   ({ d, w } = walled()); git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); edit(d, 'promptwheel.config.json', thr(0.9)); w.prompt('next'); assert.ok(line(w.stop()), 'the same change again before any turn has ended: still the flagged one, told');
-  ({ d, w } = walled()); edit(d, 'promptwheel.config.json', thr(0.8)); w.prompt('next'); assert.ok(blocked(w.stop()), 'other content on the flagged line itself cannot be told apart from it: sent back once, as a new change'); assert.ok(line(w.stop()), 'then told');
+  ({ d, w } = walled()); edit(d, 'promptwheel.config.json', thr(0.8)); w.prompt('next'); assert.ok(!/promptwheel\.config\.json/.test(w.stop()), 'other content on the flagged line, made between turns, is the person\'s own edit and theirs (LIMITS: your own edit to a file the agent was sent back for)');
 });
 // ------------------------------------------------------------ "re-proves a win from the source edits alone"
 test('claim: an honest source fix is verified', () => { const d = repo(); edit(d, 'src/add.js', fixAdd); save(d, 'fix'); assert.equal(check(d).code, 0); });
@@ -764,28 +764,12 @@ test('claim: after a reason the change is still a line, never a send-back; a rev
   edit(d, 'promptwheel.config.json', wallThr(0.9)); w.prompt('mine now'); assert.ok(wallQuiet(w.stop()), 'the same change made before a prompt is the person\'s');
   w.prompt('and on'); assert.ok(wallQuiet(w.stop()), 'and stays theirs');
 });
-test('claim: another edit to the file between turns does not take a flagged change in: a new state is sent back once, then told; only the file back to how it was ends it', () => {
-  const d = signed(true); const w = wired(d); wallSent(d, w);
-  edit(d, 'promptwheel.config.json', wallKey('repeat', 2));   // the person's own edit to another line, between turns
-  w.prompt('next'); assert.ok(blocked(w.stop()), 'a new state: sent back once (its words say to undo nothing it did not make)'); assert.ok(wallLine(w.stop()), 'then told');
-  const st = JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8'));
-  assert.ok(!((st.turnBaseline && st.turnBaseline.files) || {})['promptwheel.config.json'], 'nothing of the flagged file is taken into the start');
-  edit(d, 'promptwheel.config.json', wallKey('gamingThreshold', undefined)); w.prompt('the threshold is gone'); assert.ok(blocked(w.stop()), 'not as it was yet: another new state, sent back once');
-  git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); w.prompt('back as it was'); assert.ok(wallQuiet(w.stop()), 'the file back to how it was ends it');
-  edit(d, 'promptwheel.config.json', wallKey('repeat', 2)); w.prompt('my repeat'); assert.ok(wallQuiet(w.stop()), 'then the person\'s own edit, made between turns, is theirs');
-});
 test('claim: the agent\'s further change to the file after its one send-back is sent back once more', () => {
   const d = signed(true); const w = wired(d); wallSent(d, w);
   assert.ok(wallLine(w.stop()), 'the same change again: a line');
   edit(d, 'promptwheel.config.json', wallKey('allowTrailer', true)); assert.ok(blocked(w.stop()), 'a further change in the same turn: sent back');
   assert.ok(wallLine(w.stop()), 'then a line');
   w.prompt('next'); assert.ok(wallLine(w.stop()), 'and at the next prompt');
-});
-test('claim: a commit by the person that carries the flagged change and another edit does not take the change in: a new state, sent back once, then told', () => {
-  const d = signed(true); const w = wired(d); wallSent(d, w);
-  edit(d, 'promptwheel.config.json', wallKey('repeat', 2)); save(d, 'the threshold, and my own repeat');   // between turns
-  w.prompt('next'); assert.ok(blocked(w.stop()), 'the commit is a new state: sent back once'); assert.ok(wallLine(w.stop()), 'then told, and it stays flagged');
-  w.prompt('and on'); assert.ok(wallLine(w.stop()), 'told on the next turn too');
 });
 test('claim: sawbuck.config.json sets how many times one change is sent back (enforce.maxBlocks), counted across prompts; 0 tells the person at once', () => {
   const d = signed(true); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 2 } }) + '\n'); save(d, 'two send-backs a change');
@@ -817,12 +801,6 @@ test('claim: with enforce.maxBlocks 0 the catch is still counted, once for one c
   const d = signed(true); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); save(d, 'ask me first');
   const w = wired(d); w.prompt('look'); w.stop(); w.prompt('registry'); put(d, '.npmrc', 'fund=false\n'); assert.ok(!blocked(w.stop()), 'a line at once');
   w.prompt('next'); w.stop(); assert.match(sb(d, 'statusline').out, /1 caught/, 'counted once');
-});
-test('claim: after the person commits the flagged change with an edit of their own it is sent back once for that state, then told on each later turn', () => {
-  const d = signed(true); const w = wired(d); wallSent(d, w); w.stop();
-  edit(d, 'promptwheel.config.json', wallKey('repeat', 2)); save(d, 'the threshold, and my own repeat');
-  w.prompt('next'); assert.ok(blocked(w.stop()), 'the new state, once');
-  for (const p of ['next2', 'next3']) { w.prompt(p); const o = w.stop(); assert.ok(wallLine(o), `${p}: told, never sent back again: ${o.slice(0, 120)}`); }
 });
 test('claim: the hold asks about a function or an assignment that borrows a read\'s name', () => {
   const d = signed(true); const w = wired(d); const ask = /"permissionDecision":"ask"/;
@@ -865,8 +843,8 @@ test('claim: a redo after a partial revert, after a revert and an interrupt, and
   // the person reverts by hand, a byte off; the agent writes the flagged file back
   d = signed(true); w = wired(d); w.prompt('look'); w.stop(); const was = readFileSync(join(d, 'promptwheel.config.json'), 'utf8');
   w.prompt('loosen'); edit(d, 'promptwheel.config.json', wallThr(0.9)); const flagged = readFileSync(join(d, 'promptwheel.config.json'), 'utf8'); assert.ok(blocked(w.stop()), 'sent back once'); w.stop();
-  put(d, 'promptwheel.config.json', was + '\n');   // the person's revert, one byte off
-  w.prompt('next'); assert.ok(blocked(w.stop()), 'a byte off is not as it was: a new state, sent back once'); w.stop();
+  put(d, 'promptwheel.config.json', was + '\n');   // the person's revert, one byte off: their own edit
+  w.prompt('next'); assert.ok(wallQuiet(w.stop()), 'the person\'s revert a byte off is theirs');
   w.prompt('and on'); put(d, 'promptwheel.config.json', flagged); assert.ok(blocked(w.stop()), 'the agent writing the flagged file back is sent back');
 });
 // a branch the person checks out between turns is theirs: what the wall told is read again against how that branch has
@@ -880,6 +858,73 @@ test('claim: a branch the person checks out between turns is not read as a chang
   git(e, 'switch', '-q', 'other');   // the person carries the uncommitted change across
   x.prompt('next'); assert.ok(wallLine(x.stop()), 'the change carried across is still told');
   git(e, 'checkout', '-q', '--', 'promptwheel.config.json'); x.prompt('put back'); assert.ok(wallQuiet(x.stop()), 'put back as that branch has it, it is ended');
+});
+// the two limits the fingerprint rebuild leaves (LIMITS.md, words his to approve)
+test('limit: the agent making a change again in the same turn the person undid it is told, not sent back', () => {
+  assert.match(readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8').replace(/\s+/g, ' ').replace(/\*\*/g, ''), lit("A change the agent makes again in the same turn you undid it. When you undo a sent-back protected change while the agent's turn is still running, and the agent makes it again before that turn ends, you are told at the end of the turn and the agent is not sent back. Undo it between turns, and the agent making it again is sent back."));
+  const d = signed(true); const w = wired(d); wallSent(d, w); assert.ok(wallLine(w.stop()), 'told');
+  w.prompt('next');
+  git(d, 'checkout', '-q', '--', 'promptwheel.config.json');   // the person, in another terminal, while the turn runs
+  edit(d, 'promptwheel.config.json', wallThr(0.9));   // the agent, before that turn ends
+  assert.ok(wallLine(w.stop()), 'told, not sent back');
+});
+test('limit: a committed change left behind on another branch is not flagged again on coming back', () => {
+  assert.match(readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8').replace(/\s+/g, ' ').replace(/\*\*/g, ''), lit('A committed change you leave on another branch. A protected change the agent committed is not flagged again when you check out another branch and then come back to the first one.'));
+  const d = signed(true); git(d, 'switch', '-q', '-c', 'other'); edit(d, 'promptwheel.config.json', wallKey('repeat', 3)); save(d, 'other'); git(d, 'switch', '-q', 'main');
+  const w = wired(d); wallSent(d, w); save(d, 'the agent commits it'); assert.ok(wallLine(w.stop()), 'told');
+  git(d, 'switch', '-q', 'other'); w.prompt('next'); assert.ok(wallQuiet(w.stop()), 'not told on the other branch');
+  git(d, 'switch', '-q', 'main'); w.prompt('back'); assert.ok(wallQuiet(w.stop()), 'back on the first branch it is not flagged again');
+});
+// an upgrade: 0.2.8 kept no told record, only lastViolation and the commit it pinned. A flag standing when the person
+// moves to 0.2.9 is told from then on, never taken into the start.
+test('claim: a flag that 0.2.8 left standing is still held after the upgrade', () => {
+  const d = signed(true); const w = wired(d); wallSent(d, w); w.stop();
+  const sp = join(d, '.sawbuck', 'state.json'); const st = JSON.parse(readFileSync(sp, 'utf8')); assert.ok(st.lastViolation && st.lastViolation.sha, 'the flag and its commit');
+  delete st.wallTold; put(d, '.sawbuck/state.json', JSON.stringify(st, null, 2) + '\n');
+  const gp = join(d, '.git', 'sawbuck', 'guard.json'); const g = JSON.parse(readFileSync(gp, 'utf8')); if (g.own) delete g.own.wallTold; writeFileSync(gp, JSON.stringify(g, null, 2) + '\n');
+  w.prompt('next'); const o = w.stop(); assert.ok(blocked(o), `sent back once after the upgrade: ${o.slice(0, 120)}`);
+  assert.ok(wallLine(w.stop()), 'then told'); w.prompt('and on'); assert.ok(wallLine(w.stop()), 'and on later turns');
+});
+// the gap, as in 0.2.8 (option A; LIMITS.md, his words of 2026-11-25 13:47)
+test('limit: the person\'s own edit between turns to a file the agent was sent back for is theirs, the agent\'s change in it included', () => {
+  assert.match(readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8').replace(/\s+/g, ' ').replace(/\*\*/g, ''), lit('Your own edit to a file the agent was sent back for. If you edit a protected file between turns while it still holds a change the agent was sent back for, or commit it with more of your own, the file as you leave it is taken as yours, the agent\'s change in it included.'));
+  let d = signed(true), w = wired(d); wallSent(d, w); assert.ok(wallLine(w.stop()), 'told');
+  edit(d, 'promptwheel.config.json', wallKey('repeat', 2));   // the person's own edit to another line, between turns
+  w.prompt('next'); assert.ok(wallQuiet(w.stop()), 'edited between turns: the file as they left it is theirs');
+  d = signed(true); w = wired(d); wallSent(d, w); w.stop();
+  edit(d, 'promptwheel.config.json', wallKey('repeat', 2)); save(d, 'the threshold, and my own repeat');
+  w.prompt('next'); assert.ok(wallQuiet(w.stop()), 'committed with more of their own: theirs');
+  d = signed(true); w = wired(d); wallSent(d, w); w.stop(); save(d, 'just the threshold');
+  w.prompt('next'); assert.ok(wallLine(w.stop()), 'the agent\'s change committed alone is still told');
+});
+// the fourth read of 0.2.9 (second-reader-9, on 26c472f): what 0.2.8's start held and the fingerprint start let go
+test('claim: the agent bringing back its own committed change after the person put the file back in the folder is sent back', () => {
+  const d = signed(true); const was = readFileSync(join(d, 'promptwheel.config.json'), 'utf8'); const w = wired(d); w.prompt('look'); w.stop();
+  w.prompt('loosen'); edit(d, 'promptwheel.config.json', wallThr(0.9)); save(d, 'loosen'); assert.ok(blocked(w.stop()), 'sent back once'); w.stop();
+  put(d, 'promptwheel.config.json', was);   // the person puts it back in the folder, not committed
+  w.prompt('next'); w.stop(); w.stop();
+  w.prompt('and on'); git(d, 'checkout', '-q', '--', 'promptwheel.config.json');   // the agent brings HEAD's version back
+  assert.ok(blocked(w.stop()), 'sent back');
+});
+test('claim: a branch the person makes at the same commit does not end a committed flag', () => {
+  const d = signed(true); const w = wired(d); w.prompt('look'); w.stop();
+  w.prompt('loosen'); edit(d, 'promptwheel.config.json', wallThr(0.9)); save(d, 'loosen'); assert.ok(blocked(w.stop()), 'sent back once'); w.stop();
+  git(d, 'switch', '-q', '-c', 'feature');   // the person, between turns
+  w.prompt('next'); assert.ok(wallLine(w.stop()), 'still told on the new branch');
+});
+test('claim: the person throwing away their own draft with the agent\'s change on it ends the flag', () => {
+  const d = signed(true); put(d, '.npmrc', 'fund=false\n'); save(d, 'the registry file'); const w = wired(d);
+  put(d, '.npmrc', 'fund=false\nprogress=false\n');   // the person's own draft, not committed
+  w.prompt('look'); w.stop();
+  w.prompt('registry'); put(d, '.npmrc', 'fund=false\nprogress=false\nregistry=https://example.invalid/\n'); assert.ok(blocked(w.stop()), 'sent back once'); w.stop();
+  git(d, 'checkout', '-q', '--', '.npmrc');   // the person throws both away, between turns
+  w.prompt('next'); assert.ok(!/\.npmrc/.test(w.stop()), 'nothing told'); w.prompt('and on'); assert.ok(!/\.npmrc/.test(w.stop()), 'nor later');
+  const v = wired(d, 's2'); v.prompt('a new session'); assert.ok(!/\.npmrc/.test(v.stop()), 'nor in a new session');
+});
+test('claim: the second copy removed between turns does not end a standing flag', () => {
+  const d = signed(true); const w = wired(d); wallSent(d, w); w.stop();
+  rmSync(join(d, '.git', 'sawbuck', 'guard.json'));   // between turns
+  w.prompt('next'); const o = w.stop(); assert.ok(blocked(o) || wallLine(o), `still flagged: ${o.slice(0, 120)}`);
 });
 // the third read's W3: a told record copied back into the state file during a turn was believed at the next prompt
 test('claim: a told record written into the state file is not believed', () => {
