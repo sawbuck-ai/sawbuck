@@ -12,8 +12,9 @@ What was found and fixed in each version, newest first. For versions before 0.1.
   the two commits, and never fails the check. `sawbuck contract --strict` sets `"testRewrites": "ask"`, and then
   it sends the pull request back until a person gives a reason.
 - **A send-back for a protected path says what to do when the change is not the agent's.** A person can make such a
-  change between the agent's turns, with a line typed with `!` or in an editor. The agent is told to undo nothing,
-  say a reason is owed, and stop; only the person can end it, with a reason or a revert.
+  change while the agent works, in an editor, or with a line typed with `!`. The agent is told to undo nothing, tell
+  the person that a reason does not end it, and stop. It ends when the person reverts the change; once a turn has
+  ended after that, a change they make in their editor before the next prompt is theirs.
 - **doctor, status and attach say when the hooks here start an older sawbuck.** On one machine the user-level hooks
   started 0.2.2 from a checkout for two days while 0.2.7 was installed. doctor now marks such a set OLD and exits 1,
   and status and attach say it in a line. Each names the step and says it is a person's: bringing the hooks up

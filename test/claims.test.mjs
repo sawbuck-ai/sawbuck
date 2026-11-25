@@ -76,7 +76,22 @@ test('claim: a protected-path send-back says what to do if the change is not the
   const d = signed(true); const w = wired(d);
   w.prompt('loosen the check'); edit(d, 'promptwheel.config.json', (s) => { const c = JSON.parse(s); c.gamingThreshold = 0.9; return JSON.stringify(c, null, 2) + '\n'; });
   const out = w.stop(); assert.ok(blocked(out), out);
-  assert.match(out, /If you made none of these changes[^"]*undo nothing: tell the person a reason is owed, and stop\. Only the person can end this, with their reason or a revert\./, out);
+  assert.match(out, lit('If you made none of these changes (a person can make one while you work, in their editor, or with a line they type with !), undo nothing and stop: tell the person that a reason does not end this. It ends when they revert the change; once a turn has ended after that, a change they make in their editor before the next prompt is theirs.'), out);
+});
+// The ways out that sentence names, run (2026-11-24, wavecutter's items 9 and 10: the owner's reason did not end it,
+// and 0.2.8's first words said it would). A reason is for the check on a commit or a pull request, not for this wall
+// (measured since 0.1.70); nor does a commit between turns end it. A revert does; once a turn has ended after it, the
+// same change made before the next prompt is the person's, and so is other content made between turns.
+test('claim: a person\'s contract change read as the agent\'s ends with a revert, not a reason or a commit; once a turn has ended after the revert, the same change made before a prompt is theirs', () => {
+  const thr = (v) => (s) => { const c = JSON.parse(s); c.gamingThreshold = v; return JSON.stringify(c, null, 2) + '\n'; };
+  const walled = () => { const d = signed(true); const w = wired(d); w.prompt('look'); w.stop(); w.prompt('look again'); edit(d, 'promptwheel.config.json', thr(0.9)); assert.ok(blocked(w.stop()), 'the person\'s edit during a turn'); return { d, w }; };
+  let { d, w } = walled(); assert.equal(sb(d, 'check', '--allow', 'contract-frozen: my own change to the threshold').code, 0, 'the reason is kept for the check');
+  assert.ok(blocked(w.stop()), 'a reason: the same turn'); w.prompt('next'); assert.ok(blocked(w.stop()), 'a reason: the next turn');
+  ({ d, w } = walled()); save(d, 'the threshold, mine'); w.prompt('next'); assert.ok(blocked(w.stop()), 'a commit between turns');
+  ({ d, w } = walled()); git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); w.prompt('next'); assert.ok(!blocked(w.stop()), 'a revert ends it');
+  edit(d, 'promptwheel.config.json', thr(0.9)); w.prompt('next'); assert.ok(!blocked(w.stop()), 'then the same change, made before a prompt, is the person\'s'); w.prompt('and on'); assert.ok(!blocked(w.stop()), 'and stays theirs');
+  ({ d, w } = walled()); git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); edit(d, 'promptwheel.config.json', thr(0.9)); w.prompt('next'); assert.ok(blocked(w.stop()), 'the same change again before any turn has ended');
+  ({ d, w } = walled()); edit(d, 'promptwheel.config.json', thr(0.8)); w.prompt('next'); assert.ok(!blocked(w.stop()), 'other content made between turns');
 });
 // ------------------------------------------------------------ "re-proves a win from the source edits alone"
 test('claim: an honest source fix is verified', () => { const d = repo(); edit(d, 'src/add.js', fixAdd); save(d, 'fix'); assert.equal(check(d).code, 0); });
