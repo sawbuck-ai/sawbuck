@@ -530,15 +530,17 @@ switch (cmd) {
             // content at that start, else the file at the pinned commit
             const toldNow = (st.wallTold && typeof st.wallTold === 'object' && !Array.isArray(st.wallTold)) ? st.wallTold : {};
             const wasOf = (f) => (toldNow[f] && toldNow[f].before) || before[f] || ((st.lastViolation && st.lastViolation.sha) ? blobAt(repo, st.lastViolation.sha, f) : '') || 'deleted';
+            const gone = new Set();   // flagged changes no longer in the start: the person reverted them
+            const dirtyNow = new Set(Object.keys(files));   // dirty at this start (the loop below takes some out of `files`)
             for (const f of Object.keys(files)) {
               if (!Object.prototype.hasOwnProperty.call(flagged, f)) continue;
               if (flagged[f] === files[f]) { if (before[f] && before[f] !== 'deleted') files[f] = before[f]; else delete files[f]; continue; }
               // 0.2.9: the flagged CHANGE, not the whole file. The file changed again since (the person's edit between
               // turns): the start is what it holds now with that change taken back out, so the change is never taken
               // in and the person's edit is theirs. Where the two cannot be told apart, nothing of it is taken in.
-              if (flagged[f] === 'deleted') continue;
+              if (flagged[f] === 'deleted') { gone.add(f); continue; }   // the file is back, as the person wrote it
               const out = withoutChange(repo, files[f], flagged[f], wasOf(f));
-              if (out === '') continue;
+              if (out === '') { gone.add(f); continue; }
               if (out === null) { if (before[f] && before[f] !== 'deleted') files[f] = before[f]; else delete files[f]; continue; }
               files[f] = out;
             }
@@ -553,14 +555,26 @@ switch (cmd) {
             // a flagged file the person committed with the change and more besides, clean now: its start is what HEAD
             // holds with the change taken out, as above
             if (sha) for (const f of Object.keys(flagged)) {
-              if (Object.prototype.hasOwnProperty.call(files, f) || flagged[f] === 'deleted') continue;
-              const b = blobAt(repo, sha, f); if (!b || b === flagged[f]) continue;
+              if (dirtyNow.has(f)) continue;   // a dirty file was judged above, whether or not it stays in `files`
+              const b = blobAt(repo, sha, f);
+              if (flagged[f] === 'deleted') { if (b) gone.add(f); continue; }   // the file is back, clean: the deletion is undone
+              if (!b) { gone.add(f); continue; }   // clean and not in HEAD: what was flagged there is gone
+              // HEAD holds the flagged content itself (with the person's own edit in it, or the agent's commit): its start is
+              // the one the wall told (the second read of 0.2.9: the pinned commit's file was used, and the same change read
+              // as new and was sent back again)
+              if (b === flagged[f]) { const w0 = wasOf(f); if (w0 && w0 !== 'deleted') files[f] = w0; continue; }
               const out = withoutChange(repo, b, flagged[f], wasOf(f));
+              if (out === '') { gone.add(f); continue; }
               if (out) files[f] = out;
             }
             const pin = !!(st.lastViolation && st.lastViolation.sha);
             if (moved && !stillInHead && st.lastViolation) delete st.lastViolation.sha;
             st.turnBaseline = { at: now, sha: ((!moved || stillInHead) && pin && st.lastViolation.sha) || sha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: maxBlocksIn(repo), remindTurns: remindTurnsIn(repo) };
+            // a flagged change gone from the start (the person reverted it): the wall forgets it, so the agent making it again
+            // is a new change and is sent back (the second read of 0.2.9: it was only told)
+            for (const f of gone) { if (st.lastViolation && st.lastViolation.files) delete st.lastViolation.files[f]; if (st.wallTold) delete st.wallTold[f]; }
+            if (st.wallTold && !Object.keys(st.wallTold).length) delete st.wallTold;
+            if (st.lastViolation && st.lastViolation.files && !Object.keys(st.lastViolation.files).length) delete st.lastViolation;
             // a new turn: a catch the last turn was still being sent back for is an open item like any other from here
             // on (0.2.0: no turn is sent back for what an earlier turn did). An interrupted turn the person typed over is one.
             { const g0 = readGuard(repo); const was = Array.isArray(g0.open) ? g0.open : []; const patch = { baseline: st.turnBaseline }; if (was.some((o) => o && o.live)) patch.open = was.map((o) => { const c = { ...o }; delete c.live; return c; }); writeGuard(repo, patch); }   // the baseline's second copy in the git folder: the record folder is out of git status, so its loss during a turn must not lose the turn's starting point (guard.mjs)
@@ -569,7 +583,7 @@ switch (cmd) {
         // a turn is open from here to an end of turn that lets it end. What that hook counts (the last commit it looked
         // at, the send-backs spent) is kept in the second copy and read from there; it is started from the state file
         // once, here, before the turn's first tool call, and never again (guard.mjs).
-        { const g = readGuard(repo); writeGuard(repo, { own: { ...((g.own && typeof g.own === 'object' && !Array.isArray(g.own)) ? g.own : ownOf(st)), turnOpen: true } }); }
+        { const g = readGuard(repo); writeGuard(repo, { own: (() => { const o = { ...((g.own && typeof g.own === 'object' && !Array.isArray(g.own)) ? g.own : ownOf(st)), turnOpen: true }; if (st.wallTold) o.wallTold = st.wallTold; else delete o.wallTold; return o; })() }); }
         // THE UNDO LEDGER (undo.mjs). A turn that never reached its end is judged now, with the prompt it began with; then
         // the picture is taken for this prompt: what the agent has added to each file it touched, as it stands. A notice
         // from a background task is not the person speaking: the turn it belongs to goes on with the picture it has.

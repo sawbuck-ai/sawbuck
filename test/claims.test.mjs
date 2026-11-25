@@ -794,6 +794,40 @@ test('claim: sawbuck.config.json sets how many times one change is sent back (en
   const z = signed(true); put(z, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); save(z, 'ask me first');
   const y = wired(z); y.prompt('look'); y.stop(); y.prompt('look again'); edit(z, 'promptwheel.config.json', wallThr(0.9)); assert.ok(wallLine(y.stop()), '0: a line at once');
 });
+// The second read of 0.2.9 (second-reader-7, on 86c721c): where it told the person and 0.2.8 sent the agent back, a
+// catch it did not count, a send-back after a person's commit, and two ways a read's name was borrowed.
+test('claim: the agent making again a change the person reverted is sent back, uncommitted or after git revert', () => {
+  let d = signed(true), w = wired(d); wallSent(d, w); assert.ok(wallLine(w.stop()), 'told');
+  git(d, 'checkout', '-q', '--', 'promptwheel.config.json');   // the person reverts it, between turns
+  w.prompt('next, leave the config alone'); edit(d, 'promptwheel.config.json', wallThr(0.9));   // the agent makes it again
+  assert.ok(blocked(w.stop()), 'the redo is sent back'); assert.ok(wallLine(w.stop()), 'then told');
+  d = signed(true); w = wired(d); w.prompt('look'); w.stop(); w.prompt('loosen'); edit(d, 'promptwheel.config.json', wallThr(0.9)); save(d, 'loosen');
+  assert.ok(blocked(w.stop()), 'sent back once'); assert.ok(wallLine(w.stop()), 'told');
+  git(d, 'revert', '--no-edit', 'HEAD');   // the person, between turns
+  w.prompt('next'); edit(d, 'promptwheel.config.json', wallThr(0.9)); save(d, 'loosen again'); assert.ok(blocked(w.stop()), 'the re-commit is sent back');
+});
+test('claim: a gamed test is sent back while a told protected change stands', () => {
+  const d = signed(false); const w = wired(d);
+  w.prompt('look'); w.stop(); w.prompt('registry'); put(d, '.npmrc', 'fund=false\n'); assert.ok(blocked(w.stop()), 'the protected change, once'); w.stop();
+  w.prompt('make add pass'); edit(d, 'test/add.test.js', (t) => t.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
+  const o = w.stop(); assert.ok(blocked(o), 'the gamed test is sent back'); assert.match(o, /add\.test\.js/);
+});
+test('claim: with enforce.maxBlocks 0 the catch is still counted, once for one change', () => {
+  const d = signed(true); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); save(d, 'ask me first');
+  const w = wired(d); w.prompt('look'); w.stop(); w.prompt('registry'); put(d, '.npmrc', 'fund=false\n'); assert.ok(!blocked(w.stop()), 'a line at once');
+  w.prompt('next'); w.stop(); assert.match(sb(d, 'statusline').out, /1 caught/, 'counted once');
+});
+test('claim: after the person commits the flagged change with an edit of their own, it is told on each later turn, never sent back again', () => {
+  const d = signed(true); const w = wired(d); wallSent(d, w); w.stop();
+  edit(d, 'promptwheel.config.json', wallKey('repeat', 2)); save(d, 'the threshold, and my own repeat');
+  for (const p of ['next', 'next2', 'next3']) { w.prompt(p); const o = w.stop(); assert.ok(wallLine(o), `${p}: told, not sent back: ${o.slice(0, 120)}`); }
+});
+test('claim: the hold asks about a function or an assignment that borrows a read\'s name', () => {
+  const d = signed(true); const w = wired(d); const ask = /"permissionDecision":"ask"/;
+  for (const c of ['cat () ( rm -rf .sawbuck )\ncat x', 'cat () ( rm -rf .sawbuck ); cat x', 'cat=1 rm -rf .sawbuck', 'cat=1 rm -rf .git/sawbuck', 'ls() { rm -rf .sawbuck; }; ls'])
+    assert.match(w.pre(c), ask, JSON.stringify(c));
+  for (const c of ['ls -la .sawbuck', 'cat .sawbuck/state.json 2>/dev/null']) assert.doesNotMatch(w.pre(c), ask, c);
+});
 test('claim: it sends a turn back once by default for one change, then lets it end with a line for the person', () => { const d = signed(true); const w = wired(d); w.prompt(); put(d, '.npmrc', 'x\n'); const seen = []; for (let i = 0; i < 4; i++) seen.push(blocked(w.stop())); assert.deepEqual(seen, [true, false, false, false]); });
 
 test('claim: a blocked protected path counts as one catch, however many send-backs', () => { const d = signed(true); const w = wired(d); w.prompt(); put(d, '.npmrc', 'x\n'); w.stop(); w.stop(); w.stop(); assert.match(sb(d, 'statusline').out, /1 caught/); assert.match(sb(d, 'status').out, /1 protected path/); assert.equal(readFileSync(join(d, '.sawbuck/activity.jsonl'), 'utf8').trim().split('\n').filter((l) => l.includes('"mandate"')).length, 1); });
