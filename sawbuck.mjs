@@ -1371,8 +1371,10 @@ function doctorRepo(repo) {
       // a team file also asks npm for its version where a session starts (the other two files pin what is already here)
       ...(mode === 'claude-shared' ? ['startup', 'resume'].map((s) => (at('SessionStart', /\b__warm\b/, s) ? '' : `SessionStart[${s}]`)) : [])].filter(Boolean);
     // what each command starts, asked once: it runs, and it is not older than this copy (hook-version.mjs)
-    const uniq = [...new Set(cmds)]; const vers = process.platform === 'win32' ? [] : uniq.map(hookVersion);
-    const runs = process.platform === 'win32' ? uniq.every(hookRuns) : vers.every(Boolean);
+    // stopping at the first that fails, as 0.2.7 did: each can wait on the network (second read of 0.2.8)
+    const uniq = [...new Set(cmds)]; const vers = []; let runs = true;
+    if (process.platform === 'win32') runs = uniq.every(hookRuns);
+    else for (const c of uniq) { const v = hookVersion(c); if (!v) { runs = false; break; } vers.push(v); }
     checks.push({ mode, file: f, ok: !missing.length && runs, missing, behind: oldestOlder(vers, version) });
   }
   // the receipt says hooks were wired here, and they are gone: a removal git status cannot show (the file is excluded, or under .git)

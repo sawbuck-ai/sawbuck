@@ -201,9 +201,10 @@ if (refuses) {
 
 // hooks that start an older copy than this one (hook-version.mjs; wavecutter's started 0.2.2 for two days while 0.2.7 was installed)
 if (state === 'watching' && (wired === 'user' || wired === 'project')) {
-  const files = wired === 'user' ? [join(homedir(), '.claude', 'settings.json')] : [join(repo, '.claude', 'settings.local.json'), join(repo, '.claude', 'settings.json')];
-  const behind = oldestOlder([...new Set(files.flatMap(ourCommands))].map(hookVersionNamed), VERSION);   // read, never run: status reaches no network
-  if (behind) out.push(`   The hooks here start sawbuck ${behind}, and this is ${VERSION}. Bringing them up changes what watches the agent, so it is a person's step: \`${cli(wired === 'user' ? 'attach --user' : 'attach')}\``);
+  // each file with the line that brings its own hooks up: a team file's is attach --shared (second read of 0.2.8)
+  const files = wired === 'user' ? [[join(homedir(), '.claude', 'settings.json'), 'attach --user']] : [[join(repo, '.claude', 'settings.local.json'), 'attach'], [join(repo, '.claude', 'settings.json'), 'attach --shared']];
+  const found = files.map(([f, line]) => [oldestOlder(ourCommands(f).map(hookVersionNamed), VERSION), line]).filter(([b]) => b);   // read, never run: status reaches no network
+  for (const [behind, line] of found) out.push(`   The hooks here start sawbuck ${behind}, and this is ${VERSION}. Bringing them up changes what watches the agent, so it is a person's step: \`${cli(line)}\``);
 }
 
 // an older copy on this machine: a bare `sawbuck` and the rule's `npx -y sawbuck check` run that one (copies.mjs)

@@ -325,6 +325,23 @@ test('status reads the version an npx hook names without running it: status reac
     assert.ok(!existsSync(join(bin, 'ran')), 'status ran npx');
   } finally { for (const x of [d, home, bin]) rmSync(x, { recursive: true, force: true }); }
 });
+test('status names attach --shared for old hooks in a team file, and doctor stops at the first hook line that fails', () => {
+  const { d } = tmpRepo();
+  const home = mkdtempSync(join(tmpdir(), 'sawbuck-uhome-'));
+  try {
+    sawbuck(['attach', '--shared', '.'], d, { HOME: home });
+    const f = join(d, '.claude', 'settings.json'); writeFileSync(f, readFileSync(f, 'utf8').replace(/sawbuck@\d+\.\d+\.\d+/g, 'sawbuck@0.0.1'));
+    const st = sawbuck(['status', '.'], d, { HOME: home });
+    assert.match(st, /start sawbuck 0\.0\.1/, st); assert.match(st, /attach --shared/, 'the team file\'s own line: ' + st);
+    // doctor: the first line fails, and the next is never run (0.2.7 stopped there; each can wait on the network)
+    const local = join(d, '.claude', 'settings.local.json'); const mark = join(home, 'second-ran'); const stub = join(home, 'stub', 'sawbuck.mjs');
+    mkdirSync(dirname(stub), { recursive: true }); writeFileSync(stub, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(mark)}, '1'); console.log('9.9.9');\n`);   // an ES module, as its name says
+    rmSync(f);   // the team file's npx lines would ask the network; this part is about the order
+    writeFileSync(local, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${join(home, 'gone', 'sawbuck.mjs')}" turn --hook` }, { type: 'command', command: `node "${stub}" turn --hook` }] }] } }));
+    spawnSync(process.execPath, [CLI, 'doctor', '.'], { cwd: d, encoding: 'utf8', env: { ...process.env, HOME: home } });
+    assert.ok(!existsSync(mark), 'doctor ran the hook line after one that failed');
+  } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+});
 test('status in a repository with no commit yet says so, not "could not read the ledger"', () => {
   const d = mkdtempSync(join(tmpdir(), 'sawbuck-cli-')); execFileSync('git', ['-C', d, 'init', '-q']);
   writeFileSync(join(d, 'a.js'), 'export const v = 1;\n');

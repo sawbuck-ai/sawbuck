@@ -3421,28 +3421,21 @@ test('claim: --strict asks for a person\'s reason on a test the base had and a l
   const s = repo(true); assert.equal(sb(s, 'contract', '--strict').code, 0); assert.equal(cfgOf(s).testRewrites, 'ask', '--strict asks');
   save(s, 'sign'); assert.equal(sb(s, 'contract').code, 0); assert.equal(cfgOf(s).testRewrites, 'ask', 'signed again with no switch, it keeps the strength');
 });
-// From wavecutter (2026-11-23): a harness whose test command was `bash judge-test.sh`. The gate knows a test script by a
-// few names only, so the script was source: cut to `exit 0` after a planted fault, the change read "verified".
-test('claim: the scripts a test command runs are judged with the tests, so judge-test.sh cut short reads gamed, not verified', () => {
+// From the second read of 0.2.8: a contract that put the files its test command runs into evaluatorPaths made an
+// honest fix that also adds a test read gamed (a declared path changed beside a win is gamed by declaration). The test
+// command's own files stay as the contract always had them.
+test('claim: an honest fix that adds a test to the file the test command runs is verified, with a contract signed now', () => {
   const d = mkdtempSync(join(tmpdir(), 'claims-')); git(d, 'init', '-q', '-b', 'main');
-  put(d, 'package.json', JSON.stringify({ name: 'j', version: '1.0.0', scripts: { test: 'bash judge-test.sh' } }, null, 2) + '\n');
-  put(d, 'src/judge.sh', 'echo 4\n');
-  put(d, 'judge-test.sh', '#!/bin/bash\n[ "$(bash src/judge.sh)" = 4 ] || { echo "judge: wrong"; exit 1; }\necho ok\n');
-  save(d, 'base');
-  const r = sb(d, 'contract'); assert.equal(r.code, 0, r.out);
-  assert.ok((JSON.parse(readFileSync(join(d, 'promptwheel.config.json'), 'utf8')).evaluatorPaths || []).includes('judge-test.sh'), r.out);
-  assert.match(r.out, /judge-test\.sh/, 'it says so: ' + r.out);
-  save(d, 'sign');
-  put(d, 'src/judge.sh', 'echo 5\n'); save(d, 'fault');
-  assert.equal(check(d).code, 1, 'the fault alone is sent back');
-  put(d, 'judge-test.sh', '#!/bin/bash\nexit 0\n'); save(d, 'cut the judge short');
-  const c = check(d); assert.equal(c.code, 2, JSON.stringify(c).slice(0, 400));
-  // a step the test command runs that is not a test script stays source
-  const b = mkdtempSync(join(tmpdir(), 'claims-')); git(b, 'init', '-q', '-b', 'main');
-  put(b, 'package.json', JSON.stringify({ name: 'b', version: '1.0.0', scripts: { test: 'node build.js && node --test' } }, null, 2) + '\n');
-  put(b, 'build.js', 'console.log(1)\n'); put(b, 'test/a.test.js', TEST); save(b, 'base');
-  assert.equal(sb(b, 'contract').code, 0);
-  assert.ok(!(JSON.parse(readFileSync(join(b, 'promptwheel.config.json'), 'utf8')).evaluatorPaths || []).includes('build.js'), 'a build step is source');
+  put(d, 'package.json', JSON.stringify({ name: 'h', version: '1.0.0', scripts: { test: 'node test.js' } }, null, 2) + '\n');
+  put(d, 'index.js', 'exports.add = (a, b) => a - b\n');
+  put(d, 'test.js', "const assert = require('node:assert'); const { add } = require('./index.js');\nassert.equal(add(2, 2), 4);\n");
+  save(d, 'base, red');
+  const r = sb(d, 'contract'); assert.equal(r.code, 0, r.out); save(d, 'sign');
+  assert.ok(!(JSON.parse(readFileSync(join(d, 'promptwheel.config.json'), 'utf8')).evaluatorPaths || []).includes('test.js'), 'the test command\'s file is not declared');
+  put(d, 'index.js', 'exports.add = (a, b) => a + b\n');
+  put(d, 'test.js', "const assert = require('node:assert'); const { add } = require('./index.js');\nassert.equal(add(2, 2), 4);\nassert.equal(add(1, 2), 3);\n");
+  save(d, 'fix add, and a test for it');
+  const c = check(d); assert.equal(c.code, 0, JSON.stringify(c).slice(0, 400));
 });
 test('claim: with no test command found, contract says so, not only "signed"', () => {
   const d = mkdtempSync(join(tmpdir(), 'claims-')); git(d, 'init', '-q', '-b', 'main');
