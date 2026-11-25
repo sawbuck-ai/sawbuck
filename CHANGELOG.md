@@ -2,6 +2,28 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
+## 0.2.9 (2026-11-25): the wall sends one change back once
+
+- **A protected change is sent back once, not three times a prompt.** In 0.2.8 a protected file changed in a session
+  was sent back three times on every prompt, in a new session too, for as long as the change stood, and a person's own
+  edit read as the agent's could not be ended by a reason. Now one change, a file and what was done to it, is sent back
+  once (`enforce.maxBlocks` in sawbuck.config.json sets how many times, counted across prompts, once in each session);
+  after that the end of each turn tells you while it stands. A further change to the file is sent back once more. Measured
+  first, in our own sessions: every agent sent back for its own protected edit undid it after the first send-back,
+  and no repeat ever changed what an agent did.
+- **Another edit to the file no longer takes a flagged change in.** Before, any other edit to a flagged file between
+  turns, or a commit that carried the change with more besides, made the new content the turn's start, the flagged
+  change with it. Now the start is the file with that change taken back out.
+- **The send-back says what to do in each case.** If the agent made the change, it undoes it, and the person makes
+  it themselves in their editor or another terminal between turns, never with a `!` line. If it did not, it undoes
+  nothing and tells the person that a reason does not end it; a revert does.
+- **`sawbuck check --allow` says when it kept nothing.** With nothing measured (no test command found) it said only
+  "inconclusive"; now it says the reason was not kept.
+- **The hold reads a command by its parts.** A command made only of reads that names `.sawbuck`, such as `cat` and
+  `ls` joined with `;` or `&&` with errors sent to /dev/null, was asked about; it is not now. And a read followed by a
+  second command on a new line was taken for a read and not asked (0.2.8 and earlier); it is asked now. Anything else
+  that names the record is asked, as before.
+
 ## 0.2.8 (2026-11-24): a failed pull-request check says why in its own log, a note on a test rewritten after the source changed, and the hooks say when they start an older sawbuck
 
 - **A failed pull-request check says why in its own log.** The job that fails prints what the comment says and
