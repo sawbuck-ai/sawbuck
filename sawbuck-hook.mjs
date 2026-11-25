@@ -11,7 +11,8 @@ import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-import { mandateHits, hashOf, hashFollowing, hashRaw, isLink, protectedAmong, lockState, sinceBegan } from './contract.mjs';
+import { mandateHits, hashOf, hashFollowing, hashRaw, isLink, protectedAmong, lockState, sinceBegan, blobAt } from './contract.mjs';
+import { sameChange } from './wall.mjs';
 import { dependencyEditsSince, dependencyNotice } from './deps.mjs';
 import { readGuard, writeGuard, clearGuard, OWN, ownOf } from './guard.mjs';
 import { beganWithoutRepo, forgetBegan } from './began.mjs';
@@ -299,6 +300,8 @@ const lastAgentText = () => {
 };
 // a question to the person about the test: a question mark near the end, and the test named
 const asksPerson = (text, file) => { const tail = String(text || '').slice(-800); return tail.includes('?') && (tail.includes(basename(file || '')) || /\btests?\b/i.test(tail)); };
+// the wall's own send-back (0.2.9): how often is decided by what it already told (see THE WALL AT TURN LEVEL)
+const wallSend = (reason) => { process.stdout.write(JSON.stringify({ decision: 'block', reason })); process.exit(0); };
 const sendBack = (idKey, countKey, reason, stillOpen) => {
   // enforce.maxBlocks in sawbuck.config.json: how many times a turn is sent back to the agent (default 3). 0 means
   // the person decides every time: nothing goes back to the agent, the person is told at once.
@@ -370,14 +373,14 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // cannot adopt any of it. Only the turn's own changes: a person's file the baseline spared stays
     // spared, or the next clean turn would be blocked over work that was never the agent's.
     const files = {};
-    for (const f of protectedAmong(repo, changed, began)) files[f] = hashOf(repo, f);   // by the rules the hits were judged by
+    for (const f of protectedAmong(repo, changed, began)) files[f] = hashOf(repo, f, { store: true });   // by the rules the hits were judged by; stored, so a later prompt can take the change back out (wall.mjs)
     // a flagged file the person had dirty before the prompt: keep the hash of THEIR content (the
     // baseline stored it in the object database), so the block can name the exact restore and the
     // next baseline can recognise the restored file as theirs
     const before = {};
     for (const f of Object.keys(files)) if (Object.prototype.hasOwnProperty.call(baseline, f) && baseline[f] && baseline[f] !== 'deleted') before[f] = baseline[f];
     st.lastViolation = { at: now, sha: (base && base.sha) || null, files, ...(Object.keys(before).length ? { before } : {}) };
-  } else if (st.lastViolation) { delete st.lastViolation; }
+  } else { if (st.lastViolation) delete st.lastViolation; if (st.wallTold) delete st.wallTold; }   // nothing protected is changed: the wall forgets what it told
   saveState();
   if (hits.length) {
     const desc = hits.map((h) => `"${h.name}"${h.reason ? ' (' + h.reason + ')' : ''}: ${h.files.join(', ')}${h.committed ? ' [this rule is in the committed contract; editing promptwheel.config.json in the working tree does not lift it]' : ''}`).join('; ');
@@ -395,6 +398,32 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     const upgrade = base ? '' : ' (No prompt baseline is recorded in this repo, so edits a person made before the prompt cannot be told apart from yours: ask them to run sawbuck attach again, which upgrades the hooks.)';
     // the same commit can hold a gamed test too. Say it now, so undoing the protected path is not taken for the end of it.
     const alsoGamed = mine ? ` This turn's commit also has a win on ${mine.file} that came from editing the test or config, not the source. Putting the protected path back does not end that: fix the source so the test passes as it was written, or show the person the test change and ask them.` : '';
+    // 0.2.9: ONE CHANGE IS SENT BACK ONCE (his answers of 2026-11-25; proof-bench/wall-029: the first send-back landed
+    // 14 of 14 times, and no repeat in the record ever changed what an agent did). A protected change, a file and what
+    // was done to it since the turn's start, is sent back enforce.maxBlocks times in all (default 1), across prompts and
+    // sessions. After that, while it stands, each end of a turn leaves the person a line and the agent goes on. The same
+    // change is known again by what it did (wall.mjs): the person's own edits around it, a commit of it, a reason, a new
+    // session or /clear do not make it new; a further change of the agent's to the file does. The record keeps the
+    // session it was sent back in.
+    const wallMax = (() => { const tbl = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null; const raw = (tbl && Object.prototype.hasOwnProperty.call(tbl, 'maxBlocks')) ? tbl.maxBlocks : (cfg.enforce ? cfg.enforce.maxBlocks : undefined); return (raw === undefined || raw === null || raw === '' || !Number.isFinite(+raw)) ? 1 : Math.max(0, Math.floor(+raw)); })();
+    const toldBefore = (st.wallTold && typeof st.wallTold === 'object' && !Array.isArray(st.wallTold)) ? st.wallTold : {};
+    const toldNow = {}; let fresh = false, elsewhere = false;
+    for (const f of Object.keys(st.lastViolation.files)) {
+      const cur = st.lastViolation.files[f];
+      const start = Object.prototype.hasOwnProperty.call(baseline, f) ? baseline[f] : ((base && base.sha) ? (blobAt(repo, base.sha, f) || 'deleted') : '');
+      const e = toldBefore[f]; const same = !!e && sameChange(repo, e, cur, start);
+      const n = same ? (Number(e.n) || 0) : 0;
+      toldNow[f] = { flagged: cur, before: start, n, session: (same && e.session) ? e.session : sessionOf, at: (same && e.at) ? e.at : now };
+      if (n < wallMax) fresh = true; else if (toldNow[f].session && toldNow[f].session !== sessionOf) elsewhere = true;
+    }
+    if (fresh) for (const f of Object.keys(toldNow)) if (toldNow[f].n < wallMax) toldNow[f].n += 1;
+    st.wallTold = toldNow;
+    if (!fresh) {
+      const still = `protected paths are still changed (${desc}).${mine ? ` The same commit also has a win on ${mine.file} that came from editing the test.` : ''}`;
+      saveState('ends');
+      process.stdout.write(JSON.stringify({ systemMessage: wallMax === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${still}` : `Sawbuck: ${still} The agent was sent back for this change${elsewhere ? ' in an earlier session' : ''} and is not sent back again for it. A reason does not end it; a revert does.` }));
+      process.exit(0);
+    }
     // one catch per prompt, however many times the turn is sent back. Kept beside rec.latest, never in it:
     // a block must not replace a gamed verdict that is still standing.
     if (st.mandateCountedPrompt !== promptId) {
@@ -405,7 +434,8 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
       writeRec(r);
       logActivity({ kind: 'mandate', file: hits[0].files[0], reason: `mandate ${hits[0].name} violated in the working tree`, by: by || 'hook' });
     }
-    sendBack('mandatePromptId', 'mandateBlocks', `Sawbuck: a protected path in the contract was touched, the turn is not done. Protected paths changed in this turn: ${desc}. Undo the changes YOU made under the protected paths and make the fix elsewhere; do not revert anything you did not change (the rule is a wall, not a reminder; the gate fails any change that touches them). If you made none of these changes (a person can make one while you work, in their editor, or with a line they type with !), undo nothing and stop: tell the person that a reason does not end this. It ends when they revert the change; once a turn has ended after that, a change they make in their editor before the next prompt is theirs.${spared}${restore}${person}${accept}${upgrade}${alsoGamed}`, `protected paths are still changed (${desc}).${mine ? ` The same commit also has a win on ${mine.file} that came from editing the test.` : ''}`);
+    saveState('back');
+    wallSend(`Sawbuck: a protected path in the contract was touched, the turn is not done. Protected paths changed in this turn: ${desc}. Undo the changes YOU made under the protected paths and make the fix elsewhere; do not revert anything you did not change (the rule is a wall, not a reminder; the gate fails any change that touches them). If you made none of these changes (a person can make one while you work, in their editor, or with a line they type with !), undo nothing and stop: tell the person that a reason does not end this. It ends when they revert the change; once a turn has ended after that, a change they make in their editor before the next prompt is theirs.${spared}${restore}${person}${accept}${upgrade}${alsoGamed}`, `protected paths are still changed (${desc}).${mine ? ` The same commit also has a win on ${mine.file} that came from editing the test.` : ''}`);
   }
 }
 

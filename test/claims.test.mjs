@@ -717,6 +717,59 @@ test('limit: two sessions in one checkout: the one that touched a protected file
 test('claim: a person editing a protected path between turns is not the agent', () => { const d = signed(true); const w = wired(d); w.prompt(); w.stop(); put(d, '.npmrc', 'x\n'); w.prompt(); assert.ok(!blocked(w.stop())); });
 test('claim: a sent-back protected path says how a person accepts it: --allow for the rules file and the hooks, removing the rule for the rest', () => { const d = repo(true); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); put(d, 'Dockerfile', 'FROM node:22\n'); save(d, 'docker'); let o = sb(d, 'check').out; assert.match(o, /sent back/); assert.match(o, /remove that rule from promptwheel\.config\.json in a commit of its own/); assert.doesNotMatch(o, /if a person meant this|check --allow "<reason>" accepts/); assert.equal(sb(d, 'check', '--allow', 'I asked for it').code, 1, 'and --allow really does not clear it'); git(d, 'reset', '-q', '--hard', 'HEAD~1'); put(d, '.claude/settings.json', '{}\n'); save(d, 'hooks'); o = sb(d, 'check').out; assert.match(o, lit(`${PIN} check --allow "<reason>"`)); assert.doesNotMatch(o, /remove that rule/); assert.equal(sb(d, 'check', '--allow', 'team hooks').code, 0); });
 test('claim: attach --shared in a repo that already has its rules says the commit of that file needs --allow; with no rules it does not', () => { const d = repo(true); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); assert.match(sb(d, 'attach', '--shared').out, /protected path in this repo[^\n]*--allow "team hooks"/); const e = repo(true); assert.doesNotMatch(sb(e, 'attach', '--shared').out, /protected path in this repo/); });
+// 0.2.9: THE WALL SENDS ONE CHANGE BACK ONCE (his answers of 2026-11-25 to the MCP Tools session's brief,
+// brief-sawbuck-0.2.8-loop-not-fixed.md; proof-bench/wall-029: the first send-back landed 14 of 14 times, and no
+// repeat in the record ever changed what an agent did). Its table is this list. The line words are his to approve; these
+// read only that it is a line for the person, not a send-back, and that it names the file.
+const wallThr = (v) => (s) => { const c = JSON.parse(s); c.gamingThreshold = v; return JSON.stringify(c, null, 2) + '\n'; };
+const wallKey = (k, v) => (s) => { const c = JSON.parse(s); if (v === undefined) delete c[k]; else c[k] = v; return JSON.stringify(c, null, 2) + '\n'; };
+const wallLine = (out) => !blocked(out) && /systemMessage/.test(out) && /promptwheel\.config\.json/.test(out);
+const wallQuiet = (out) => !blocked(out) && !/promptwheel\.config\.json/.test(out);
+const wallSent = (d, w) => { w.prompt('look'); assert.ok(wallQuiet(w.stop()), 'a clean turn'); w.prompt('look again'); edit(d, 'promptwheel.config.json', wallThr(0.9)); assert.ok(blocked(w.stop()), 'sent back once'); };
+test('claim: a protected change is sent back once, then each end of a turn leaves the person a line while it stands: the same turn, the next prompt, a new session', () => {
+  const d = signed(true); const w = wired(d, 's1'); wallSent(d, w);
+  for (let i = 2; i <= 5; i++) { const o = w.stop(); assert.ok(wallLine(o), `the same turn, stop ${i}: a line, not a send-back: ${o.slice(0, 160)}`); }
+  w.prompt('next'); assert.ok(wallLine(w.stop()), 'the next prompt, nothing edited');
+  const v = wired(d, 's2'); v.prompt('a new session'); assert.ok(wallLine(v.stop()), 'a new session, nothing edited');
+});
+test('claim: after a reason the change is still a line, never a send-back; a revert ends it; the same change made again before the next prompt is the person\'s', () => {
+  const d = signed(true); const w = wired(d); wallSent(d, w);
+  sb(d, 'check', '--allow', 'contract-frozen: my own change to the threshold');
+  assert.ok(wallLine(w.stop()), 'after a reason: a line'); w.prompt('next'); assert.ok(wallLine(w.stop()), 'and at the next prompt');
+  git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); w.prompt('reverted'); assert.ok(wallQuiet(w.stop()), 'a revert ends it, the line too');
+  edit(d, 'promptwheel.config.json', wallThr(0.9)); w.prompt('mine now'); assert.ok(wallQuiet(w.stop()), 'the same change made before a prompt is the person\'s');
+  w.prompt('and on'); assert.ok(wallQuiet(w.stop()), 'and stays theirs');
+});
+test('claim: another edit to the file between turns does not take a flagged change in; taking out only that change ends it, and the other edit stays the person\'s', () => {
+  const d = signed(true); const w = wired(d); wallSent(d, w);
+  edit(d, 'promptwheel.config.json', wallKey('repeat', 2));   // the person's own edit to another line, between turns
+  w.prompt('next'); assert.ok(wallLine(w.stop()), 'the flagged change still stands: a line');
+  const st = JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8')); const at = st.turnBaseline && st.turnBaseline.files && st.turnBaseline.files['promptwheel.config.json'];
+  assert.ok(at && at !== 'deleted', 'the start holds the file as the person left it, less the flagged change');
+  const held = JSON.parse(git(d, 'cat-file', '-p', at)); assert.equal(held.repeat, 2, 'the person\'s edit is in the start'); assert.equal(held.gamingThreshold, undefined, 'the flagged change is not');
+  edit(d, 'promptwheel.config.json', wallKey('gamingThreshold', undefined)); w.prompt('the threshold is gone'); assert.ok(wallQuiet(w.stop()), 'taking out only the flagged change ends it');
+  w.prompt('and on'); assert.ok(wallQuiet(w.stop()), 'the person\'s repeat stays theirs');
+});
+test('claim: the agent\'s further change to the file after its one send-back is sent back once more', () => {
+  const d = signed(true); const w = wired(d); wallSent(d, w);
+  assert.ok(wallLine(w.stop()), 'the same change again: a line');
+  edit(d, 'promptwheel.config.json', wallKey('allowTrailer', true)); assert.ok(blocked(w.stop()), 'a further change in the same turn: sent back');
+  assert.ok(wallLine(w.stop()), 'then a line');
+  w.prompt('next'); assert.ok(wallLine(w.stop()), 'and at the next prompt');
+});
+test('claim: a commit by the person that carries the flagged change and another edit does not take the change in', () => {
+  const d = signed(true); const w = wired(d); wallSent(d, w);
+  edit(d, 'promptwheel.config.json', wallKey('repeat', 2)); save(d, 'the threshold, and my own repeat');   // between turns
+  w.prompt('next'); assert.ok(wallLine(w.stop()), 'the flagged change rides in the commit: a line, and it stays flagged');
+});
+test('claim: sawbuck.config.json sets how many times one change is sent back (enforce.maxBlocks), counted across prompts; 0 tells the person at once', () => {
+  const d = signed(true); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 2 } }) + '\n'); save(d, 'two send-backs a change');
+  const w = wired(d); w.prompt('look'); w.stop(); w.prompt('look again'); edit(d, 'promptwheel.config.json', wallThr(0.9));
+  assert.ok(blocked(w.stop()), 'the first'); w.prompt('next'); assert.ok(blocked(w.stop()), 'the second, at the next prompt');
+  w.prompt('and next'); assert.ok(wallLine(w.stop()), 'then a line, at the prompt after');
+  const z = signed(true); put(z, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); save(z, 'ask me first');
+  const y = wired(z); y.prompt('look'); y.stop(); y.prompt('look again'); edit(z, 'promptwheel.config.json', wallThr(0.9)); assert.ok(wallLine(y.stop()), '0: a line at once');
+});
 test('claim: it sends a turn back up to three times by default, then lets it end', () => { const d = signed(true); const w = wired(d); w.prompt(); put(d, '.npmrc', 'x\n'); const seen = []; for (let i = 0; i < 4; i++) seen.push(blocked(w.stop())); assert.deepEqual(seen, [true, true, true, false]); });
 
 test('claim: a blocked protected path counts as one catch, however many send-backs', () => { const d = signed(true); const w = wired(d); w.prompt(); put(d, '.npmrc', 'x\n'); w.stop(); w.stop(); w.stop(); assert.match(sb(d, 'statusline').out, /1 caught/); assert.match(sb(d, 'status').out, /1 protected path/); assert.equal(readFileSync(join(d, '.sawbuck/activity.jsonl'), 'utf8').trim().split('\n').filter((l) => l.includes('"mandate"')).length, 1); });

@@ -34,6 +34,7 @@ import { homedir } from 'node:os';
 import { ownGitOn, personEnv } from './own-git.mjs';
 import { PW } from './bins.mjs';
 import { frameBlock, mandatesInForce, protectedDirty, protectedAmong, blobAt, lockState, gitNames, gitRefuses } from './contract.mjs';
+import { withoutChange } from './wall.mjs';
 import { cli, onPath, olderOnPath, newerOnPath, olderSaid } from './copies.mjs';
 import { hookVersion, hookVersionNamed, ourCommands, oldestOlder } from './hook-version.mjs';
 ownGitOn();   // Sawbuck's own git calls, and those of the processes it starts: no hook, no fsmonitor, no replace object (own-git.mjs)
@@ -523,14 +524,38 @@ switch (cmd) {
             // be restored by hash; a file still carrying the flagged content is baselined at the content
             // the person had before the agent touched it, or not at all
             const files = protectedDirty(repo, { store: true });
-            for (const f of Object.keys(files)) if (flagged[f] === files[f]) { if (before[f] && before[f] !== 'deleted') files[f] = before[f]; else delete files[f]; }
+            // what a flagged file held before the flagged change: the wall's told record keeps it, else the person's
+            // content at that start, else the file at the pinned commit
+            const toldNow = (st.wallTold && typeof st.wallTold === 'object' && !Array.isArray(st.wallTold)) ? st.wallTold : {};
+            const wasOf = (f) => (toldNow[f] && toldNow[f].before) || before[f] || ((st.lastViolation && st.lastViolation.sha) ? blobAt(repo, st.lastViolation.sha, f) : '') || 'deleted';
+            for (const f of Object.keys(files)) {
+              if (!Object.prototype.hasOwnProperty.call(flagged, f)) continue;
+              if (flagged[f] === files[f]) { if (before[f] && before[f] !== 'deleted') files[f] = before[f]; else delete files[f]; continue; }
+              // 0.2.9: the flagged CHANGE, not the whole file. The file changed again since (the person's edit between
+              // turns): the start is what it holds now with that change taken back out, so the change is never taken
+              // in and the person's edit is theirs. Where the two cannot be told apart, nothing of it is taken in.
+              if (flagged[f] === 'deleted') continue;
+              const out = withoutChange(repo, files[f], flagged[f], wasOf(f));
+              if (out === '') continue;
+              if (out === null) { if (before[f] && before[f] !== 'deleted') files[f] = before[f]; else delete files[f]; continue; }
+              files[f] = out;
+            }
             let sha = ''; try { sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
             // HEAD moved since the last Stop: the agent was not running, so the commits between turns
             // are the person's (accepting a change, a pull, a branch switch) and the baseline starts
             // there, UNLESS HEAD still carries a flagged file's content: then the pin holds (a commit
             // a background process landed after the Stop does not walk the agent's change through).
             const moved = !!(sha && st.lastStopHead && sha !== st.lastStopHead);
-            const stillInHead = moved && Object.entries(flagged).some(([f, h]) => { const b = blobAt(repo, sha, f); return h === 'deleted' ? b === '' : (!!h && b === h); });
+            // HEAD carries a flagged change: the flagged content itself, or (0.2.9) that change with more besides
+            const stillInHead = moved && Object.entries(flagged).some(([f, h]) => { const b = blobAt(repo, sha, f); if (h === 'deleted') return b === ''; if (!h || !b) return false; return b === h || withoutChange(repo, b, h, wasOf(f)) !== ''; });
+            // a flagged file the person committed with the change and more besides, clean now: its start is what HEAD
+            // holds with the change taken out, as above
+            if (sha) for (const f of Object.keys(flagged)) {
+              if (Object.prototype.hasOwnProperty.call(files, f) || flagged[f] === 'deleted') continue;
+              const b = blobAt(repo, sha, f); if (!b || b === flagged[f]) continue;
+              const out = withoutChange(repo, b, flagged[f], wasOf(f));
+              if (out) files[f] = out;
+            }
             const pin = !!(st.lastViolation && st.lastViolation.sha);
             if (moved && !stillInHead && st.lastViolation) delete st.lastViolation.sha;
             st.turnBaseline = { at: now, sha: ((!moved || stillInHead) && pin && st.lastViolation.sha) || sha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: maxBlocksIn(repo), remindTurns: remindTurnsIn(repo) };
