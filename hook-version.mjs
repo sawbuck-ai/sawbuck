@@ -5,6 +5,7 @@
 // each command, so the statusline never calls it.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { OURS } from './repo-state.mjs';
 import { older } from './copies.mjs';
 
@@ -16,6 +17,15 @@ export function hookVersion(command) {
     const out = execFileSync('sh', ['-c', probe], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60000 }).trim();
     const m = /^(\d+\.\d+\.\d+)/.exec(out); return m ? m[1] : '';
   } catch { return ''; }
+}
+// The version a hook command names, read without running it: an npx line pins it (`sawbuck@0.2.7`), a baked path has
+// its package.json beside it. '' when neither says. status and attach use this one: running a hook to ask can reach
+// the network (an npx line) and wait, and status must not. doctor runs the hook (hookVersion), as it always has.
+export function hookVersionNamed(command) {
+  const c = String(command);
+  const pin = /sawbuck@(\d+\.\d+\.\d+)\b/.exec(c); if (pin) return pin[1];
+  const baked = /"([^"]*sawbuck\.mjs)"/.exec(c); if (!baked) return '';
+  try { const pk = JSON.parse(readFileSync(join(dirname(baked[1]), 'package.json'), 'utf8')); return pk && pk.name === 'sawbuck' && /^\d+\.\d+\.\d+/.test(String(pk.version)) ? String(pk.version) : ''; } catch { return ''; }
 }
 // our hook commands in a Claude Code settings file, each once
 export function ourCommands(file) {

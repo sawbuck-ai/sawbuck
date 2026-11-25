@@ -21,7 +21,7 @@ import { readAllowed } from './allowed.mjs';
 import { gitRefuses } from './contract.mjs';
 import { localDay } from './day.mjs';
 import { cli, olderSaid, VERSION } from './copies.mjs';
-import { hookVersion, ourCommands, oldestOlder } from './hook-version.mjs';
+import { hookVersionNamed, ourCommands, oldestOlder } from './hook-version.mjs';
 import { homedir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -202,7 +202,7 @@ if (refuses) {
 // hooks that start an older copy than this one (hook-version.mjs; wavecutter's started 0.2.2 for two days while 0.2.7 was installed)
 if (state === 'watching' && (wired === 'user' || wired === 'project')) {
   const files = wired === 'user' ? [join(homedir(), '.claude', 'settings.json')] : [join(repo, '.claude', 'settings.local.json'), join(repo, '.claude', 'settings.json')];
-  const behind = oldestOlder([...new Set(files.flatMap(ourCommands))].map(hookVersion), VERSION);
+  const behind = oldestOlder([...new Set(files.flatMap(ourCommands))].map(hookVersionNamed), VERSION);   // read, never run: status reaches no network
   if (behind) out.push(`   The hooks here start sawbuck ${behind}, and this is ${VERSION}. Bringing them up changes what watches the agent, so it is a person's step: \`${cli(wired === 'user' ? 'attach --user' : 'attach')}\``);
 }
 

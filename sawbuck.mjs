@@ -35,7 +35,7 @@ import { ownGitOn, personEnv } from './own-git.mjs';
 import { PW } from './bins.mjs';
 import { frameBlock, mandatesInForce, protectedDirty, protectedAmong, blobAt, lockState, gitNames, gitRefuses } from './contract.mjs';
 import { cli, onPath, olderOnPath, newerOnPath, olderSaid } from './copies.mjs';
-import { hookVersion, ourCommands, oldestOlder } from './hook-version.mjs';
+import { hookVersion, hookVersionNamed, ourCommands, oldestOlder } from './hook-version.mjs';
 ownGitOn();   // Sawbuck's own git calls, and those of the processes it starts: no hook, no fsmonitor, no replace object (own-git.mjs)
 
 const SELF = fileURLToPath(import.meta.url);
@@ -1034,7 +1034,7 @@ function wireClaude(repo, opts) {
   if (!user && !shared) {
     const uf = claudeFile(repo, { user: true }).f;
     try { if (OURS.test(readFileSync(uf, 'utf8'))) { out(`sawbuck: already watching here through your user-level hooks (${uf}); nothing to add${existsSync(join(repo, 'promptwheel.config.json')) ? '' : '. The check runs here once this repo has its rules: sawbuck contract'}`);
-      const behind = oldestOlder(ourCommands(uf).map(hookVersion), version);
+      const behind = oldestOlder(ourCommands(uf).map(hookVersionNamed), version);   // read, never run: no network here
       if (behind) out(`  Those hooks start sawbuck ${behind}, and this is ${version}. Bringing them up changes what watches the agent, so it is a person's step: ${cli('attach --user')}`);
       return; } } catch {}
   }
