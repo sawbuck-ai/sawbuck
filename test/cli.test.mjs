@@ -351,6 +351,22 @@ test('status in a repository with no commit yet says so, not "could not read the
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test('attach writes the hook on every tool in each mode, and doctor counts a set without it as incomplete', () => {
+  const { d } = tmpRepo();
+  const home = mkdtempSync(join(tmpdir(), 'sawbuck-uhome-'));
+  try {
+    for (const [args, f] of [[['attach', '--claude', '.'], join(d, '.claude', 'settings.local.json')], [['attach', '--shared', '.'], join(d, '.claude', 'settings.json')], [['attach', '--user', '.'], join(home, '.claude', 'settings.json')]]) {
+      sawbuck(args, d, { HOME: home });
+      const e = (JSON.parse(readFileSync(f, 'utf8')).hooks.PreToolUse || []).find((x) => x.matcher === '*');
+      assert.ok(e, `${args[1]}: a PreToolUse hook on every tool`); assert.match(e.hooks[0].command, /^\[ -e "[^"]*\.sawbuck\/acting" \] \|\| .*turn --acting --hook/, e.hooks[0].command);
+    }
+    const f = join(d, '.claude', 'settings.local.json'); const cfg = JSON.parse(readFileSync(f, 'utf8'));
+    cfg.hooks.PreToolUse = cfg.hooks.PreToolUse.filter((x) => x.matcher !== '*'); writeFileSync(f, JSON.stringify(cfg, null, 2));
+    const doc = spawnSync(process.execPath, [CLI, 'doctor', '.'], { cwd: d, encoding: 'utf8', env: { ...process.env, HOME: home } });
+    assert.match(doc.stdout, /PART\s+claude .*PreToolUse\[\*\] with turn --acting/, doc.stdout);
+  } finally { rmSync(d, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+});
+
 test('attach --claude writes gitignored settings.local.json and keeps git status clean', () => {
   const { d } = tmpRepo();
   const f = join(d, '.claude', 'settings.local.json');

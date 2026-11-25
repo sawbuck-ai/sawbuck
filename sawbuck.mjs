@@ -27,7 +27,7 @@ import { offerRepo } from './offer.mjs';
 import { shapeCli } from './shape.mjs';
 import { ensureExcluded, clearExcluded, EXCLUDED, RECORD_DIRS } from './exclude.mjs';
 import { repoState, hooksIn, OURS, S_START, WORDS, wordsIn } from './repo-state.mjs';
-import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, rmdirSync, rmSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, rmdirSync, rmSync, readdirSync, statSync, openSync, closeSync, unlinkSync, renameSync } from 'node:fs';
 import { basename, join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -484,6 +484,65 @@ switch (cmd) {
     // subdirectory belongs to its repo), the pinned path under project wiring; '' outside a repo
     const top = gitTop(repoArg());
     const repo = top || repoArg();
+    // A NEW STARTING POINT FOR A TURN, under the rules the comment below gives (the flagged content never adopted, the
+    // commit never moved past a flagged one while HEAD still carries it). Taken when a prompt begins, and since 0.2.8 at
+    // the first tool call of a turn no prompt began. Mutates `st` and writes the second copy in the git folder.
+    const newTurnBaseline = (repo, st, now) => {
+      const flagged = (st.lastViolation && st.lastViolation.files && typeof st.lastViolation.files === 'object') ? st.lastViolation.files : {};
+      const before = (st.lastViolation && st.lastViolation.before && typeof st.lastViolation.before === 'object') ? st.lastViolation.before : {};
+      // the content is stored (hash-object -w), so a person's edit the agent later overwrites can
+      // be restored by hash; a file still carrying the flagged content is baselined at the content
+      // the person had before the agent touched it, or not at all
+      const files = protectedDirty(repo, { store: true });
+      for (const f of Object.keys(files)) if (flagged[f] === files[f]) { if (before[f] && before[f] !== 'deleted') files[f] = before[f]; else delete files[f]; }
+      let sha = ''; try { sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+      // HEAD moved since the last Stop: the agent was not running, so the commits between turns
+      // are the person's (accepting a change, a pull, a branch switch) and the baseline starts
+      // there, UNLESS HEAD still carries a flagged file's content: then the pin holds (a commit
+      // a background process landed after the Stop does not walk the agent's change through).
+      const moved = !!(sha && st.lastStopHead && sha !== st.lastStopHead);
+      const stillInHead = moved && Object.entries(flagged).some(([f, h]) => { const b = blobAt(repo, sha, f); return h === 'deleted' ? b === '' : (!!h && b === h); });
+      const pin = !!(st.lastViolation && st.lastViolation.sha);
+      if (moved && !stillInHead && st.lastViolation) delete st.lastViolation.sha;
+      st.turnBaseline = { at: now, sha: ((!moved || stillInHead) && pin && st.lastViolation.sha) || sha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: maxBlocksIn(repo), remindTurns: remindTurnsIn(repo) };
+      // a new turn: a catch the last turn was still being sent back for is an open item like any other from here
+      // on (0.2.0: no turn is sent back for what an earlier turn did). An interrupted turn the person typed over is one.
+      { const g0 = readGuard(repo); const was = Array.isArray(g0.open) ? g0.open : []; const patch = { baseline: st.turnBaseline }; if (was.some((o) => o && o.live)) patch.open = was.map((o) => { const c = { ...o }; delete c.live; return c; }); writeGuard(repo, patch); }   // the baseline's second copy in the git folder: the record folder is out of git status, so its loss during a turn must not lose the turn's starting point (guard.mjs)
+    };
+    if (flags.has('--acting')) {
+      // THE FIRST TOOL CALL OF A TURN (0.2.8, lead L41, proof-bench/bang-line). A line a person types with `!` fires no
+      // prompt hook, and the model then takes a turn by itself: that turn had no start of its own, and the person's
+      // change (a contract they put in place, a commit) read as the agent's at its end, sent back again and again
+      // (wavecutter, 2026-11-24). Nothing the agent does can change a file before its first tool call, so a turn whose
+      // last one ended is started here too, as a prompt would start it, once: `.sawbuck/acting` says this turn has its
+      // start, and the hook line's own shell test reads it, so later calls cost a millisecond. A clean end of a turn
+      // clears it; a send-back keeps it, since the turn goes on. Several first calls at once (one message, parallel
+      // tools): one takes the lock and the start, the others wait for the mark, so no tool runs before the start is
+      // written. A lock older than ten seconds is a crash's, and is taken over.
+      if (!top) break;
+      const sd = join(repo, '.sawbuck'), acting = join(sd, 'acting'), lock = acting + '.lock';
+      if (existsSync(acting) || !existsSync(join(sd, 'state.json'))) break;   // started already, or a repo with no record of ours
+      let won = false;
+      for (let i = 0; i < 2 && !won; i++) {
+        try { closeSync(openSync(lock, 'wx')); won = true; }
+        catch { try { if (Date.now() - statSync(lock).mtimeMs > 10000) { unlinkSync(lock); continue; } } catch { continue; } break; }
+      }
+      if (!won) { const t0 = Date.now(); while (!existsSync(acting) && Date.now() - t0 < 3000) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25); break; }
+      try {
+        const stPath = join(sd, 'state.json'); let st = {}; try { st = JSON.parse(readFileSync(stPath, 'utf8')); } catch {}
+        const now = new Date().toISOString();
+        const prev = st.turnBaseline && typeof st.turnBaseline === 'object' ? st.turnBaseline : null;
+        const stoppedSince = st.lastStopAt && st.lastPromptAt && Date.parse(st.lastStopAt) >= Date.parse(st.lastPromptAt);
+        if (!(!!prev && !!st.lastPromptAt && !stoppedSince && prev.by !== 'attach')) {   // the prompt hook's own test: the last turn reached its end
+          newTurnBaseline(repo, st, now);
+          { const g = readGuard(repo); writeGuard(repo, { own: { ...((g.own && typeof g.own === 'object' && !Array.isArray(g.own)) ? g.own : ownOf(st)), turnOpen: true } }); }
+          st.lastPromptAt = now;   // the start of a turn: a prompt's time, or this first tool call's when no prompt began the turn
+          writeFileSync(stPath, JSON.stringify(st, null, 2) + '\n');
+        }
+        writeFileSync(acting + '.tmp', now + '\n'); renameSync(acting + '.tmp', acting);
+      } catch { /* a tool call is never stopped by this */ } finally { try { unlinkSync(lock); } catch {} }
+      break;
+    }
     // When a PROMPT begins (the UserPromptSubmit hook, never the SessionStart[compact] one, which
     // fires mid-turn), remember which protected paths were already dirty and what they held, so the
     // Stop hook's wall counts only what this turn changes and leaves a person's own edits alone.
@@ -517,26 +576,7 @@ switch (cmd) {
           const notice = /^\s*<task-notification>/.test(promptText);
           const unfinished = (!!prev && !!st.lastPromptAt && !stoppedSince && prev.by !== 'attach') || (notice && !!prev);
           if (!unfinished) {
-            const flagged = (st.lastViolation && st.lastViolation.files && typeof st.lastViolation.files === 'object') ? st.lastViolation.files : {};
-            const before = (st.lastViolation && st.lastViolation.before && typeof st.lastViolation.before === 'object') ? st.lastViolation.before : {};
-            // the content is stored (hash-object -w), so a person's edit the agent later overwrites can
-            // be restored by hash; a file still carrying the flagged content is baselined at the content
-            // the person had before the agent touched it, or not at all
-            const files = protectedDirty(repo, { store: true });
-            for (const f of Object.keys(files)) if (flagged[f] === files[f]) { if (before[f] && before[f] !== 'deleted') files[f] = before[f]; else delete files[f]; }
-            let sha = ''; try { sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
-            // HEAD moved since the last Stop: the agent was not running, so the commits between turns
-            // are the person's (accepting a change, a pull, a branch switch) and the baseline starts
-            // there, UNLESS HEAD still carries a flagged file's content: then the pin holds (a commit
-            // a background process landed after the Stop does not walk the agent's change through).
-            const moved = !!(sha && st.lastStopHead && sha !== st.lastStopHead);
-            const stillInHead = moved && Object.entries(flagged).some(([f, h]) => { const b = blobAt(repo, sha, f); return h === 'deleted' ? b === '' : (!!h && b === h); });
-            const pin = !!(st.lastViolation && st.lastViolation.sha);
-            if (moved && !stillInHead && st.lastViolation) delete st.lastViolation.sha;
-            st.turnBaseline = { at: now, sha: ((!moved || stillInHead) && pin && st.lastViolation.sha) || sha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: maxBlocksIn(repo), remindTurns: remindTurnsIn(repo) };
-            // a new turn: a catch the last turn was still being sent back for is an open item like any other from here
-            // on (0.2.0: no turn is sent back for what an earlier turn did). An interrupted turn the person typed over is one.
-            { const g0 = readGuard(repo); const was = Array.isArray(g0.open) ? g0.open : []; const patch = { baseline: st.turnBaseline }; if (was.some((o) => o && o.live)) patch.open = was.map((o) => { const c = { ...o }; delete c.live; return c; }); writeGuard(repo, patch); }   // the baseline's second copy in the git folder: the record folder is out of git status, so its loss during a turn must not lose the turn's starting point (guard.mjs)
+            newTurnBaseline(repo, st, now);   // the three rules: see newTurnBaseline
           }
         }
         // a turn is open from here to an end of turn that lets it end. What that hook counts (the last commit it looked
@@ -1066,12 +1106,15 @@ function wireClaude(repo, opts) {
   const chk = run((here ? '__hook --by claude --stop' : `__hook --repo ${JSON.stringify(repo)} --by claude --stop`) + q);
   const hold = run(here ? 'hold --hook' : `hold --hook ${JSON.stringify(repo)}`);
   const undo = run((here ? 'undo --hook' : `undo --hook ${JSON.stringify(repo)}`) + q);
+  // the first tool call of a turn takes its start (0.2.8, the `!` line): a shell test first, so a turn already started
+  // costs a millisecond a call. A team file and user-level hooks name no path: the project folder Claude Code gives.
+  const acting = `[ -e ${here ? '"$CLAUDE_PROJECT_DIR/.sawbuck/acting"' : JSON.stringify(join(repo, '.sawbuck', 'acting'))} ] || ${run(here ? 'turn --acting --hook' : `turn --acting --hook ${JSON.stringify(repo)}`)}`;
   // attached already? "already attached" only when every hook of THIS version is present; an older
   // attachment (say, without the SessionStart[compact] hook) is upgraded in place, never left stale.
   let upgrading = false;
   if (OURS.test(JSON.stringify(cfg))) {
     const has = (event, command, matcher) => ((cfg.hooks || {})[event] || []).some((h) => h && (matcher ? h.matcher === matcher : !h.matcher) && Array.isArray(h.hooks) && h.hooks.some((x) => x && x.command === command));
-    if (has('UserPromptSubmit', ctx) && has('SessionStart', ctx, 'compact') && has('Stop', chk) && has('PreToolUse', hold, 'Bash') && has('PreToolUse', undo, EDIT_MATCHER) && has('PostToolUse', undo, EDIT_MATCHER) && (!shared || WARM_AT.every((s) => has('SessionStart', warm, s)))) { if (!dry) regAdd(repo, user ? 'user' : shared ? 'claude-shared' : 'claude'); out(`sawbuck: already attached (${user ? 'user' : shared ? 'shared' : 'claude'}) in ${f}`); return; }   // the entry is refreshed: the list drops gone folders and gets back one it lost
+    if (has('UserPromptSubmit', ctx) && has('SessionStart', ctx, 'compact') && has('Stop', chk) && has('PreToolUse', hold, 'Bash') && has('PreToolUse', undo, EDIT_MATCHER) && has('PostToolUse', undo, EDIT_MATCHER) && has('PreToolUse', acting, '*') && (!shared || WARM_AT.every((s) => has('SessionStart', warm, s)))) { if (!dry) regAdd(repo, user ? 'user' : shared ? 'claude-shared' : 'claude'); out(`sawbuck: already attached (${user ? 'user' : shared ? 'shared' : 'claude'}) in ${f}`); return; }   // the entry is refreshed: the list drops gone folders and gets back one it lost
     upgrading = true;
   }
   const mode = user ? 'user' : shared ? 'claude-shared' : 'claude';
@@ -1084,7 +1127,7 @@ function wireClaude(repo, opts) {
   const baseline = !user && existsSync(join(repo, 'promptwheel.config.json')) && !st.turnBaseline;
   if (dry) {
     out(dryText([
-      `${upgrading ? 'update' : fileExisted ? 'modify' : 'create'}  ${f}  (UserPromptSubmit + SessionStart[compact] + Stop + PreToolUse[Bash] + PreToolUse/PostToolUse[edit tools] hooks: the per-turn block, the check, the hold on outward commands, and the undo ledger${shared ? '; and SessionStart[startup, resume]: one line that asks npm for this version where a session starts' : ''})`,
+      `${upgrading ? 'update' : fileExisted ? 'modify' : 'create'}  ${f}  (UserPromptSubmit + SessionStart[compact] + Stop + PreToolUse[Bash] + PreToolUse/PostToolUse[edit tools] + PreToolUse[every tool] hooks: the per-turn block, the check, the hold on outward commands, and the undo ledger${shared ? '; and SessionStart[startup, resume]: one line that asks npm for this version where a session starts' : ''})`,
       !user && ensureExcluded(repo, true) ? `exclude ${excludeFile(repo)}  (${EXCLUDED.join(', ')})` : null,
       `${existsSync(mp) ? 'modify' : 'create'}  ${mp}  (attach receipt)`,
       baseline ? `write   ${stPath}  (the turn baseline, so this turn's own signing is not read as the agent's)` : null,
@@ -1111,6 +1154,8 @@ function wireClaude(repo, opts) {
   // the undo ledger: a file snapshotted before an edit, an undo at the person's request recorded after one
   put('PreToolUse', undo, EDIT_MATCHER);
   put('PostToolUse', undo, EDIT_MATCHER);
+  // the start of a turn no prompt began (a line a person typed with `!`): at its first tool call, of any tool
+  put('PreToolUse', acting, '*');
   mkdirSync(dir, { recursive: true });
   writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
   if (baseline) {
@@ -1367,7 +1412,7 @@ function doctorRepo(repo) {
     if (!cmds.length) continue;
     // the set attach writes, each under its own event: the rule on a prompt and after a compaction, the check on Stop
     const at = (event, re, matcher) => ours(((cfg.hooks || {})[event] || []).filter((h) => !matcher || (h && h.matcher === matcher))).some((c) => re.test(c));
-    const missing = [at('UserPromptSubmit', /\bturn --hook\b/) ? '' : 'UserPromptSubmit', at('SessionStart', /\bturn --hook\b/, 'compact') ? '' : 'SessionStart[compact]', at('Stop', /__hook\b.*--stop\b/) ? '' : 'Stop with --stop', at('PreToolUse', /\bhold --hook\b/, 'Bash') ? '' : 'PreToolUse[Bash] with hold', at('PreToolUse', /\bundo --hook\b/, EDIT_MATCHER) ? '' : 'PreToolUse[edit tools] with undo', at('PostToolUse', /\bundo --hook\b/, EDIT_MATCHER) ? '' : 'PostToolUse[edit tools] with undo',
+    const missing = [at('UserPromptSubmit', /\bturn --hook\b/) ? '' : 'UserPromptSubmit', at('SessionStart', /\bturn --hook\b/, 'compact') ? '' : 'SessionStart[compact]', at('Stop', /__hook\b.*--stop\b/) ? '' : 'Stop with --stop', at('PreToolUse', /\bhold --hook\b/, 'Bash') ? '' : 'PreToolUse[Bash] with hold', at('PreToolUse', /\bundo --hook\b/, EDIT_MATCHER) ? '' : 'PreToolUse[edit tools] with undo', at('PostToolUse', /\bundo --hook\b/, EDIT_MATCHER) ? '' : 'PostToolUse[edit tools] with undo', at('PreToolUse', /\bturn --acting\b/, '*') ? '' : 'PreToolUse[*] with turn --acting',
       // a team file also asks npm for its version where a session starts (the other two files pin what is already here)
       ...(mode === 'claude-shared' ? ['startup', 'resume'].map((s) => (at('SessionStart', /\b__warm\b/, s) ? '' : `SessionStart[${s}]`)) : [])].filter(Boolean);
     // what each command starts, asked once: it runs, and it is not older than this copy (hook-version.mjs)

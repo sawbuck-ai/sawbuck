@@ -64,10 +64,61 @@ function wired(d, session = 's') {
   const editHook = (ev, file) => spawnSync('sh', ['-c', byMatcher(ev, 'Edit|Write|MultiEdit|NotebookEdit')], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: ev, tool_name: 'Edit', tool_input: { file_path: join(d, file), old_string: 'a', new_string: 'b' }, cwd: d, session_id: session }) }).stdout || '';
   const agentEdit = (file, fn) => { editHook('PreToolUse', file); edit(d, file, fn); editHook('PostToolUse', file); };
   const pre = (cmd) => spawnSync('sh', ['-c', byMatcher('PreToolUse', 'Bash')], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: cmd }, cwd: d, session_id: session }) }).stdout || '';
-  return { prompt: (text) => run(h.UserPromptSubmit[0].hooks[0].command, 'UserPromptSubmit', text), stop: () => run(h.Stop[0].hooks[0].command, 'Stop'), compact: () => run(h.SessionStart[0].hooks[0].command, 'SessionStart'), pre, agentEdit };
+  // the hook on every tool (0.2.8): a tool call of the agent's, as Claude Code runs it before the tool. Absent before 0.2.8.
+  const acting = (tool = 'Bash') => { const e = (h.PreToolUse || []).find((x) => String(x.matcher || '') === '*'); return e ? spawnSync('sh', ['-c', e.hooks[0].command], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {}, cwd: d, session_id: session }) }) : null; };
+  return { prompt: (text) => run(h.UserPromptSubmit[0].hooks[0].command, 'UserPromptSubmit', text), stop: () => run(h.Stop[0].hooks[0].command, 'Stop'), compact: () => run(h.SessionStart[0].hooks[0].command, 'SessionStart'), pre, agentEdit, acting, actingCmd: () => { const e = (h.PreToolUse || []).find((x) => String(x.matcher || '') === '*'); return e ? e.hooks[0].command : ''; } };
 }
 const blocked = (out) => out.includes('"block"');
 
+// THE `!` LINE (0.2.8, lead L41, proof-bench/bang-line). A line a person types with `!` fires no prompt hook, and the
+// model then takes a turn by itself: on wavecutter (2026-11-24) the person's own contract commit, made that way, read as
+// the agent's at the end of that turn and was sent back again and again. The start of a turn is now also taken at the
+// agent's first tool call of a turn no prompt began, under the prompt hook's own rules.
+const loosen = (s) => { const c = JSON.parse(s); c.gamingThreshold = 0.9; return JSON.stringify(c, null, 2) + '\n'; };
+test('claim: a person\'s commit between turns (a ! line) is not the agent\'s; the agent\'s own change still is, and a flagged one stays flagged', () => {
+  // the wavecutter case: a clean turn, then the person commits a contract change, then the model's own turn
+  const d = signed(true); const w = wired(d);
+  w.prompt('look at the cart'); w.acting('Read'); assert.ok(!blocked(w.stop()), 'a clean first turn');
+  assert.ok(!existsSync(join(d, '.sawbuck', 'acting')), 'a clean end clears the mark');
+  edit(d, 'promptwheel.config.json', loosen); save(d, 'a contract change the person made, with a ! line');
+  w.acting('Bash'); put(d, 'notes.md', 'what I looked at\n');
+  const out = w.stop(); assert.ok(!blocked(out), 'the person\'s commit was read as the agent\'s: ' + out);
+  // the agent's own change, after its first tool call: sent back, and again while the turn goes on
+  const e = signed(true); const x = wired(e);
+  x.prompt('make the check pass'); x.acting('Bash'); edit(e, 'promptwheel.config.json', loosen);
+  assert.ok(blocked(x.stop()), 'the agent\'s change is sent back');
+  assert.ok(existsSync(join(e, '.sawbuck', 'acting')), 'a send-back keeps the mark: the turn goes on');
+  x.acting('Bash'); assert.ok(blocked(x.stop()), 'and sent back again');
+  // a flagged change the person then commits (a ! line after the turn ended): still needs their reason
+  const f = signed(true); const y = wired(f);
+  y.prompt('loosen the check'); y.acting('Bash'); edit(f, 'promptwheel.config.json', loosen);
+  for (let i = 0; i < 4; i++) y.stop();   // three send-backs, then the turn ends with a warning
+  save(f, 'the person commits what the agent wrote');
+  y.acting('Bash'); put(f, 'notes.md', 'x\n'); assert.ok(blocked(y.stop()), 'a flagged change a person commits is still flagged');
+  // an unrelated ! line (nothing changes), then the agent changes the contract itself: its own change
+  const g = signed(true); const z = wired(g);
+  z.prompt('look'); z.acting('Read'); assert.ok(!blocked(z.stop()));
+  z.acting('Bash'); edit(g, 'promptwheel.config.json', loosen); assert.ok(blocked(z.stop()), 'the agent\'s change after its first tool call is its own');
+});
+test('claim: a protected-path send-back says what to do if the change is not the agent\'s, and who can end it', () => {
+  // a turn after a ! line in which the model used no tool: nothing marks its start, so the person's commit is still read
+  // in it; the words tell the agent not to undo what it did not make (asks 3 and 5 of the framework's brief)
+  const d = signed(true); const w = wired(d);
+  w.prompt('look'); w.acting('Read'); assert.ok(!blocked(w.stop()));
+  edit(d, 'promptwheel.config.json', loosen); save(d, 'a contract change the person made, with a ! line');
+  const out = w.stop(); assert.ok(blocked(out), 'no tool call: still read in the turn');
+  assert.match(out, /If you made none of these changes[^"]*undo nothing: tell the person a reason is owed, and stop\. Only the person can end this, with their reason or a revert\./, out);
+});
+test('claim: the first tool calls of a turn, several at once and of any tool, leave one mark and no lock', () => {
+  const d = signed(true); const w = wired(d);
+  w.prompt('look'); assert.ok(!blocked(w.stop()));
+  const cmd = w.actingCmd(); assert.ok(cmd, 'attach writes the hook on every tool');
+  const r = spawnSync('sh', ['-c', `(${cmd}) </dev/null & (${cmd}) </dev/null & (${cmd}) </dev/null & wait`], { cwd: d, encoding: 'utf8', env: ENV });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(d, '.sawbuck', 'acting')), 'one mark'); assert.ok(!existsSync(join(d, '.sawbuck', 'acting.lock')), 'no lock left');
+  const e = signed(true); const x = wired(e); x.prompt('look'); x.stop();
+  x.acting('mcp__files__write_file'); assert.ok(existsSync(join(e, '.sawbuck', 'acting')), 'any tool marks the start, an MCP tool too');
+});
 // ------------------------------------------------------------ "re-proves a win from the source edits alone"
 test('claim: an honest source fix is verified', () => { const d = repo(); edit(d, 'src/add.js', fixAdd); save(d, 'fix'); assert.equal(check(d).code, 0); });
 test('claim: editing the assertion so a red test goes green reads gamed', () => { const d = repo(); edit(d, 'test/add.test.js', (s) => s.replace('add(2,2),4', 'add(2,2),0')); save(d, 'x'); assert.equal(check(d).code, 2); });
@@ -1570,14 +1621,14 @@ const commit = (d, msg, path = '/usr/bin:/bin') => { git(d, 'add', '-A'); const 
 const record = (d, f = 'results.json') => { try { return JSON.parse(readFileSync(join(d, '.sawbuck', f), 'utf8')); } catch { return {}; } };
 const cheat = (s) => s.replace('add(2,2),4', 'add(2,2),0');
 test('claim: attach --git checks every commit, whatever made it, starting with the first one', () => { const d = hookRepo(); assert.equal(sb(d, 'attach', '--git').code, 0); assert.ok(!existsSync(join(d, '.claude')), 'no Claude settings'); edit(d, 'test/add.test.js', cheat); commit(d, 'make it green'); assert.ok((record(d).gamed || 0) >= 1, 'the first commit after attach was caught by the hook, with no sawbuck on PATH'); });
-test('claim: attach --shared writes a team file with no path from this machine, and removing the hooks shows in git', () => { const d = repo(true); const r = sb(d, 'attach', '--shared'); assert.equal(r.code, 0); assert.match(r.out, /commit \.claude\/settings\.json/); const f = join(d, '.claude/settings.json'); const text = readFileSync(f, 'utf8'); const cmds = Object.values(JSON.parse(text).hooks).flat().flatMap((h) => h.hooks.map((x) => x.command)); assert.equal(cmds.length, 8); for (const c of cmds) assert.match(c, /^npx (--prefer-offline --fetch-retries=0 --fetch-timeout=10000 -y sawbuck@\d+\.\d+\.\d+ (turn --hook|__hook --by claude --stop|hold --hook|undo --hook)|--fetch-retries=0 --fetch-timeout=10000 -y sawbuck@\d+\.\d+\.\d+ __warm)$/); assert.ok(!text.includes(d) && !text.includes(HOME) && !text.includes('sawbuck.mjs'), 'nothing machine-specific'); assert.match(git(d, 'status', '--porcelain'), /\.claude\//, 'the file is visible to git'); save(d, 'share the hooks'); put(d, '.claude/settings.json', '{}\n'); assert.match(git(d, 'status', '--porcelain'), /M \.claude\/settings\.json/, 'a removal shows'); git(d, 'checkout', '.claude/settings.json'); assert.equal(sb(d, 'detach').code, 0); assert.ok(!/sawbuck/.test(existsSync(f) ? readFileSync(f, 'utf8') : '')); });
+test('claim: attach --shared writes a team file with no path from this machine, and removing the hooks shows in git', () => { const d = repo(true); const r = sb(d, 'attach', '--shared'); assert.equal(r.code, 0); assert.match(r.out, /commit \.claude\/settings\.json/); const f = join(d, '.claude/settings.json'); const text = readFileSync(f, 'utf8'); const cmds = Object.values(JSON.parse(text).hooks).flat().flatMap((h) => h.hooks.map((x) => x.command)); assert.equal(cmds.length, 9); for (const c of cmds) assert.match(c.replace(/^\[ -e \"\$CLAUDE_PROJECT_DIR\/\.sawbuck\/acting\" \] \|\| /, ''), /^npx (--prefer-offline --fetch-retries=0 --fetch-timeout=10000 -y sawbuck@\d+\.\d+\.\d+ (turn --hook|turn --acting --hook|__hook --by claude --stop|hold --hook|undo --hook)|--fetch-retries=0 --fetch-timeout=10000 -y sawbuck@\d+\.\d+\.\d+ __warm)$/); assert.ok(cmds.some((c) => /^\[ -e "\$CLAUDE_PROJECT_DIR\/\.sawbuck\/acting" \] \|\| npx .* turn --acting --hook$/.test(c)), 'the hook on every tool, behind its shell test (0.2.8)'); assert.ok(!text.includes(d) && !text.includes(HOME) && !text.includes('sawbuck.mjs'), 'nothing machine-specific'); assert.match(git(d, 'status', '--porcelain'), /\.claude\//, 'the file is visible to git'); save(d, 'share the hooks'); put(d, '.claude/settings.json', '{}\n'); assert.match(git(d, 'status', '--porcelain'), /M \.claude\/settings\.json/, 'a removal shows'); git(d, 'checkout', '.claude/settings.json'); assert.equal(sb(d, 'detach').code, 0); assert.ok(!/sawbuck/.test(existsSync(f) ? readFileSync(f, 'utf8') : '')); });
 test('claim: a team file with the old plain npx form is upgraded in place by attach --shared, with no second copy of any hook', () => {
   const d = repo(true); assert.equal(sb(d, 'attach', '--shared').code, 0); const f = join(d, '.claude/settings.json');
   put(d, '.claude/settings.json', readFileSync(f, 'utf8').replace(/npx --prefer-offline --fetch-retries=0 --fetch-timeout=10000 -y /g, 'npx -y '));   // as an older version wrote it
   assert.match(readFileSync(f, 'utf8'), /"npx -y sawbuck@/);
   assert.equal(sb(d, 'attach', '--shared').code, 0);
   const cmds = Object.values(JSON.parse(readFileSync(f, 'utf8')).hooks).flat().flatMap((h) => h.hooks.map((x) => x.command));
-  assert.equal(cmds.length, 8, 'one of each'); for (const c of cmds) assert.match(c, /^npx (--prefer-offline )?--fetch-retries=0 --fetch-timeout=10000 -y sawbuck@/);
+  assert.equal(cmds.length, 9, 'one of each, the hook on every tool among them (0.2.8)'); for (const c of cmds) assert.match(c.replace(/^\[ -e \"\$CLAUDE_PROJECT_DIR\/\.sawbuck\/acting\" \] \|\| /, ''), /^npx (--prefer-offline )?--fetch-retries=0 --fetch-timeout=10000 -y sawbuck@/);
   assert.equal(cmds.filter((c) => !c.includes('--prefer-offline')).length, 2, 'only the two session-start lines ask npm');
 });
 // A team file moves to a newer sawbuck by a commit. A teammate's npm has kept a list of versions that ends before it,

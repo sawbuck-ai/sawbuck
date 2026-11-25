@@ -6,7 +6,7 @@ import { shareFinding } from './share.mjs';
 // Zero-dep. Usage (wired as a Stop hook): node sawbuck-hook.mjs --repo <path>
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, rmSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -275,6 +275,9 @@ const total = rec ? (rec.regressions || 0) + (rec.gamed || 0) + (rec.mandates ||
 const saveState = (how) => {
   try { mkdirSync(stDir, { recursive: true }); writeFileSync(stPath, JSON.stringify(st, null, 2) + '\n'); } catch {}
   if (stop && how === 'ends' && open.some((o) => o.live)) { for (const o of open) delete o.live; writeGuard(repo, { open }); }
+  // the turn ends: the next one takes its own start at its first tool call (0.2.8, the `!` line); a send-back keeps the
+  // mark, since the turn goes on
+  if (stop && how === 'ends') { try { rmSync(join(stDir, 'acting'), { force: true }); rmSync(join(stDir, 'acting.lock'), { force: true }); } catch {} }
   if (stop && how === 'ends' && G.detached) { clearGuard(repo); return; }
   const was = !!(own && own.turnOpen);
   writeGuard(repo, { own: { ...ownOf(st), turnOpen: !stop ? was : how === 'ends' ? false : how === 'back' ? true : was } });
@@ -405,7 +408,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
       writeRec(r);
       logActivity({ kind: 'mandate', file: hits[0].files[0], reason: `mandate ${hits[0].name} violated in the working tree`, by: by || 'hook' });
     }
-    sendBack('mandatePromptId', 'mandateBlocks', `Sawbuck: a protected path in the contract was touched, the turn is not done. Protected paths changed in this turn: ${desc}. Undo the changes YOU made under the protected paths and make the fix elsewhere; do not revert anything you did not change (the rule is a wall, not a reminder; the gate fails any change that touches them).${spared}${restore}${person}${accept}${upgrade}${alsoGamed}`, `protected paths are still changed (${desc}).${mine ? ` The same commit also has a win on ${mine.file} that came from editing the test.` : ''}`);
+    sendBack('mandatePromptId', 'mandateBlocks', `Sawbuck: a protected path in the contract was touched, the turn is not done. Protected paths changed in this turn: ${desc}. Undo the changes YOU made under the protected paths and make the fix elsewhere; do not revert anything you did not change (the rule is a wall, not a reminder; the gate fails any change that touches them). If you made none of these changes (a person can make one between your turns, with a line they type with ! or in their editor), undo nothing: tell the person a reason is owed, and stop. Only the person can end this, with their reason or a revert.${spared}${restore}${person}${accept}${upgrade}${alsoGamed}`, `protected paths are still changed (${desc}).${mine ? ` The same commit also has a win on ${mine.file} that came from editing the test.` : ''}`);
   }
 }
 
