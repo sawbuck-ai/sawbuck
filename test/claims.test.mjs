@@ -2963,6 +2963,54 @@ test('claim: where no test command is found, try mode writes the pull request ch
   assert.match(guide, /\*\*Where no test command is found\.\*\* Sawbuck finds npm, pytest, cargo and go tests on its own\. Where it finds none, `contract --full` writes no workflow and says so\. With `--comment-only` it writes the workflow there too\. That check runs no tests: it reads the counts of your tests and the protected paths\. To have your tests run, put your test command in `promptwheel\.config\.json` where the placeholder is\./);
 });
 
+// 0.2.8 (engine 0.8.21): what the note on a rewritten test does not see, said in LIMITS.md and run here the way the
+// Action runs the engine on a pull request (the note is a pull request's only; `sawbuck check` refuses that flag)
+test('claim: the note on a rewritten test reads a pull request commit by commit, and one commit, a rewrite in the commit that changed the source, a new or renamed test file, passing base tests, a shallow clone, more than 60 commits or 2,000 files give it nothing', () => {
+  const limits = readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8');
+  assert.match(limits, lit('**What the note on a rewritten test does not see.** It reads the commits of a pull request one by one, so a pull request squashed into one commit gives it nothing to read.'));
+  assert.match(limits, lit("A clone that does not hold the pull request's commits (a shallow fetch) gives it nothing to read, and so does a pull request of more than 60 commits or a commit that touches more than 2,000 files."));
+  const pr = () => { const d = repo(true); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); return { d, base: git(d, 'rev-parse', 'HEAD') }; };
+  const note = (d, base) => {
+    const r = spawnSync(process.execPath, [ENGINE_HERE, 'run', '--base', base, '--head', 'HEAD', '--no-record', '--json', '--pull-request'], { cwd: d, encoding: 'utf8', env: ENV });
+    let j; try { j = JSON.parse(r.stdout); } catch { assert.fail(`the engine ran (${ENGINE_HERE}), status ${r.status}: ${r.stdout.slice(0, 300)}${r.stderr.slice(0, 300)}`); }
+    return j.testsRewritten || null;
+  };
+  const breakSrc = (d) => edit(d, 'src/add.js', (t) => t.replace('a+b', 'a-b'));
+  const rewrite = (d, f = 'test/add.test.js') => edit(d, f, (t) => t.replace('add(2,2),4', 'add(2,2),0'));
+  // the note itself: the source changed in one commit, the base's test rewritten to the new result in a later one
+  let { d, base } = pr(); breakSrc(d); save(d, 'subtract'); rewrite(d); save(d, 'the test follows');
+  const hit = note(d, base); assert.ok(hit && hit.tests.includes('test/add.test.js'), 'the note speaks: ' + JSON.stringify(hit));
+  // a pull request of one commit
+  ({ d, base } = pr()); breakSrc(d); rewrite(d); save(d, 'both at once'); assert.equal(note(d, base), null, 'one commit');
+  // the rewrite in the commit that changed the source, no earlier commit having changed it: ordinary work...
+  ({ d, base } = pr()); put(d, 'test/extra.test.js', "require('node:test').test('extra', () => {});\n"); save(d, 'a test of its own');
+  breakSrc(d); rewrite(d); save(d, 'both at once'); assert.equal(note(d, base), null, 'a rewrite in the commit that changed the source');
+  // ...unless an earlier commit had already changed the source without it
+  ({ d, base } = pr()); breakSrc(d); save(d, 'subtract'); edit(d, 'src/add.js', (t) => t + '// tidy\n'); rewrite(d); save(d, 'tidy, and the test');
+  assert.ok(note(d, base), 'an earlier commit had changed the source');
+  // a test file the base did not have
+  ({ d, base } = pr()); breakSrc(d); save(d, 'subtract');
+  put(d, 'test/sub.test.js', "require('node:test').test('sub', () => require('node:assert').equal(require('../src/add.js').add(2,2), 0));\n"); save(d, 'a new test');
+  assert.equal(note(d, base), null, 'a new test file');
+  // a test file renamed: one gone and one new
+  ({ d, base } = pr()); breakSrc(d); save(d, 'subtract'); git(d, 'mv', 'test/add.test.js', 'test/sum.test.js'); rewrite(d, 'test/sum.test.js'); save(d, 'renamed, and rewritten');
+  assert.equal(note(d, base), null, 'a renamed test file');
+  // the base's tests still pass on the new source
+  ({ d, base } = pr()); edit(d, 'src/add.js', (t) => t + 'exports.sub=(a,b)=>a-b\n'); save(d, 'sub');
+  edit(d, 'test/add.test.js', (t) => t + "\nrequire('node:test').test('sub', () => require('node:assert').equal(require('../src/add.js').sub(3,1), 2));\n"); save(d, 'its test');
+  assert.equal(note(d, base), null, 'the base\'s tests pass on the new source');
+  // a shallow clone that holds the base and the head and not the commits between (the Action fetches the base)
+  ({ d, base } = pr()); breakSrc(d); save(d, 'subtract'); rewrite(d); save(d, 'the test follows'); git(d, 'tag', 'pr-base', base);
+  const sh = mkdtempSync(join(tmpdir(), 'claims-shallow-')); execFileSync('git', ['clone', '-q', '--depth', '1', `file://${d}`, sh], { env: ENV, stdio: 'ignore' });
+  execFileSync('git', ['-C', sh, 'fetch', '-q', '--depth', '1', 'origin', 'refs/tags/pr-base:refs/tags/pr-base'], { env: ENV, stdio: 'ignore' });
+  assert.equal(note(sh, base), null, 'a shallow clone');
+  // more than 60 commits
+  ({ d, base } = pr()); breakSrc(d); save(d, 'subtract'); for (let i = 0; i < 60; i++) { put(d, 'NOTES.md', `step ${i}\n`); save(d, `step ${i}`); }
+  rewrite(d); save(d, 'the test follows'); assert.equal(note(d, base), null, 'more than 60 commits');
+  // a commit that touches more than 2,000 files
+  ({ d, base } = pr()); breakSrc(d); for (let i = 0; i < 2001; i++) put(d, `data/f${i}.txt`, `${i}\n`); save(d, 'subtract, and data');
+  rewrite(d); save(d, 'the test follows'); assert.equal(note(d, base), null, 'more than 2,000 files');
+});
 // step 4 (engine 0.8.17): what the note on tests taken out does not see, said in LIMITS.md and run here
 test('claim: the note on tests taken out counts a test made from a table as one, reads no test written in a way it does not know, and says nothing for a change of one commit or when one other test is added at the end', () => {
   const limits = readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8'), guide = readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8');
