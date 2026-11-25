@@ -393,7 +393,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // contract or revert the path", and a real agent then told its person to grant --allow and ask again, which is
     // sent back again (proof-bench/live/after-0.1.70). So say who can make the change, and what to tell them.
     const reasoned = hits.filter((h) => h.allowable).map((h) => `"${h.name}"`);
-    const person = reasoned.length ? ` ${reasoned.join(', ')} ${reasoned.length === 1 ? 'takes' : 'take'} a person's reason, and a reason is for the person's own edit: it does not make your edit theirs. After you undo yours, tell them to make the edit themselves and run this exact line: ${cli('check --allow "<their reason>"')}. Running --allow yourself does not end this.` : '';
+    const person = reasoned.length ? ` Their reason goes with the commit: ${cli('check --allow "<their reason>"')}. Running --allow yourself does not keep your edit.` : '';
     const accept = (committedHit && hits.some((h) => !h.allowable)) ? ' To accept this change on purpose, change the rule in the contract or revert the path.' : '';
     const upgrade = base ? '' : ' (No prompt baseline is recorded in this repo, so edits a person made before the prompt cannot be told apart from yours: ask them to run sawbuck attach again, which upgrades the hooks.)';
     // the same commit can hold a gamed test too. Say it now, so undoing the protected path is not taken for the end of it.
@@ -403,25 +403,27 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // was done to it since the turn's start, is sent back enforce.maxBlocks times in all (default 1), across prompts and
     // sessions. After that, while it stands, each end of a turn leaves the person a line and the agent goes on. The same
     // change is known again by what it did (wall.mjs): the person's own edits around it, a commit of it, a reason, a new
-    // session or /clear do not make it new; a further change of the agent's to the file does. The record keeps the
-    // session it was sent back in.
+    // session or /clear do not make it new; a further change of the agent's to the file does.
     const wallMax = (() => { const tbl = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null; const raw = (tbl && Object.prototype.hasOwnProperty.call(tbl, 'maxBlocks')) ? tbl.maxBlocks : (cfg.enforce ? cfg.enforce.maxBlocks : undefined); return (raw === undefined || raw === null || raw === '' || !Number.isFinite(+raw)) ? 1 : Math.max(0, Math.floor(+raw)); })();
     const toldBefore = (st.wallTold && typeof st.wallTold === 'object' && !Array.isArray(st.wallTold)) ? st.wallTold : {};
-    const toldNow = {}; let fresh = false, elsewhere = false;
+    // Counted in each session (his words 2026-11-25 08:50, "lets make sure that situation doesnt happen"): two sessions
+    // share one record, so the one send-back could land on the session that did not make the change while the one that
+    // did got only lines. Each session whose turn ends with the change standing is sent back once for it.
+    const toldNow = {}; let fresh = false;
     for (const f of Object.keys(st.lastViolation.files)) {
       const cur = st.lastViolation.files[f];
       const start = Object.prototype.hasOwnProperty.call(baseline, f) ? baseline[f] : ((base && base.sha) ? (blobAt(repo, base.sha, f) || 'deleted') : '');
       const e = toldBefore[f]; const same = !!e && sameChange(repo, e, cur, start);
-      const n = same ? (Number(e.n) || 0) : 0;
-      toldNow[f] = { flagged: cur, before: start, n, session: (same && e.session) ? e.session : sessionOf, at: (same && e.at) ? e.at : now };
-      if (n < wallMax) fresh = true; else if (toldNow[f].session && toldNow[f].session !== sessionOf) elsewhere = true;
+      const by = (same && e.by && typeof e.by === 'object' && !Array.isArray(e.by)) ? Object.fromEntries(Object.entries(e.by).slice(-20)) : {};
+      toldNow[f] = { flagged: cur, before: start, by, at: (same && e.at) ? e.at : now };
+      if ((Number(by[sessionOf]) || 0) < wallMax) fresh = true;
     }
-    if (fresh) for (const f of Object.keys(toldNow)) if (toldNow[f].n < wallMax) toldNow[f].n += 1;
+    if (fresh) for (const f of Object.keys(toldNow)) { const n = Number(toldNow[f].by[sessionOf]) || 0; if (n < wallMax) toldNow[f].by[sessionOf] = n + 1; }
     st.wallTold = toldNow;
     if (!fresh) {
       const still = `protected paths are still changed (${desc}).${mine ? ` The same commit also has a win on ${mine.file} that came from editing the test.` : ''}`;
       saveState('ends');
-      process.stdout.write(JSON.stringify({ systemMessage: wallMax === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${still}` : `Sawbuck: ${still} The agent was sent back for this change${elsewhere ? ' in an earlier session' : ''} and is not sent back again for it. A reason does not end it; a revert does.` }));
+      process.stdout.write(JSON.stringify({ systemMessage: wallMax === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${still}` : `Sawbuck: ${still} The agent was sent back for this change${wallMax === 1 ? ' once' : ''}, and is not sent back again for it. A reason does not end it; reverting the change does (for a commit, git revert).` }));
       process.exit(0);
     }
     // one catch per prompt, however many times the turn is sent back. Kept beside rec.latest, never in it:
@@ -435,7 +437,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
       logActivity({ kind: 'mandate', file: hits[0].files[0], reason: `mandate ${hits[0].name} violated in the working tree`, by: by || 'hook' });
     }
     saveState('back');
-    wallSend(`Sawbuck: a protected path in the contract was touched, the turn is not done. Protected paths changed in this turn: ${desc}. Undo the changes YOU made under the protected paths and make the fix elsewhere; do not revert anything you did not change (the rule is a wall, not a reminder; the gate fails any change that touches them). If you made none of these changes (a person can make one while you work, in their editor, or with a line they type with !), undo nothing and stop: tell the person that a reason does not end this. It ends when they revert the change; once a turn has ended after that, a change they make in their editor before the next prompt is theirs.${spared}${restore}${person}${accept}${upgrade}${alsoGamed}`, `protected paths are still changed (${desc}).${mine ? ` The same commit also has a win on ${mine.file} that came from editing the test.` : ''}`);
+    wallSend(`Sawbuck: a protected path in the contract was changed in this turn: ${desc}.${wallMax === 1 ? ' You are sent back for it once.' : ''} If you made this change: undo it and make the fix elsewhere, and do not revert anything you did not change. If the person wants the change, they make it themselves, in their editor or another terminal between your turns; a line they type with ! in this session reads as yours.${person} If you made none of these changes: undo nothing and stop, and tell the person that a reason does not end this. Reverting the change does (for a commit, git revert); once a turn has run to its end after that, the same change made in their editor before the next prompt is theirs.${spared}${restore}${accept}${upgrade}${alsoGamed}`);
   }
 }
 

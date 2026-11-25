@@ -76,7 +76,10 @@ test('claim: a protected-path send-back says what to do if the change is not the
   const d = signed(true); const w = wired(d);
   w.prompt('loosen the check'); edit(d, 'promptwheel.config.json', (s) => { const c = JSON.parse(s); c.gamingThreshold = 0.9; return JSON.stringify(c, null, 2) + '\n'; });
   const out = w.stop(); assert.ok(blocked(out), out);
-  assert.match(out, lit('If you made none of these changes (a person can make one while you work, in their editor, or with a line they type with !), undo nothing and stop: tell the person that a reason does not end this. It ends when they revert the change; once a turn has ended after that, a change they make in their editor before the next prompt is theirs.'), out);
+  // 0.2.9's words (his yes 2026-11-25 08:22): by who made the change; no ! for the person, no --allow to keep an edit
+  assert.match(out, lit('You are sent back for it once. If you made this change: undo it and make the fix elsewhere, and do not revert anything you did not change. If the person wants the change, they make it themselves, in their editor or another terminal between your turns; a line they type with ! in this session reads as yours.'), out);
+  assert.match(out, lit('Running --allow yourself does not keep your edit. If you made none of these changes: undo nothing and stop, and tell the person that a reason does not end this. Reverting the change does (for a commit, git revert); once a turn has run to its end after that, the same change made in their editor before the next prompt is theirs.'), out);
+  assert.doesNotMatch(out, /a person can make one while you work/, 'the old words named a ! line among the ways a person makes a change');
 });
 // The ways out that sentence names, run (2026-11-24, wavecutter's items 9 and 10: the owner's reason did not end it,
 // and 0.2.8's first words said it would). A reason is for the check on a commit or a pull request, not for this wall
@@ -86,12 +89,13 @@ test('claim: a person\'s contract change read as the agent\'s ends with a revert
   const thr = (v) => (s) => { const c = JSON.parse(s); c.gamingThreshold = v; return JSON.stringify(c, null, 2) + '\n'; };
   const walled = () => { const d = signed(true); const w = wired(d); w.prompt('look'); w.stop(); w.prompt('look again'); edit(d, 'promptwheel.config.json', thr(0.9)); assert.ok(blocked(w.stop()), 'the person\'s edit during a turn'); return { d, w }; };
   let { d, w } = walled(); assert.equal(sb(d, 'check', '--allow', 'contract-frozen: my own change to the threshold').code, 0, 'the reason is kept for the check');
-  assert.ok(blocked(w.stop()), 'a reason: the same turn'); w.prompt('next'); assert.ok(blocked(w.stop()), 'a reason: the next turn');
-  ({ d, w } = walled()); save(d, 'the threshold, mine'); w.prompt('next'); assert.ok(blocked(w.stop()), 'a commit between turns');
+  const line = (o) => !blocked(o) && /systemMessage/.test(o) && /promptwheel\.config\.json/.test(o);   // 0.2.9: told, not sent back again
+  assert.ok(line(w.stop()), 'a reason: the same turn is still told'); w.prompt('next'); assert.ok(line(w.stop()), 'a reason: and the next turn');
+  ({ d, w } = walled()); save(d, 'the threshold, mine'); w.prompt('next'); assert.ok(line(w.stop()), 'a commit between turns does not end it');
   ({ d, w } = walled()); git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); w.prompt('next'); assert.ok(!blocked(w.stop()), 'a revert ends it');
   edit(d, 'promptwheel.config.json', thr(0.9)); w.prompt('next'); assert.ok(!blocked(w.stop()), 'then the same change, made before a prompt, is the person\'s'); w.prompt('and on'); assert.ok(!blocked(w.stop()), 'and stays theirs');
-  ({ d, w } = walled()); git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); edit(d, 'promptwheel.config.json', thr(0.9)); w.prompt('next'); assert.ok(blocked(w.stop()), 'the same change again before any turn has ended');
-  ({ d, w } = walled()); edit(d, 'promptwheel.config.json', thr(0.8)); w.prompt('next'); assert.ok(!blocked(w.stop()), 'other content made between turns');
+  ({ d, w } = walled()); git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); edit(d, 'promptwheel.config.json', thr(0.9)); w.prompt('next'); assert.ok(line(w.stop()), 'the same change again before any turn has ended: still the flagged one, told');
+  ({ d, w } = walled()); edit(d, 'promptwheel.config.json', thr(0.8)); w.prompt('next'); assert.ok(blocked(w.stop()), 'other content on the flagged line itself cannot be told apart from it: sent back once, as a new change'); assert.ok(line(w.stop()), 'then told');
 });
 // ------------------------------------------------------------ "re-proves a win from the source edits alone"
 test('claim: an honest source fix is verified', () => { const d = repo(); edit(d, 'src/add.js', fixAdd); save(d, 'fix'); assert.equal(check(d).code, 0); });
@@ -695,7 +699,7 @@ test('limit: a test deleted from a green suite, a count worse with nothing gamed
 test('limit: a shell line a person runs inside a session starts a turn with no prompt event, so their own protected edit made that way is sent back as the agent\'s; made between two typed prompts it is theirs', () => {
   const d = signed(true); const w = wired(d); w.prompt('look around'); assert.ok(!blocked(w.stop()), 'a quiet turn ends');
   put(d, '.npmrc', 'fund=false\n');   // the person's own edit, by a `!` line: the next thing the hooks see is the end of a turn
-  const o = w.stop(); assert.ok(blocked(o), 'the limit: read as the agent\'s'); assert.match(o, /Undo the changes YOU made/);
+  const o = w.stop(); assert.ok(blocked(o), 'the limit: read as the agent\'s'); assert.match(o, /If you made this change: undo it/);
   const e = signed(true); const x = wired(e); x.prompt('look around'); x.stop(); put(e, '.npmrc', 'fund=false\n');
   x.prompt('next'); assert.ok(!blocked(x.stop()), 'with a typed prompt after it, the same edit is the person\'s');
 });
@@ -726,11 +730,31 @@ const wallKey = (k, v) => (s) => { const c = JSON.parse(s); if (v === undefined)
 const wallLine = (out) => !blocked(out) && /systemMessage/.test(out) && /promptwheel\.config\.json/.test(out);
 const wallQuiet = (out) => !blocked(out) && !/promptwheel\.config\.json/.test(out);
 const wallSent = (d, w) => { w.prompt('look'); assert.ok(wallQuiet(w.stop()), 'a clean turn'); w.prompt('look again'); edit(d, 'promptwheel.config.json', wallThr(0.9)); assert.ok(blocked(w.stop()), 'sent back once'); };
-test('claim: a protected change is sent back once, then each end of a turn leaves the person a line while it stands: the same turn, the next prompt, a new session', () => {
+test('claim: a protected change is sent back once, then each end of a turn leaves the person a line while it stands, in the same turn and the next prompt; a new session is sent back once of its own', () => {
   const d = signed(true); const w = wired(d, 's1'); wallSent(d, w);
   for (let i = 2; i <= 5; i++) { const o = w.stop(); assert.ok(wallLine(o), `the same turn, stop ${i}: a line, not a send-back: ${o.slice(0, 160)}`); }
   w.prompt('next'); assert.ok(wallLine(w.stop()), 'the next prompt, nothing edited');
-  const v = wired(d, 's2'); v.prompt('a new session'); assert.ok(wallLine(v.stop()), 'a new session, nothing edited');
+  const v = wired(d, 's2'); v.prompt('a new session'); assert.ok(blocked(v.stop()), 'a new session is sent back once of its own: the agent that made a change always hears it'); assert.ok(wallLine(v.stop()), 'then a line');
+});
+// his words of 2026-11-25 08:50: two sessions share one record, and the one send-back must not land only on the session that
+// did not make the change while the one that did gets only lines. It is counted in each session.
+test('claim: the session that made a change is sent back for it even when another session\'s turn ends first', () => {
+  const d = signed(true); const a = wired(d, 'A'), b = wired(d, 'B');
+  a.prompt('loosen the threshold'); b.prompt('look at the docs'); edit(d, 'promptwheel.config.json', wallThr(0.9));   // A's edit; both turns open
+  const ob = b.stop(); assert.ok(blocked(ob), 'B ends first: sent back once'); assert.match(ob, lit('If you made none of these changes: undo nothing and stop'));
+  assert.ok(blocked(a.stop()), 'A, which made it, is sent back too');
+  assert.ok(wallLine(a.stop()), 'then a line for A'); assert.ok(wallLine(b.stop()), 'and for B');
+});
+test('claim: after its one send-back the person reads that the agent is not sent back again, that a reason does not end it and a revert does; check --allow says when it kept nothing; the pages say once', () => {
+  const d = signed(true); const w = wired(d); wallSent(d, w);
+  const o = w.stop(); assert.match(o, lit('The agent was sent back for this change once, and is not sent back again for it. A reason does not end it; reverting the change does (for a commit, git revert).'), o);
+  const p = mkdtempSync(join(tmpdir(), 'claims-')); git(p, 'init', '-q', '-b', 'main'); put(p, 'package.json', '{"name":"x","version":"1.0.0"}\n'); put(p, 'index.js', 'exports.f = 1\n'); save(p, 'base');
+  assert.equal(sb(p, 'contract').code, 0); save(p, 'sign');
+  const r = sb(p, 'check', '--allow', 'contract-frozen: my own change'); assert.match(r.out, lit('✎ your reason was not kept: nothing was measured here, so there was nothing for it to accept.'), r.out);
+  const guide = readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8').replace(/\s+/g, ' '), limits = readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(guide, lit('a protected path the agent changed is sent back once (the default; `enforce.maxBlocks` in sawbuck.config.json sets how many times), and after that the end of each turn tells you while the change stands.'));
+  assert.match(limits, lit('A change that was sent back is not held when it took its own rule away.** A turn that removes every rule from the contract and commits is sent back once, and you are told.'));
+  assert.match(limits, lit('is sent back once as if the agent had made it, and after that you are told at the end of each turn while it stands.'));
 });
 test('claim: after a reason the change is still a line, never a send-back; a revert ends it; the same change made again before the next prompt is the person\'s', () => {
   const d = signed(true); const w = wired(d); wallSent(d, w);
@@ -770,7 +794,7 @@ test('claim: sawbuck.config.json sets how many times one change is sent back (en
   const z = signed(true); put(z, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); save(z, 'ask me first');
   const y = wired(z); y.prompt('look'); y.stop(); y.prompt('look again'); edit(z, 'promptwheel.config.json', wallThr(0.9)); assert.ok(wallLine(y.stop()), '0: a line at once');
 });
-test('claim: it sends a turn back up to three times by default, then lets it end', () => { const d = signed(true); const w = wired(d); w.prompt(); put(d, '.npmrc', 'x\n'); const seen = []; for (let i = 0; i < 4; i++) seen.push(blocked(w.stop())); assert.deepEqual(seen, [true, true, true, false]); });
+test('claim: it sends a turn back once by default for one change, then lets it end with a line for the person', () => { const d = signed(true); const w = wired(d); w.prompt(); put(d, '.npmrc', 'x\n'); const seen = []; for (let i = 0; i < 4; i++) seen.push(blocked(w.stop())); assert.deepEqual(seen, [true, false, false, false]); });
 
 test('claim: a blocked protected path counts as one catch, however many send-backs', () => { const d = signed(true); const w = wired(d); w.prompt(); put(d, '.npmrc', 'x\n'); w.stop(); w.stop(); w.stop(); assert.match(sb(d, 'statusline').out, /1 caught/); assert.match(sb(d, 'status').out, /1 protected path/); assert.equal(readFileSync(join(d, '.sawbuck/activity.jsonl'), 'utf8').trim().split('\n').filter((l) => l.includes('"mandate"')).length, 1); });
 test('claim: a gamed catch is handed to the memory running on this machine before the hook exits, where the repo is attached with --words', async () => {
@@ -2466,7 +2490,7 @@ test('claim: a workflow change is sent back until a person gives a reason; --all
 // A stated limit. The reason is for the check on a commit and on a pull request. The end of a turn is stricter with the
 // agent's own edits: a person's reason does not make an agent's change to a protected path the person's, and neither
 // does the person committing it, because the hooks cannot tell who ran a command between two turns.
-test('claim: in a session a workflow the agent changed is sent back at the end of the turn three times, then the person is told; a reason does not lift it; undone and made by the person, it is theirs', () => {
+test('claim: in a session a workflow the agent changed is sent back at the end of the turn once, then the person is told; a reason does not lift it; undone and made by the person, it is theirs', () => {
   const d = repo(true); const was = 'name: ci\non: push\njobs: {}\n', now = 'name: ci\non: [push, pull_request]\njobs: {}\n';
   put(d, '.github/workflows/ci.yml', was); save(d, 'ci'); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); assert.equal(sb(d, 'attach').code, 0);
   const hook = (args, ev) => spawnSync(process.execPath, [CLI, ...args], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify(ev) }).stdout || '';
@@ -2476,10 +2500,10 @@ test('claim: in a session a workflow the agent changed is sent back at the end o
   const sentBack = (o) => /"decision":"block"/.test(o) && /workflows-frozen/.test(o);
   const work = () => { edit(d, 'src/add.js', (x) => x + `exports.f${n}=()=>${n}\n`); save(d, 'source only'); };
   prompt('run CI on pull requests too'); put(d, '.github/workflows/ci.yml', now); save(d, 'ci: on pull requests too');
-  for (let i = 1; i <= 3; i++) assert.ok(sentBack(stop()), `sent back, time ${i}`);
-  const told = stop(); assert.doesNotMatch(told, /"decision":"block"/); assert.match(told, /Sawbuck stopped blocking after 3 tries: protected paths are still changed/, 'then the person is told, and the turn ends');
+  assert.ok(sentBack(stop()), 'sent back once');
+  const told = stop(); assert.doesNotMatch(told, /"decision":"block"/); assert.match(told, /Sawbuck: protected paths are still changed[\s\S]*?is not sent back again for it/, 'then the person is told, and the turn ends');
   assert.equal(sb(d, 'check', '--allow', 'I asked for this CI change').code, 0, 'the check on the commit takes the reason');
-  prompt('thanks, now something else'); work(); assert.ok(sentBack(stop()), 'and the next turn is still sent back for it: the reason did not make the agent\'s edit the person\'s');
+  prompt('thanks, now something else'); work(); { const o = stop(); assert.ok(!sentBack(o) && /workflows-frozen/.test(o), 'and the next turn is still told of it: the reason did not make the agent\'s edit the person\'s'); }
   put(d, '.github/workflows/ci.yml', was); save(d, 'undo the CI change'); assert.ok(!sentBack(stop()), 'the agent undoes it, and the turn ends');
   put(d, '.github/workflows/ci.yml', now);   // the person makes the same change by hand, before their next prompt
   prompt('and one more thing'); work(); assert.ok(!sentBack(stop()), 'a change that was there when the prompt began is the person\'s');
@@ -2638,13 +2662,13 @@ const ownHooks = (d) => {
     stop: () => hook(['__hook', '--by', 'claude', '--stop'], { hook_event_name: 'Stop', cwd: d, session_id: 's', prompt_id: 'p' + n }),
   };
 };
-test('claim: a new workflow file is a protected path whatever its name holds: with a byte above 127, a double quote or a tab in it, the turn is sent back while it sits in the folder and after it is committed, and the check on the commit fails', { skip: process.platform === 'win32' && 'a double quote and a tab are not file-name characters on Windows' }, () => {
+test('claim: a new workflow file is a protected path whatever its name holds: with a byte above 127, a double quote or a tab in it, the turn is sent back while it sits in the folder and is still read as the turn\'s after it is committed, and the check on the commit fails', { skip: process.platform === 'win32' && 'a double quote and a tab are not file-name characters on Windows' }, () => {
   for (const name of ['añadir.yml', 'it"s.yml', 'a\tb.yml']) {
     const d = repo(true); put(d, '.github/workflows/ci.yml', 'name: ci\non: push\njobs: {}\n'); save(d, 'ci'); assert.equal(sb(d, 'contract').code, 0); save(d, 'sign'); assert.equal(sb(d, 'attach').code, 0);
     const { prompt, stop } = ownHooks(d); const sentBack = (o) => /"decision":"block"/.test(o) && /workflows-frozen/.test(o);
     prompt('add a deploy job'); put(d, `.github/workflows/${name}`, 'name: x\non: push\njobs: {}\n');
     assert.ok(sentBack(stop()), `sent back while it sits in the folder: ${JSON.stringify(name)}`);
-    save(d, 'a new workflow'); assert.ok(sentBack(stop()), `and after it is committed: ${JSON.stringify(name)}`);
+    save(d, 'a new workflow'); { const o = stop(); assert.ok(!/"decision":"block"/.test(o) && /workflows-frozen/.test(o), `and after it is committed, still read as the turn's (told, once it was sent back): ${JSON.stringify(name)}`); }
     const c = check(d); assert.equal(c.code, 1, `the check on the commit fails: ${JSON.stringify(name)}`); assert.ok((c.mandates || []).some((m) => m.name === 'workflows-frozen'), JSON.stringify(c.mandates));
   }
 });
@@ -2724,13 +2748,13 @@ test('claim: the send-back for a path that takes a reason says who can make the 
   const { prompt, stop } = ownHooks(d);
   prompt('run CI on pull requests too'); put(d, '.github/workflows/ci.yml', 'name: ci\non: [push, pull_request]\njobs: {}\n'); save(d, 'ci: on pull requests too');
   const wf = stop(); assert.match(wf, /"decision":"block"/); assert.match(wf, /workflows-frozen/);
-  assert.match(wf, /takes a person's reason/); assert.match(wf, lit(`tell them to make the edit themselves and run this exact line: ${PIN} check --allow `));   // the reason's quotes are escaped inside the hook's JSON
-  assert.match(wf, /Running --allow yourself does not end this/);
+  assert.match(wf, lit('they make it themselves, in their editor or another terminal between your turns')); assert.match(wf, lit(`Their reason goes with the commit: ${PIN} check --allow `));   // the reason's quotes are escaped inside the hook's JSON
+  assert.match(wf, /Running --allow yourself does not keep your edit/);
   assert.doesNotMatch(wf, /change the rule in the contract or revert the path/, 'the old last line sent an agent, and through it a person, to a way that is sent back again');
   put(d, '.github/workflows/ci.yml', 'name: ci\non: push\njobs: {}\n'); save(d, 'undo'); assert.doesNotMatch(stop(), /"decision":"block"/);
   prompt('use our own registry'); put(d, '.npmrc', 'registry=https://example.invalid/\n'); save(d, 'npmrc');
   const hard = stop(); assert.match(hard, /"decision":"block"/); assert.match(hard, /registry-config-frozen/);
-  assert.match(hard, /To accept this change on purpose, change the rule in the contract or revert the path/); assert.doesNotMatch(hard, /takes a person's reason/);
+  assert.match(hard, /To accept this change on purpose, change the rule in the contract or revert the path/); assert.doesNotMatch(hard, /Their reason goes with the commit/);
 });
 test('claim: the hold\'s question before --allow says what a yes does: it is kept as the reason for the check on the commit, and it does not let an agent\'s own edit to a protected path stand at the end of the turn', () => {
   const { w } = gamedTurn(); const q = w.pre('npx sawbuck check --allow "the spec changed"');

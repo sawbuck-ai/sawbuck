@@ -415,6 +415,8 @@ switch (cmd) {
     }
     else if (rep.verdict === 'fail') out('✗ sent back: this change made something worse.');
     else out(`≈ inconclusive: ${inconclusiveWhy(rep, repo)}`);
+    // 0.2.9: a reason given where nothing was measured is not kept; say so, or the person takes it for kept
+    if (rep.verdict === 'inconclusive' && pass.includes('--allow') && !rep.allowed) out('✎ your reason was not kept: nothing was measured here, so there was nothing for it to accept.');
     // more than one thing needs a person's reason: say what each one is, then (when a reason was given and did not
     // cover them all) what it let through, what it did not, and the line that would
     if (rep.verdict !== 'pass') many();

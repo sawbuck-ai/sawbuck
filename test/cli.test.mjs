@@ -475,7 +475,7 @@ test('the wall counts only what the turn changed: a protected file the person le
     writeFileSync(join(d, 'src', 'auth', 'login.js'), 'agent\n');
     const r = JSON.parse(hook('p2'));
     assert.equal(r.decision, 'block');
-    assert.match(r.reason, /Protected paths changed in this turn: "no-auth": src\/auth\/login\.js/);
+    assert.match(r.reason, /changed in this turn: "no-auth": src\/auth\/login\.js\./);
     assert.match(r.reason, /do not revert anything you did not change/);
     assert.match(r.reason, /left out of this check.*src\/auth\/old\.js/); assert.match(r.reason, /left out of this check.*src\/auth\/new\.js/);
     // the agent changes the person's file too: now it counts (the content moved past the baseline)
@@ -483,7 +483,7 @@ test('the wall counts only what the turn changed: a protected file the person le
     assert.match(JSON.parse(hook('p3')).reason, /src\/auth\/login\.js, src\/auth\/old\.js|src\/auth\/old\.js, src\/auth\/login\.js/);
     // a compaction re-run of turn mid-turn must NOT re-baseline the agent's edits as pre-existing
     turn('SessionStart');
-    assert.equal(JSON.parse(hook('p3')).decision, 'block', 'SessionStart[compact] leaves the baseline alone');
+    { const r3 = JSON.parse(hook('p3')); assert.equal(r3.decision, undefined, 'sent back once for this change (0.2.9)'); assert.match(r3.systemMessage || '', /src\/auth\/login\.js/, 'SessionStart[compact] leaves the baseline alone: the change is still the turn\'s'); }
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -498,16 +498,16 @@ test('the baseline cannot launder the agent\'s own protected edit: a file still 
     const turn = () => execFileSync(process.execPath, [CLI, 'turn', '--hook', d], { input: JSON.stringify({ hook_event_name: 'UserPromptSubmit' }), encoding: 'utf8', env: { ...process.env, HOME: TMP_HOME, LOGBOOK_NO_CACHE: '1' } });
     turn();                                                                     // prompt 1 begins, tree clean
     writeFileSync(join(d, 'src', 'auth', 'login.js'), 'agent\n');               // the agent edits the wall
-    for (let i = 0; i < 3; i++) assert.equal(JSON.parse(hook('p1')).decision, 'block');
-    assert.match(JSON.parse(hook('p1')).systemMessage || '', /stopped blocking/, 'the budget runs out and the turn ends with the edit still there');
+    assert.equal(JSON.parse(hook('p1')).decision, 'block');
+    assert.match(JSON.parse(hook('p1')).systemMessage || '', /not sent back again/, 'sent back once (0.2.9), then the turn ends with the edit still there and a line for the person');
     const st = JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8'));
     assert.ok(st.lastViolation && st.lastViolation.files['src/auth/login.js'], 'the violation and its content are remembered');
     turn();                                                                     // prompt 2 begins: "ok, continue"
     const st2 = JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8'));
     assert.ok(!('src/auth/login.js' in st2.turnBaseline.files), 'the un-reverted agent edit is not adopted as pre-existing');
     const r = JSON.parse(hook('p2'));
-    assert.equal(r.decision, 'block', 'the wall re-arms on the new prompt, as it did before baselines existed');
-    assert.match(r.reason, /src\/auth\/login\.js/);
+    assert.equal(r.decision, undefined, 'one change is sent back once (0.2.9): the new prompt does not send it back again');
+    assert.match(r.systemMessage || '', /src\/auth\/login\.js/, 'and the person is told it still stands');
     // the person reverts it: the next prompt is clean and the memory of the violation clears
     g('checkout', '--', 'src/auth/login.js');
     assert.ok(!/"decision":"block"/.test(hook('p3')));
@@ -560,11 +560,10 @@ test('a protected edit committed mid-turn still counts, and the baseline\'s comm
     let r = JSON.parse(hook('p1'));
     assert.equal(r.decision, 'block', 'a commit does not walk through the wall');
     assert.match(r.reason, /src\/auth\/login\.js/);
-    for (let i = 0; i < 2; i++) hook('p1');
-    assert.match(JSON.parse(hook('p1')).systemMessage || '', /stopped blocking/);
+    assert.match(JSON.parse(hook('p1')).systemMessage || '', /not sent back again/, 'sent back once (0.2.9), then a line');
     turn();                                                            // prompt 2: the baseline must not advance past the flagged commit
     assert.equal(state().turnBaseline.sha, base, 'the baseline\'s commit stays at the one the violation was measured against');
-    assert.equal(JSON.parse(hook('p2')).decision, 'block', 'still on the wall on the next prompt');
+    { const r2 = JSON.parse(hook('p2')); assert.equal(r2.decision, undefined); assert.match(r2.systemMessage || '', /src\/auth\/login\.js/, 'still on the wall on the next prompt: told, not sent back again (0.2.9)'); }
     // the person takes the commit back out: clean stop, and the baseline advances
     g('revert', '--no-edit', 'HEAD');
     assert.ok(!/"decision":"block"/.test(hook('p2')));
@@ -583,13 +582,13 @@ test('a violation across more than twenty protected files is remembered whole: n
     const turn = () => execFileSync(process.execPath, [CLI, 'turn', '--hook', d], { input: JSON.stringify({ hook_event_name: 'UserPromptSubmit' }), encoding: 'utf8', env: { ...process.env, HOME: TMP_HOME, LOGBOOK_NO_CACHE: '1' } });
     turn();
     for (let i = 0; i < 25; i++) writeFileSync(join(d, 'test', `t${i}.js`), 'x\n');
-    for (let i = 0; i < 3; i++) assert.equal(JSON.parse(hook('p1')).decision, 'block');
+    assert.equal(JSON.parse(hook('p1')).decision, 'block');
     hook('p1');
     const st = JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8'));
     assert.equal(Object.keys(st.lastViolation.files).length, 25, 'every changed protected path is remembered, not the first twenty');
     turn();
     assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8')).turnBaseline.files), [], 'none of the twenty-five is adopted');
-    assert.equal(JSON.parse(hook('p2')).decision, 'block');
+    assert.match(JSON.parse(hook('p2')).systemMessage || '', /not sent back again/, 'and the next prompt is told, not sent back again (0.2.9)');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -661,9 +660,7 @@ test('the Stop hook blocks a turn that leaves a protected path changed, then let
     assert.equal(r.decision, 'block');
     assert.match(r.reason, /no-auth.*src\/auth\/login\.js/);
     assert.match(readFileSync(join(d, '.sawbuck', 'activity.jsonl'), 'utf8'), /"kind":"mandate"/);
-    r = JSON.parse(hook('p1')); assert.equal(r.decision, 'block', 'still blocked on the second try of the same prompt');
-    r = JSON.parse(hook('p1')); assert.equal(r.decision, 'block');
-    r = JSON.parse(hook('p1')); assert.ok(!r.decision && /stopped blocking/.test(r.systemMessage), 'the block budget is bounded per prompt');
+    r = JSON.parse(hook('p1')); assert.ok(!r.decision && /not sent back again/.test(r.systemMessage), 'one change is sent back once (0.2.9), then a line for the person');
     g('checkout', '--', 'src/auth/login.js'); writeFileSync(join(d, 'src', 'x.js'), 'd\n');   // reverted the wall, fixed elsewhere
     const out = hook('p2');
     assert.ok(!/"decision":"block"/.test(out), 'a clean turn is allowed to end');
@@ -684,7 +681,7 @@ const wallRepo = (files) => {
   const state = () => JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8'));
   return { d, g, hook, turn, state };
 };
-const named = (raw) => { let t = ''; try { t = JSON.parse(raw).reason || ''; } catch { t = raw; } const m = /changed in this turn: (.*?)\. Undo the changes/.exec(t); return m ? m[1] : ''; };
+const named = (raw) => { let t = ''; try { t = JSON.parse(raw).reason || ''; } catch { t = raw; } const m = /changed in this turn: (.*?)\.(?: You are sent back for it once\.)? If you made this change/.exec(t); return m ? m[1] : ''; };
 
 test('a violation remembers only the turn\'s own protected changes: the person\'s spared file is never flagged or named', () => {
   const { d, g, hook, turn, state } = wallRepo(['src/auth/old.js', 'src/auth/login.js']);
@@ -693,13 +690,13 @@ test('a violation remembers only the turn\'s own protected changes: the person\'
     turn();
     writeFileSync(join(d, 'src', 'auth', 'login.js'), 'agent\n');           // the agent edits the wall
     const outs = [];
-    for (let i = 0; i < 4; i++) outs.push(hook({ prompt_id: 'p1' }));       // three blocks, then the budget runs out
+    for (let i = 0; i < 4; i++) outs.push(hook({ prompt_id: 'p1' }));       // one send-back, then lines (0.2.9)
     assert.deepEqual(Object.keys(state().lastViolation.files), ['src/auth/login.js'], 'only the turn\'s own change is remembered');
     turn();                                                                  // prompt 2
     assert.ok('src/auth/old.js' in state().turnBaseline.files, 'the person\'s file is baselined again');
     const again = hook({ prompt_id: 'p2' });                                 // the agent's edit is still there: blocked, naming only login.js
-    assert.equal(JSON.parse(again).decision, 'block');
-    assert.equal(named(again), '"no-auth": src/auth/login.js');
+    assert.equal(JSON.parse(again).decision, undefined, 'told, not sent back again (0.2.9)');
+    assert.match(JSON.parse(again).systemMessage || '', /"no-auth": src\/auth\/login\.js\)/); assert.doesNotMatch(again, /old\.js/);
     g('checkout', '--', 'src/auth/login.js');                                // the agent undoes its own change
     const clean = hook({ prompt_id: 'p2' });
     assert.ok(!/"decision":"block"/.test(clean), 'with the agent\'s edit undone the turn ends, the person\'s wip untouched');
@@ -714,16 +711,16 @@ test('a commit the person makes between turns is theirs, but unrelated work does
     const base = execFileSync('git', ['-C', d, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     turn();
     writeFileSync(join(d, 'src', 'auth', 'login.js'), 'agent\n'); g('add', 'src/auth/login.js'); g('commit', '-q', '-m', 'auth change (mid-turn)');
-    for (let i = 0; i < 3; i++) assert.equal(JSON.parse(hook({ prompt_id: 'p1' })).decision, 'block');
-    assert.match(JSON.parse(hook({ prompt_id: 'p1' })).systemMessage || '', /stopped blocking/);
+    { const r1 = JSON.parse(hook({ prompt_id: 'p1' })); assert.equal(r1.decision, 'block'); assert.match(r1.reason, /To accept this change on purpose, change the rule in the contract or revert the path/); }
+    assert.match(JSON.parse(hook({ prompt_id: 'p1' })).systemMessage || '', /not sent back again/);
     // between turns the agent is not running: the person commits their own notes, but HEAD still carries
     // the agent's protected content, so the pin holds (accepting it is an explicit act, not a side effect)
     writeFileSync(join(d, 'notes.md'), 'reviewing the auth change\n'); g('add', '-A'); g('commit', '-q', '-m', 'person: notes');
     turn();
     assert.equal(state().turnBaseline.sha, base, 'the baseline does not advance past the flagged commit while HEAD carries its content');
     const r = JSON.parse(hook({ prompt_id: 'p2' }));
-    assert.equal(r.decision, 'block');
-    assert.match(r.reason, /To accept this change on purpose, change the rule in the contract or revert the path/);
+    assert.equal(r.decision, undefined, 'told, not sent back again (0.2.9)');
+    assert.match(r.systemMessage || '', /protected paths are still changed/);
     // the person reverts the protected path and commits: that commit is theirs and the wall comes down
     g('checkout', base, '--', 'src/auth/login.js'); g('commit', '-q', '-am', 'person: revert the auth change');
     const head = execFileSync('git', ['-C', d, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -734,15 +731,15 @@ test('a commit the person makes between turns is theirs, but unrelated work does
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
-test('the block budget is per prompt even when the harness sends no prompt_id', () => {
+test('one change is sent back once even when the harness sends no prompt_id, and a new prompt does not send it back again', () => {
   const { d, hook, turn } = wallRepo(['src/auth/login.js']);
   try {
     turn();
     writeFileSync(join(d, 'src', 'auth', 'login.js'), 'agent\n');
-    for (let i = 0; i < 3; i++) assert.equal(JSON.parse(hook({})).decision, 'block');
-    assert.match(JSON.parse(hook({})).systemMessage || '', /stopped blocking/, 'the budget for this prompt is spent');
-    turn();                                                                  // the next prompt: a fresh budget, keyed on the prompt's timestamp
-    assert.equal(JSON.parse(hook({})).decision, 'block', 'the wall is back for the new prompt, not spent for the repo\'s lifetime');
+    assert.equal(JSON.parse(hook({})).decision, 'block');
+    assert.match(JSON.parse(hook({})).systemMessage || '', /not sent back again/, 'sent back once, with no prompt_id as with one (0.2.9)');
+    turn();                                                                  // the next prompt
+    assert.match(JSON.parse(hook({})).systemMessage || '', /not sent back again/, 'and a new prompt does not send it back again: told while it stands');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
@@ -952,14 +949,14 @@ test('a commit landed between turns does not walk the agent\'s committed protect
     const base = execFileSync('git', ['-C', d, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     turn();
     writeFileSync(join(d, 'src', 'auth', 'login.js'), 'agent\n'); g('add', 'src/auth/login.js'); g('commit', '-q', '-m', 'auth change (mid-turn)');
-    for (let i = 0; i < 3; i++) assert.equal(JSON.parse(hook({ prompt_id: 'p1' })).decision, 'block');
-    assert.match(JSON.parse(hook({ prompt_id: 'p1' })).systemMessage || '', /stopped blocking/);
+    { const r1 = JSON.parse(hook({ prompt_id: 'p1' })); assert.equal(r1.decision, 'block'); assert.match(r1.reason, /To accept this change on purpose, change the rule in the contract or revert the path/); }
+    assert.match(JSON.parse(hook({ prompt_id: 'p1' })).systemMessage || '', /not sent back again/);
     g('commit', '-q', '--allow-empty', '-m', 'tidy (a background process the agent started)');   // HEAD moves after the Stop
     turn();
     assert.equal(state().turnBaseline.sha, base, 'the pin holds: HEAD still carries the flagged content');
     const r = JSON.parse(hook({ prompt_id: 'p2' }));
-    assert.equal(r.decision, 'block', 'the committed protected change is still charged to the agent');
-    assert.match(r.reason, /To accept this change on purpose, change the rule in the contract or revert the path/);
+    assert.equal(r.decision, undefined, 'the committed protected change is still on the wall: told, not sent back again (0.2.9)');
+    assert.match(r.systemMessage || '', /protected paths are still changed/);
     // the person reverts the path and commits: the pin is released and a clean turn ends
     g('checkout', base, '--', 'src/auth/login.js'); g('commit', '-q', '-am', 'person: revert the auth change');
     const head = execFileSync('git', ['-C', d, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
