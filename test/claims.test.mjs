@@ -945,7 +945,8 @@ test('claim: the hold asks before Sawbuck\'s own end-of-turn check is run by han
   assert.doesNotMatch(w.pre('npx -y sawbuck@0.2.9 check'), ask, 'the check itself is not asked');
   assert.match(changelog(), lit("A command that runs Sawbuck's own end-of-turn check by hand is asked too."));
 });
-test('claim: in Cursor a standing change is sent back once at each prompt, and not again on Cursor\'s own follow-ups', () => {
+test('limit: in Cursor, after the first send-back, Cursor may show nothing more about a standing change', () => {
+  assert.match(readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8').replace(/\s+/g, ' ').replace(/\*\*/g, ''), lit("Cursor, after the first send-back. Cursor's end of a turn has no line for the person, so after the agent is sent back once for a change, Cursor may show nothing more about it while it stands."));
   const d = signed(true); assert.equal(sb(d, 'attach', '--cursor').code, 0);
   const h = JSON.parse(readFileSync(join(d, '.cursor/hooks.json'), 'utf8'));
   const run = (ev, extra = {}) => spawnSync('sh', ['-c', h.hooks[ev][0].command], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ conversation_id: 'c1', generation_id: 'g1', hook_event_name: ev, workspace_roots: [d], ...extra }) }).stdout || '';
@@ -954,9 +955,10 @@ test('claim: in Cursor a standing change is sent back once at each prompt, and n
   run('beforeSubmitPrompt', { prompt: 'loosen the threshold' }); edit(d, 'promptwheel.config.json', wallThr(0.9));
   assert.match(stop(0).followup_message || '', /promptwheel\.config\.json/, 'sent back once');
   assert.deepEqual(stop(1), {}, 'not again on Cursor\'s own follow-up');
-  run('beforeSubmitPrompt', { prompt: 'next' }); assert.match(stop(0).followup_message || '', /promptwheel\.config\.json/, 'the next prompt: sent back once again while it stands');
-  assert.deepEqual(stop(1), {}, 'and not again on its follow-up');
-  assert.match(changelog(), lit("In Cursor, once at each prompt. Cursor's end of a turn has no line for the person, so a standing change is sent back there once at each prompt instead."));
+  // Cursor's page does not say whether loop_count starts again at a new message: where it does, once at each prompt
+  run('beforeSubmitPrompt', { prompt: 'next' }); assert.match(stop(0).followup_message || '', /promptwheel\.config\.json/, 'a count started again: sent back once at this prompt');
+  // and where it keeps counting across the conversation, nothing more
+  run('beforeSubmitPrompt', { prompt: 'and on' }); assert.deepEqual(stop(2), {}, 'a count kept across the conversation: nothing more');
 });
 test('claim: a told record in the state file is not believed when the second copy has no count of its own', () => {
   const d = signed(true); const w = wired(d); wallSent(d, w); w.stop();

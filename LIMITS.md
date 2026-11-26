@@ -34,6 +34,8 @@ Each limit here is held by a test in [`test/claims.test.mjs`](test/claims.test.m
 - **Your own edit to a file the agent was sent back for.** If you edit a protected file between turns while it
   still holds a change the agent was sent back for, or commit it with more of your own, the file as you leave it
   is taken as yours, the agent's change in it included.
+- **Cursor, after the first send-back.** Cursor's end of a turn has no line for the person, so after the agent is
+  sent back once for a change, Cursor may show nothing more about it while it stands.
 - **Before a repository's first commit, only the contract is read by name.** A workflow or another protected file
   that a turn stages, puts in the first commit, or deletes or hides while it is untracked is not seen at the end of
   the turn. Reading every file there by content sent back ordinary work (a staged file's edit put back, a pull into a

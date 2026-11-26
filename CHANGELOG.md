@@ -11,8 +11,6 @@ What was found and fixed in each version, newest first. For versions before 0.1.
   after that the end of each turn tells you while it stands. A further change to the file is sent back once more, up
   to three send-backs in one turn. Measured first, in our own sessions: every agent sent back for its own protected
   edit undid it after the first send-back, and no repeat ever changed what an agent did.
-- **In Cursor, once at each prompt.** Cursor's end of a turn has no line for the person, so a standing change is sent
-  back there once at each prompt instead.
 - **The send-back says what to do in each case.** If the agent made the change, it undoes it, and the person makes
   it themselves in their editor or another terminal between turns, never with a `!` line. If it did not, it undoes
   nothing and tells the person that a reason does not end it; a revert does.
