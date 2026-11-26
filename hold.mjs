@@ -50,6 +50,11 @@ export function namesRepoRecord(command, home = process.env.HOME || homedir()) {
 }
 const OWN_WHY = 'Sawbuck: this detaches Sawbuck or touches its own record (.sawbuck/, or .git/sawbuck/), which is what the end of a turn is checked from. Approve only if you asked for it, not the agent.';
 const askOwn = () => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: OWN_WHY } });
+// the person's own holds, for every repo (Q75, 0.2.10): an agent that wrote holds.off there was asked nothing, and it counted
+// at once. A command that names the file and is not only reads, or an edit tool pointed at it, is asked first.
+export const HOME_HOLDS = /\.sawbuck\/config\.json(?![\w.-])/;
+const HOLDS_WHY = 'Sawbuck: this writes your own holds (~/.sawbuck/config.json), which say which commands ask you first, in every repo. Approve only if you asked for it, not the agent.';
+const askHolds = () => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: HOLDS_WHY } });
 // the edit tools (Edit, Write and the like): a file under either folder
 export function ownRecordEdit(hookJson, repo) {
   let h = {}; try { h = JSON.parse(hookJson || '{}'); } catch {}
@@ -60,6 +65,8 @@ export function ownRecordEdit(hookJson, repo) {
   const gp = guardPath(repo);
   const under = (abs, dir) => !!dir && (abs === dir || abs.startsWith(dir + sep));
   const typed = resolve(repo, f), real = realPath(typed);
+  const homeCfg = join(process.env.HOME || homedir(), '.sawbuck', 'config.json');
+  if (typed === homeCfg || real === realPath(homeCfg)) return askHolds();   // the person's own holds (Q75)
   let began = ''; try { began = beganDir(); } catch { /* no home to name: nothing there to guard */ }   // in the person's home: where a turn's beginning is kept when there was no repository
   return ((began && (under(typed, began) || under(real, realPath(began)))) || under(typed, join(resolve(repo), '.sawbuck')) || under(typed, gp ? dirname(gp) : '')
     || under(real, realPath(join(resolve(repo), '.sawbuck'))) || under(real, gp ? realPath(dirname(gp)) : '')) ? askOwn() : null;
@@ -75,16 +82,17 @@ export const OUTWARD = [
 // the repo's holds as the turn's start had sawbuck.config.json (Q70, 0.2.10), from the second copy of the baseline a prompt
 // took: an agent that wrote holds.off was not asked before a publish in that same turn. Before any prompt (a baseline attach
 // wrote, or none), the file as it is now.
-function startHolds(repo) {
-  try { const b = readGuard(repo).baseline; if (b && typeof b === 'object' && b.by !== 'attach' && Object.prototype.hasOwnProperty.call(b, 'holds')) return (b.holds && typeof b.holds === 'object' && !Array.isArray(b.holds)) ? b.holds : {}; } catch {}
+function startHolds(repo, key = 'holds') {
+  try { const b = readGuard(repo).baseline; if (b && typeof b === 'object' && b.by !== 'attach' && Object.prototype.hasOwnProperty.call(b, key)) return (b[key] && typeof b[key] === 'object' && !Array.isArray(b[key])) ? b[key] : {}; } catch {}
   return undefined;
 }
 // the repo's holds (sawbuck.config.json) and the person's own, for every repo and none (~/.sawbuck/config.json):
 // patterns add up; either one saying off turns the hold off where it says it
 export function holdConfig(repo, home = process.env.HOME || homedir(), { atStart = false } = {}) {
   const read = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')).holds || {}; } catch { return {}; } };
-  const fromStart = atStart && repo ? startHolds(repo) : undefined;
-  const mine = read(join(home, '.sawbuck', 'config.json')), here = fromStart !== undefined ? fromStart : (repo ? read(join(repo, 'sawbuck.config.json')) : {});
+  const fromStart = atStart && repo ? startHolds(repo) : undefined, mineAtStart = atStart && repo ? startHolds(repo, 'homeHolds') : undefined;
+  // the person's own holds too, as the turn's start had them (Q75): a write made in the turn counts from the next prompt
+  const mine = mineAtStart !== undefined ? mineAtStart : read(join(home, '.sawbuck', 'config.json')), here = fromStart !== undefined ? fromStart : (repo ? read(join(repo, 'sawbuck.config.json')) : {});
   return { off: !!(here.off || mine.off), outward: [...(Array.isArray(mine.outward) ? mine.outward : []), ...(Array.isArray(here.outward) ? here.outward : [])] };
 }
 
@@ -141,6 +149,7 @@ export function holdDecision(hookJson, repo) {
   const cmd = withoutCommitMessages(h.tool_input && typeof h.tool_input.command === 'string' ? h.tool_input.command : '');
   // --allow records a person's decision to accept what the check could not prove; the agent typing it is not that.
   // Always asked, holds off or not: it is how a gamed verdict is cleared.
+  if (HOME_HOLDS.test(cmd) && !onlyReads(cmd)) return askHolds();
   if (DETACH.test(cmd) || RUNS_HOOK.test(cmd) || (namesRepoRecord(cmd) && !onlyReads(cmd))) return askOwn();
   // a commit made by a background task lands after the end of the turn, where a commit is read as the person's own
   // (unless the task reports back first: then the prompt hook keeps the turn's baseline). Asked like the two above.

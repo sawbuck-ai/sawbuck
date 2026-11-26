@@ -559,7 +559,7 @@ switch (cmd) {
             // take effect (an agent's maxBlocks 0 disarmed the wall from the next prompt; its holds.off took the ask before a
             // publish away in the same turn); a person's own change between turns counts from this prompt.
             const startCfg = configAtStart(repo, files, startSha);
-            st.turnBaseline = { at: now, sha: startSha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: settingOf(startCfg, 'maxBlocks'), remindTurns: settingOf(startCfg, 'remindTurns'), holds: (startCfg.holds && typeof startCfg.holds === 'object' && !Array.isArray(startCfg.holds)) ? startCfg.holds : null };
+            st.turnBaseline = { at: now, sha: startSha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: settingOf(startCfg, 'maxBlocks'), remindTurns: settingOf(startCfg, 'remindTurns'), holds: (startCfg.holds && typeof startCfg.holds === 'object' && !Array.isArray(startCfg.holds)) ? startCfg.holds : null, homeHolds: homeHoldsNow() };
             // a new turn: a catch the last turn was still being sent back for is an open item like any other from here
             // on (0.2.0: no turn is sent back for what an earlier turn did). An interrupted turn the person typed over is one.
             { const g0 = readGuard(repo); const was = Array.isArray(g0.open) ? g0.open : []; const patch = { baseline: st.turnBaseline }; if (was.some((o) => o && o.live)) patch.open = was.map((o) => { const c = { ...o }; delete c.live; return c; }); writeGuard(repo, patch); }   // the baseline's second copy in the git folder: the record folder is out of git status, so its loss during a turn must not lose the turn's starting point (guard.mjs)
@@ -1268,6 +1268,8 @@ function configAtStart(repo, files, sha) {
   if (text === null) { try { text = readFileSync(join(repo, f), 'utf8'); } catch { text = ''; } }
   try { const c = JSON.parse(text); return (c && typeof c === 'object' && !Array.isArray(c)) ? c : {}; } catch { return {}; }
 }
+// the person's own holds (~/.sawbuck/config.json) as this prompt finds them (Q75, 0.2.10): the hold reads these for the turn
+function homeHoldsNow() { try { const c = JSON.parse(readFileSync(join(process.env.HOME || homedir(), '.sawbuck', 'config.json'), 'utf8')); return (c && c.holds && typeof c.holds === 'object' && !Array.isArray(c.holds)) ? c.holds : null; } catch { return null; } }
 function settingOf(c, k) { return (c && c.enforce && typeof c.enforce === 'object' && c.enforce[k] !== undefined) ? c.enforce[k] : null; }
 // enforce.remindTurns the same way (0.2.0): for how many later turns a person is told about a test change left open
 function remindTurnsIn(repo) { try { const e = JSON.parse(readFileSync(join(repo, 'sawbuck.config.json'), 'utf8')).enforce; return (e && e.remindTurns !== undefined) ? e.remindTurns : null; } catch { return null; } }

@@ -345,6 +345,21 @@ test('claim: an agent that turns the hold off in sawbuck.config.json is still as
   put(e, 'sawbuck.config.json', JSON.stringify({ holds: { off: true } }) + '\n'); save(e, 'my repo, no holds');   // the person, between turns
   x.prompt('next'); assert.equal(x.pre('npm publish').trim(), '', 'the person\'s own switch, from their next prompt');
 });
+test('claim: the hold asks before a command or an edit writes the person\'s own holds, and a write made in a turn does not count in it', () => {
+  const d = signed(true); const w = wired(d); const ask = /"permissionDecision":"ask"/;
+  const h = JSON.parse(readFileSync(join(d, '.claude/settings.local.json'), 'utf8')).hooks;
+  const preEdit = (file) => spawnSync('sh', ['-c', h.PreToolUse.find((x) => String(x.matcher || '').includes('Edit')).hooks[0].command], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: file, content: '{}' }, session_id: 's', cwd: d }) }).stdout || '';
+  w.prompt('ship it');
+  for (const c of [`echo '{"holds":{"off":true}}' > ~/.sawbuck/config.json`, `cp x.json ${HOME}/.sawbuck/config.json`, 'mkdir -p "$HOME/.sawbuck" && mv x.json "$HOME/.sawbuck/config.json"']) assert.match(w.pre(c), ask, c);
+  assert.match(preEdit(join(HOME, '.sawbuck', 'config.json')), ask, 'an edit tool pointed at it');
+  assert.doesNotMatch(w.pre('cat ~/.sawbuck/config.json'), ask, 'reading it is not asked');
+  const cf = join(HOME, '.sawbuck', 'config.json'); mkdirSync(dirname(cf), { recursive: true }); const had = existsSync(cf) ? readFileSync(cf, 'utf8') : null;
+  try {
+    writeFileSync(cf, JSON.stringify({ holds: { off: true } }));   // a write that got past the question: a script that names no file
+    assert.match(w.pre('npm publish'), ask, 'it does not count in the turn that wrote it');
+    w.stop(); w.prompt('next'); assert.equal(w.pre('npm publish').trim(), '', 'from the next prompt it is the person\'s own file');
+  } finally { if (had === null) rmSync(cf, { force: true }); else writeFileSync(cf, had); }
+});
 test('claim: an outward command asks a person first; a test run does not; the hold can be turned off for a repo', () => { const d = signed(true); const w = wired(d); assert.match(w.pre('npm publish'), /"permissionDecision":"ask"/); assert.match(w.pre('gh pr merge 12 --squash'), /"ask"/); assert.match(w.pre('git push --force origin main'), /"ask"/); assert.match(w.pre('gh issue comment 3 --body hi'), /"ask"/); assert.equal(w.pre('npm test').trim(), ''); assert.equal(w.pre('git push origin main').trim(), '', 'a plain push is not held by default'); assert.equal(w.pre('git commit -m x').trim(), ''); put(d, 'sawbuck.config.json', JSON.stringify({ holds: { off: true } })); assert.equal(w.pre('npm publish').trim(), ''); put(d, 'sawbuck.config.json', JSON.stringify({ holds: { outward: ['\\bgit\\s+push\\b'] } })); assert.match(w.pre('git push origin main'), /"ask"/, 'a repo can add its own'); });
 test('claim: on a clean account a signed repo does not block a clean turn', () => { const d = signed(true); const w = wired(d); for (let i = 0; i < 3; i++) { w.prompt(); assert.ok(!blocked(w.stop()), `turn ${i}`); } assert.equal(git(d, 'status', '--porcelain'), ''); assert.equal(check(d).code, 0); });
 test('claim: saying yes to the offer does not block its own turn: signing and attaching mid-turn on a clean account', () => { const d = repo(true); git(d, 'remote', 'add', 'origin', 'https://github.com/a/b.git'); assert.equal(sb(d, 'contract').code, 0); const w = wired(d); assert.ok(!blocked(w.stop()), 'the signing turn ends'); save(d, 'sign'); w.prompt(); assert.ok(!blocked(w.stop()), 'the next clean turn'); w.prompt(); put(d, '.npmrc', 'x\n'); assert.ok(blocked(w.stop()), 'and the wall still works'); });
