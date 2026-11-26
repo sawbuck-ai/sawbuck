@@ -674,29 +674,12 @@ switch (cmd) {
     let h = {}; if (!process.stdin.isTTY) { try { h = JSON.parse(readFileSync(0, 'utf8') || '{}'); } catch {} }
     const session = String(h.conversation_id || h.session_id || 'cursor');
     const call = (args, input) => { try { return execFileSync(process.execPath, [SELF, ...args], { encoding: 'utf8', input: JSON.stringify(input), stdio: ['pipe', 'pipe', 'ignore'] }); } catch (e) { return String(e.stdout || ''); } };
-    // Cursor sends a stop hook's followup_message as the next user message. Its page (cursor.com/docs/agent/hooks, read
-    // 2026-11-25) says loop_count counts follow-ups "for this conversation", and not whether it starts again at a new
-    // message, nor whether beforeSubmitPrompt runs for a follow-up. So the adapter keeps its own count in the second copy:
-    // the follow-up it sent, and how many since the person's last prompt (the sixth read of 0.2.9: once at each prompt
-    // rested on loop_count starting again, and a count kept across the conversation would have gone quiet).
-    const turns = () => { const g = readGuard(r).cursorTurn; return (g && typeof g === 'object' && !Array.isArray(g)) ? g : {}; };
-    const turnNow = () => { const t = turns()[session]; return (t && typeof t === 'object') ? t : {}; };
-    const setTurn = (t) => writeGuard(r, { cursorTurn: { ...Object.fromEntries(Object.entries(turns()).filter(([k]) => k !== session).slice(-9)), [session]: t } });
-    if (ev === 'beforeSubmitPrompt') {
-      const text = String(h.prompt || ''), t = turnNow();
-      if (!(t.followup && text === t.followup)) {   // the adapter's own follow-up coming back is the agent's turn going on, not a prompt
-        setTurn({ sent: 0 });
-        call(['turn', '--hook', r], { hook_event_name: 'UserPromptSubmit', prompt: text, session_id: session, cwd: r });
-      }
-      out(JSON.stringify({ continue: true })); break;
-    }
+    if (ev === 'beforeSubmitPrompt') { call(['turn', '--hook', r], { hook_event_name: 'UserPromptSubmit', prompt: String(h.prompt || ''), session_id: session, cwd: r }); out(JSON.stringify({ continue: true })); break; }
     if (ev === 'stop') {
-      const t = turnNow(), sent = Number(t.sent) || 0;
-      if (sent >= 3) { out('{}'); break; }   // three follow-ups since the person's last prompt, then the turn ends
-      const o = call(['__hook', '--repo', r, '--by', 'cursor', '--stop'], { hook_event_name: 'Stop', session_id: session, cwd: r }).trim();
+      if ((h.loop_count || 0) >= 3) { out('{}'); break; }   // the same budget as Claude Code: three send-backs, then the turn ends
+      const o = call(['__hook', '--repo', r, '--by', 'cursor', '--stop'], { hook_event_name: 'Stop', session_id: session, cwd: r, loop_count: Number(h.loop_count) || 0 }).trim();
       let j = null; try { j = JSON.parse(o); } catch {}
-      if (j && j.decision === 'block') { setTurn({ sent: sent + 1, followup: j.reason }); out(JSON.stringify({ followup_message: j.reason })); } else out('{}');
-      break;
+      out(JSON.stringify(j && j.decision === 'block' ? { followup_message: j.reason } : {})); break;
     }
     if (ev === 'beforeShellExecution') {
       dependencyEditFromHook(JSON.stringify({ tool_name: 'Bash', tool_input: { command: String(h.command || '') }, cwd: h.cwd }), r);   // a write into an installed dependency, for the notice at the end of the turn

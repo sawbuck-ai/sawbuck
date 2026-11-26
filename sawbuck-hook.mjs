@@ -416,11 +416,10 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // did got only lines. Each session whose turn ends with the change standing is sent back once for it.
     const toldNow = {}; let fresh = false, anyNew = false;
     // Cursor (attach --cursor) has no line for the person at the end of a turn, so there a standing change is sent back
-    // once at each prompt instead (his words of 2026-11-25 16:07): the count is kept per prompt, at most one. A prompt is
-    // the person's: the adapter does not pass Cursor's own follow-ups to the prompt hook (sawbuck.mjs, __cursor).
-    const cursor = by === 'cursor';
+    // once at each prompt instead (his words of 2026-11-25 16:07): the count is kept per prompt, and a follow-up Cursor
+    // sends itself (loop_count above 0) is not a prompt, so a change already sent back is not sent back again on it
+    const cursor = by === 'cursor', cursorFollowUp = cursor && (Number(hookInput.loop_count) || 0) > 0;
     const countKey = cursor ? `${sessionOf}@${promptId}`.slice(0, 120) : sessionOf;
-    const countMax = cursor ? Math.min(wallMax, 1) : wallMax;
     // where the turn began: the start's own files keep only content (the mode is '?' there, and only the content is
     // compared), a commit keeps both; and the commit's own state of the file, which a commit of the change must be
     // taken back to (git revert) for the change to be gone
@@ -433,7 +432,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
       const same = !!e && e.flagged === cur; if (!same) anyNew = true;
       const by = (same && e.by && typeof e.by === 'object' && !Array.isArray(e.by)) ? Object.fromEntries(Object.entries(e.by).slice(-20)) : {};
       toldNow[f] = { flagged: cur, before: (e && typeof e.before === 'string') ? e.before : startOf(f), head: (e && typeof e.head === 'string') ? e.head : inCommit(f), by, at: (same && e.at) ? e.at : now };
-      if ((Number(by[countKey]) || 0) < countMax) fresh = true;
+      if ((Number(by[countKey]) || 0) < wallMax && !(cursorFollowUp && same)) fresh = true;
     }
     // never more than three send-backs from the wall in one turn (0.2.8's number; his words of 2026-11-25 16:07): an agent
     // that keeps changing a protected file is sent back for each new state only until then, and the turn ends with
@@ -442,7 +441,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     const capped = fresh && spentInTurn >= 3;
     if (capped) fresh = false;
     if (fresh) {
-      for (const f of Object.keys(toldNow)) { const n = Number(toldNow[f].by[countKey]) || 0; if (n < countMax) toldNow[f].by[countKey] = n + 1; }
+      for (const f of Object.keys(toldNow)) { const n = Number(toldNow[f].by[countKey]) || 0; if (n < wallMax) toldNow[f].by[countKey] = n + 1; }
       st.mandatePromptId = promptId; st.mandateBlocks = spentInTurn + 1;
     }
     st.wallTold = toldNow;

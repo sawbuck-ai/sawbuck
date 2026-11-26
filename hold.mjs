@@ -20,14 +20,8 @@ export const ALLOW = /\b(sawbuck|promptwheel)(\.mjs)?\b[^|;&]*\s--allow\b/;
 // is not a repo's record, and the plugin's own commands name it: never asked here.
 export const DETACH = /\bsawbuck(?:\.mjs)?["']?(?:@[\w.-]+)?["']?\s+detach\b/;
 // Sawbuck's own end-of-turn check run by hand (0.2.9, his words of 2026-11-25 16:07): run with the agent's session, it
-// spent the one send-back before the turn's real end (the fifth read). Only a command that RUNS it, read part by part
-// (split at ; && || | and new lines): the part's command word, after any VAR=value, exec, env, command, time, nohup or
-// option, a shell's -c, npx or bunx (pnpm or yarn dlx) with options, or node with options, is sawbuck with __hook or
-// __cursor, or the hook's own file. A read, a grep, an echo, node --check or a commit that only names it is not asked (the
-// sixth read: the first pattern asked those, and Codex refuses what is asked).
-const RUN_LEAD = String.raw`^\s*(?:(?:[A-Za-z_]\w*=\S*|exec|env|command|time|nohup|-\S+)\s+)*(?:(?:ba|z|da)?sh\s+-\w*c\w*\s+["']?)?(?:(?:npx|bunx)\s+(?:-\S+\s+)*|(?:pnpm|yarn)\s+dlx\s+(?:-\S+\s+)*)?(?:node\s+(?:(?!-c\b|--check\b)-\S+\s+)*)?["']?\S*?`;
-const RUNS_HOOK_PART = new RegExp(RUN_LEAD + String.raw`(?:\bsawbuck(?:\.mjs)?["']?(?:@[\w.-]+)?["']?\s+__(?:hook|cursor)\b|\bsawbuck-hook\.mjs\b)`);
-export const runsHookByHand = (command) => String(command || '').split(/\n|;|&&|\|\|?/).some((p) => RUNS_HOOK_PART.test(p));
+// spent the one send-back before the turn's real end (the fifth read)
+export const RUNS_HOOK = /\bsawbuck(?:\.mjs)?["']?(?:@[\w.-]+)?["']?\s+__(?:hook|cursor)\b|\bsawbuck-hook\.mjs\b/;
 const BG_COMMIT = /\bgit\b[^|;&]*\s(?:commit|merge|rebase|cherry-pick|am|revert)\b/;
 // the command word, then a space or the end: `cat=1 rm ...` is an assignment and `cat () ( ... )` a function, and both
 // borrowed a read's name (the second read of 0.2.9); nor ( ) anywhere in it (zsh runs code from a glob qualifier). An
@@ -139,7 +133,7 @@ export function holdDecision(hookJson, repo) {
   const cmd = withoutCommitMessages(h.tool_input && typeof h.tool_input.command === 'string' ? h.tool_input.command : '');
   // --allow records a person's decision to accept what the check could not prove; the agent typing it is not that.
   // Always asked, holds off or not: it is how a gamed verdict is cleared.
-  if (DETACH.test(cmd) || runsHookByHand(cmd) || (namesRepoRecord(cmd) && !onlyReads(cmd))) return askOwn();
+  if (DETACH.test(cmd) || RUNS_HOOK.test(cmd) || (namesRepoRecord(cmd) && !onlyReads(cmd))) return askOwn();
   // a commit made by a background task lands after the end of the turn, where a commit is read as the person's own
   // (unless the task reports back first: then the prompt hook keeps the turn's baseline). Asked like the two above.
   if (h.tool_input && h.tool_input.run_in_background === true && BG_COMMIT.test(cmd)) return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'Sawbuck: this runs in the background and commits. A commit that lands after the turn has ended is not checked with the turn. Approve only if you asked for it; or have the agent commit in the turn.' } };
