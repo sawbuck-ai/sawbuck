@@ -2,7 +2,7 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
-## 0.2.9 (2026-11-25): the wall sends one change back once
+## 0.2.9 (2026-11-26): the wall sends one change back once
 
 - **A protected change is sent back once, not three times a prompt.** In 0.2.8 a protected file changed in a session
   was sent back three times on every prompt, in a new session too, for as long as the change stood, and a person's own
