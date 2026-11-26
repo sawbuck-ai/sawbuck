@@ -943,6 +943,8 @@ test('claim: the hold asks before Sawbuck\'s own end-of-turn check is run by han
   for (const c of ['npx -y sawbuck@0.2.9 __hook --repo . --by claude --stop', 'echo \'{"session_id":"x"}\' | sawbuck __hook --repo . --stop', 'node node_modules/sawbuck/sawbuck.mjs __hook --stop', 'node node_modules/sawbuck/sawbuck-hook.mjs --repo . --stop', 'sawbuck __cursor stop .'])
     assert.match(w.pre(c), ask, c);
   assert.doesNotMatch(w.pre('npx -y sawbuck@0.2.9 check'), ask, 'the check itself is not asked');
+  for (const c of ['cat node_modules/sawbuck/sawbuck-hook.mjs', 'grep -rn "sawbuck __hook" README.md', 'echo sawbuck __hook', 'git diff -- sawbuck-hook.mjs', 'node --check sawbuck-hook.mjs', 'git commit -m "the wall in sawbuck-hook.mjs" -- sawbuck-hook.mjs', 'sed -n 1,20p sawbuck-hook.mjs'])
+    assert.doesNotMatch(w.pre(c), ask, `only names it: ${c}`);   // the sixth read: these were asked, and Codex refuses what is asked
   assert.match(changelog(), lit("A command that runs Sawbuck's own end-of-turn check by hand is asked too."));
 });
 test('claim: in Cursor a standing change is sent back once at each prompt, and not again on Cursor\'s own follow-ups', () => {
@@ -957,6 +959,24 @@ test('claim: in Cursor a standing change is sent back once at each prompt, and n
   run('beforeSubmitPrompt', { prompt: 'next' }); assert.match(stop(0).followup_message || '', /promptwheel\.config\.json/, 'the next prompt: sent back once again while it stands');
   assert.deepEqual(stop(1), {}, 'and not again on its follow-up');
   assert.match(changelog(), lit("In Cursor, once at each prompt. Cursor's end of a turn has no line for the person, so a standing change is sent back there once at each prompt instead."));
+});
+// Cursor's page (cursor.com/docs/agent/hooks, read 2026-11-25) says loop_count counts follow-ups "for this conversation"
+// and not whether it starts again at a new message, nor whether a follow-up runs beforeSubmitPrompt: the adapter counts
+// its own follow-ups (the sixth read of 0.2.9)
+test('claim: in Cursor once at each prompt holds whatever Cursor counts, and its follow-up coming back as a prompt is not a prompt', () => {
+  const d = signed(true); assert.equal(sb(d, 'attach', '--cursor').code, 0);
+  const h = JSON.parse(readFileSync(join(d, '.cursor/hooks.json'), 'utf8'));
+  const run = (ev, extra = {}) => spawnSync('sh', ['-c', h.hooks[ev][0].command], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ conversation_id: 'c1', generation_id: 'g1', hook_event_name: ev, workspace_roots: [d], ...extra }) }).stdout || '';
+  const stop = (loop) => JSON.parse(run('stop', { status: 'completed', loop_count: loop }) || '{}');
+  run('beforeSubmitPrompt', { prompt: 'look' }); stop(0);
+  run('beforeSubmitPrompt', { prompt: 'loosen the threshold' }); edit(d, 'promptwheel.config.json', wallThr(0.9));
+  const f = stop(0).followup_message || ''; assert.match(f, /promptwheel\.config\.json/, 'sent back once');
+  run('beforeSubmitPrompt', { prompt: f });   // Cursor sending the follow-up as the next user message, through the prompt hook
+  assert.deepEqual(stop(1), {}, 'the follow-up is not a prompt: not sent back again');
+  for (const [i, p] of ['next', 'and on', 'and more'].entries()) {   // a loop_count that keeps counting across the conversation
+    run('beforeSubmitPrompt', { prompt: p }); assert.match(stop(2 + i).followup_message || '', /promptwheel\.config\.json/, `${p}: once at this prompt`);
+    assert.deepEqual(stop(3 + i), {}, `${p}: and not again`);
+  }
 });
 test('claim: a told record in the state file is not believed when the second copy has no count of its own', () => {
   const d = signed(true); const w = wired(d); wallSent(d, w); w.stop();
@@ -1532,7 +1552,8 @@ test('claim: attach --cursor wires Cursor: a gamed commit comes back as a follow
   assert.deepEqual(JSON.parse(run('beforeSubmitPrompt', { prompt: 'make add pass' })), { continue: true });
   edit(d, 'test/add.test.js', (s) => s.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
   const stop = JSON.parse(run('stop', { status: 'completed', loop_count: 0 })); assert.match(stop.followup_message || '', /gamed/);
-  assert.deepEqual(JSON.parse(run('stop', { status: 'completed', loop_count: 3 })), {}, 'three send-backs, then the turn ends');
+  for (let i = 2; i <= 3; i++) assert.match(JSON.parse(run('stop', { status: 'completed', loop_count: i - 1 })).followup_message || '', /gamed/, `follow-up ${i}`);
+  assert.deepEqual(JSON.parse(run('stop', { status: 'completed', loop_count: 3 })), {}, 'three follow-ups since the prompt, then the turn ends');
   const sh = JSON.parse(run('beforeShellExecution', { command: 'npm publish', cwd: d })); assert.equal(sh.permission, 'ask'); assert.match(sh.user_message, /publish/);
   assert.deepEqual(JSON.parse(run('beforeShellExecution', { command: 'npm test', cwd: d })), { permission: 'allow' });
   assert.ok(!/\.cursor/.test(git(d, 'status', '--porcelain')));
