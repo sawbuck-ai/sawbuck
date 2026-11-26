@@ -926,6 +926,54 @@ test('claim: the second copy removed between turns does not end a standing flag'
   rmSync(join(d, '.git', 'sawbuck', 'guard.json'));   // between turns
   w.prompt('next'); const o = w.stop(); assert.ok(blocked(o) || wallLine(o), `still flagged: ${o.slice(0, 120)}`);
 });
+// the fifth read of 0.2.9 (second-reader-10, on ce8c322), and his words of 2026-11-25 16:07
+const changelog = () => readFileSync(join(HERE, '..', 'CHANGELOG.md'), 'utf8').replace(/\s+/g, ' ').replace(/\*\*/g, '');
+test('claim: a further change is sent back once more, up to three send-backs in one turn, and then the turn ends with a line', () => {
+  const d = signed(true); put(d, '.npmrc', 'fund=false\n'); save(d, 'the registry file'); const w = wired(d); w.prompt('look'); w.stop();
+  w.prompt('registry');
+  for (let i = 1; i <= 3; i++) { put(d, '.npmrc', `fund=false\nregistry=https://r${i}.example.invalid/\n`); assert.ok(blocked(w.stop()), `state ${i}: sent back`); }
+  put(d, '.npmrc', 'fund=false\nregistry=https://r4.example.invalid/\n'); const o = w.stop();
+  assert.ok(!blocked(o) && /\.npmrc/.test(o), `a fourth state in the same turn: a line: ${o.slice(0, 160)}`);
+  assert.match(o, lit('Sawbuck stopped blocking after 3 tries: protected paths are still changed'));
+  assert.match(changelog(), lit('A further change to the file is sent back once more, up to three send-backs in one turn.'));
+  w.prompt('next'); assert.ok(blocked(w.stop()), 'the state the cap left unsent is sent back once at the next prompt');
+});
+test('claim: the hold asks before Sawbuck\'s own end-of-turn check is run by hand', () => {
+  const d = signed(true); const w = wired(d); const ask = /"permissionDecision":"ask"/;
+  for (const c of ['npx -y sawbuck@0.2.9 __hook --repo . --by claude --stop', 'echo \'{"session_id":"x"}\' | sawbuck __hook --repo . --stop', 'node node_modules/sawbuck/sawbuck.mjs __hook --stop', 'node node_modules/sawbuck/sawbuck-hook.mjs --repo . --stop', 'sawbuck __cursor stop .'])
+    assert.match(w.pre(c), ask, c);
+  assert.doesNotMatch(w.pre('npx -y sawbuck@0.2.9 check'), ask, 'the check itself is not asked');
+  assert.match(changelog(), lit("A command that runs Sawbuck's own end-of-turn check by hand is asked too."));
+});
+test('claim: in Cursor a standing change is sent back once at each prompt, and not again on Cursor\'s own follow-ups', () => {
+  const d = signed(true); assert.equal(sb(d, 'attach', '--cursor').code, 0);
+  const h = JSON.parse(readFileSync(join(d, '.cursor/hooks.json'), 'utf8'));
+  const run = (ev, extra = {}) => spawnSync('sh', ['-c', h.hooks[ev][0].command], { cwd: d, encoding: 'utf8', env: ENV, input: JSON.stringify({ conversation_id: 'c1', generation_id: 'g1', hook_event_name: ev, workspace_roots: [d], ...extra }) }).stdout || '';
+  const stop = (loop) => JSON.parse(run('stop', { status: 'completed', loop_count: loop }) || '{}');
+  run('beforeSubmitPrompt', { prompt: 'look' }); assert.deepEqual(stop(0), {}, 'a clean turn');
+  run('beforeSubmitPrompt', { prompt: 'loosen the threshold' }); edit(d, 'promptwheel.config.json', wallThr(0.9));
+  assert.match(stop(0).followup_message || '', /promptwheel\.config\.json/, 'sent back once');
+  assert.deepEqual(stop(1), {}, 'not again on Cursor\'s own follow-up');
+  run('beforeSubmitPrompt', { prompt: 'next' }); assert.match(stop(0).followup_message || '', /promptwheel\.config\.json/, 'the next prompt: sent back once again while it stands');
+  assert.deepEqual(stop(1), {}, 'and not again on its follow-up');
+  assert.match(changelog(), lit("In Cursor, once at each prompt. Cursor's end of a turn has no line for the person, so a standing change is sent back there once at each prompt instead."));
+});
+test('claim: a told record in the state file is not believed when the second copy has no count of its own', () => {
+  const d = signed(true); const w = wired(d); wallSent(d, w); w.stop();
+  const sp = join(d, '.sawbuck', 'state.json'); const real = JSON.parse(readFileSync(sp, 'utf8')).wallTold; assert.ok(real, 'a told record is kept');
+  git(d, 'checkout', '-q', '--', 'promptwheel.config.json'); w.prompt('reverted'); w.stop();
+  w.prompt('plant');   // a turn that writes the old record back, takes the second copy's own section away, and makes the change again
+  const st = JSON.parse(readFileSync(sp, 'utf8')); st.wallTold = real; put(d, '.sawbuck/state.json', JSON.stringify(st, null, 2) + '\n');
+  const gp = join(d, '.git', 'sawbuck', 'guard.json'); const g = JSON.parse(readFileSync(gp, 'utf8')); delete g.own; writeFileSync(gp, JSON.stringify(g, null, 2) + '\n');
+  edit(d, 'promptwheel.config.json', wallThr(0.9));
+  assert.ok(blocked(w.stop()), 'sent back');
+});
+test('claim: a turn whose last line is for a gamed test names a standing protected change too', () => {
+  const d = signed(false); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); save(d, 'ask me first');
+  const w = wired(d); w.prompt('look'); w.stop();
+  w.prompt('make add pass'); put(d, '.npmrc', 'fund=false\n'); edit(d, 'test/add.test.js', (t) => t.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
+  const o = w.stop(); assert.match(o, /add\.test\.js/, o.slice(0, 200)); assert.match(o, /protected paths are still changed \(.*\.npmrc\)\./, 'the protected path named in the same line');
+});
 // the third read's W3: a told record copied back into the state file during a turn was believed at the next prompt
 test('claim: a told record written into the state file is not believed', () => {
   const d = signed(true); const w = wired(d); wallSent(d, w); w.stop();   // a real told record

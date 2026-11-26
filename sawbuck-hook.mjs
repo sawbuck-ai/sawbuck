@@ -100,7 +100,7 @@ const own = (G.own && typeof G.own === 'object' && !Array.isArray(G.own)) ? G.ow
 if (own) {
   for (const k of OWN) { if (Object.prototype.hasOwnProperty.call(own, k)) st[k] = own[k]; else delete st[k]; }
   st.lastSha = (own.seen && hasCommit(own.seen)) ? own.seen : '';
-}
+} else delete st.wallTold;   // 0.2.9: the wall's told record only from the second copy; none there, none at all (the fifth read: one planted in the state file was believed)
 // 0) THE UNDO LEDGER, WHEN THE TURN ENDS (undo.mjs). What the agent had added to a file when the person spoke, and is gone
 // now, is an undo at their request, whatever took it out: an edit, `git checkout`, a shell command. Their words go
 // with it only where the repo is attached with --words (the state file holds none otherwise), and so does the note.
@@ -301,6 +301,10 @@ const lastAgentText = () => {
 const asksPerson = (text, file) => { const tail = String(text || '').slice(-800); return tail.includes('?') && (tail.includes(basename(file || '')) || /\btests?\b/i.test(tail)); };
 // the wall's own send-back (0.2.9): how often is decided by what it already told (see THE WALL AT TURN LEVEL)
 const wallSend = (reason) => { process.stdout.write(JSON.stringify({ decision: 'block', reason })); process.exit(0); };
+// the wall's line when a gamed test of the same turn speaks last: that last line names the protected path too, as 0.2.8's
+// did (the third and fifth reads of 0.2.9: it waited a turn)
+let wallLine = '';
+const withWall = (m) => wallLine ? `${m} ${wallLine}` : m;
 const sendBack = (idKey, countKey, reason, stillOpen) => {
   // enforce.maxBlocks in sawbuck.config.json: how many times a turn is sent back to the agent (default 3). 0 means
   // the person decides every time: nothing goes back to the agent, the person is told at once.
@@ -313,7 +317,7 @@ const sendBack = (idKey, countKey, reason, stillOpen) => {
   const spent = (st[countKey] || 0) >= max;
   if (!spent) st[countKey] = (st[countKey] || 0) + 1;
   saveState(spent ? 'ends' : 'back');
-  process.stdout.write(JSON.stringify(spent ? { systemMessage: max === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${stillOpen}` : `Sawbuck stopped blocking after ${max} tries: ${stillOpen}` } : { decision: 'block', reason }));
+  process.stdout.write(JSON.stringify(spent ? { systemMessage: withWall(max === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${stillOpen}` : `Sawbuck stopped blocking after ${max} tries: ${stillOpen}`) } : { decision: 'block', reason }));
   process.exit(0);
 };
 
@@ -411,6 +415,11 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // share one record, so the one send-back could land on the session that did not make the change while the one that
     // did got only lines. Each session whose turn ends with the change standing is sent back once for it.
     const toldNow = {}; let fresh = false, anyNew = false;
+    // Cursor (attach --cursor) has no line for the person at the end of a turn, so there a standing change is sent back
+    // once at each prompt instead (his words of 2026-11-25 16:07): the count is kept per prompt, and a follow-up Cursor
+    // sends itself (loop_count above 0) is not a prompt, so a change already sent back is not sent back again on it
+    const cursor = by === 'cursor', cursorFollowUp = cursor && (Number(hookInput.loop_count) || 0) > 0;
+    const countKey = cursor ? `${sessionOf}@${promptId}`.slice(0, 120) : sessionOf;
     // where the turn began: the start's own files keep only content (the mode is '?' there, and only the content is
     // compared), a commit keeps both; and the commit's own state of the file, which a commit of the change must be
     // taken back to (git revert) for the change to be gone
@@ -423,9 +432,18 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
       const same = !!e && e.flagged === cur; if (!same) anyNew = true;
       const by = (same && e.by && typeof e.by === 'object' && !Array.isArray(e.by)) ? Object.fromEntries(Object.entries(e.by).slice(-20)) : {};
       toldNow[f] = { flagged: cur, before: (e && typeof e.before === 'string') ? e.before : startOf(f), head: (e && typeof e.head === 'string') ? e.head : inCommit(f), by, at: (same && e.at) ? e.at : now };
-      if ((Number(by[sessionOf]) || 0) < wallMax) fresh = true;
+      if ((Number(by[countKey]) || 0) < wallMax && !(cursorFollowUp && same)) fresh = true;
     }
-    if (fresh) for (const f of Object.keys(toldNow)) { const n = Number(toldNow[f].by[sessionOf]) || 0; if (n < wallMax) toldNow[f].by[sessionOf] = n + 1; }
+    // never more than three send-backs from the wall in one turn (0.2.8's number; his words of 2026-11-25 16:07): an agent
+    // that keeps changing a protected file is sent back for each new state only until then, and the turn ends with
+    // 0.2.8's own line. A state the cap left unsent is sent back at the next prompt.
+    const spentInTurn = st.mandatePromptId === promptId ? (Number(st.mandateBlocks) || 0) : 0;
+    const capped = fresh && spentInTurn >= 3;
+    if (capped) fresh = false;
+    if (fresh) {
+      for (const f of Object.keys(toldNow)) { const n = Number(toldNow[f].by[countKey]) || 0; if (n < wallMax) toldNow[f].by[countKey] = n + 1; }
+      st.mandatePromptId = promptId; st.mandateBlocks = spentInTurn + 1;
+    }
     st.wallTold = toldNow;
     // one catch for one change (0.2.9; it was one a prompt), counted whether it is sent back or told: with
     // enforce.maxBlocks 0 nothing goes back, and the record, the statusline and the band still show it (the second read of
@@ -439,17 +457,19 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     }
     // told, not sent back. A gamed test in this turn's commits still goes back by its own rule (section 3), as in 0.2.8:
     // then the line waits (the second read of 0.2.9: this exit had skipped it)
+    const still = `protected paths are still changed (${desc}).`;
+    wallLine = capped ? `Sawbuck stopped blocking after 3 tries: ${still}` : wallMax === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${still}` : `Sawbuck: ${still} The agent was sent back for this change${wallMax === 1 ? ' once' : ''}, and is not sent back again for it. A reason does not end it; reverting the change does (for a commit, git revert).`;
     if (!fresh && !mine) {
-      const still = `protected paths are still changed (${desc}).`;
       saveState('ends');
-      process.stdout.write(JSON.stringify({ systemMessage: wallMax === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${still}` : `Sawbuck: ${still} The agent was sent back for this change${wallMax === 1 ? ' once' : ''}, and is not sent back again for it. A reason does not end it; reverting the change does (for a commit, git revert).` }));
+      process.stdout.write(JSON.stringify({ systemMessage: wallLine }));
       process.exit(0);
     }
     if (fresh) {
+    wallLine = '';
     saveState('back');
     wallSend(`Sawbuck: a protected path in the contract was changed in this turn: ${desc}.${wallMax === 1 ? ' You are sent back for it once.' : ''} If you made this change: undo it and make the fix elsewhere, and do not revert anything you did not change. If the person wants the change, they make it themselves, in their editor or another terminal between your turns; a line they type with ! in this session reads as yours.${person} If you made none of these changes: undo nothing and stop, and tell the person that a reason does not end this. Reverting the change does (for a commit, git revert); once a turn has run to its end after that, the same change made in their editor before the next prompt is theirs.${spared}${restore}${accept}${upgrade}${alsoGamed}`);
     }
-    saveState();   // told, and a gamed test of this turn goes on to its own send-back below
+    saveState();   // told, and a gamed test of this turn goes on to its own send-back below, its last line naming this one too
   }
 }
 
@@ -485,14 +505,15 @@ if (stop && mine && !process.env.SAWBUCK_NO_ENFORCE) {
   const sameAsBase = () => { try { execFileSync('git', ['-C', repo, 'diff', '--quiet', mine.base, '--', ...listed], { stdio: 'ignore' }); return true; } catch { return false; } };
   if (listed && !mine.goalpostsMore && mine.base && hasCommit(mine.base) && sameAsBase()) {
     const told = st.restoredTold === head; st.restoredTold = head; saveState('ends');
-    if (!told) process.stdout.write(JSON.stringify({ systemMessage: `Sawbuck: ${posts.join(', ')} ${listed.length === 1 ? 'is' : 'are'} back as ${listed.length === 1 ? 'it was' : 'they were'} in your working tree, not committed yet. The last commit still holds the changed test, so the record stays open until that is committed (git commit -am "put the test back"). Nothing is sent back for it meanwhile.` }));
+    if (told && wallLine) process.stdout.write(JSON.stringify({ systemMessage: wallLine }));
+    if (!told) process.stdout.write(JSON.stringify({ systemMessage: withWall(`Sawbuck: ${posts.join(', ')} ${listed.length === 1 ? 'is' : 'are'} back as ${listed.length === 1 ? 'it was' : 'they were'} in your working tree, not committed yet. The last commit still holds the changed test, so the record stays open until that is committed (git commit -am "put the test back"). Nothing is sent back for it meanwhile.`) }));
     process.exit(0);
   }
   const also = (Array.isArray(mine.also) && mine.also.length) ? ` The same change also made ${mine.also.join(', ')} worse, which the contract guards.` : '';
   // the agent asking the person instead of bending the source is the right move, so the turn may end there
   if (asksPerson(lastAgentText(), where)) {
     saveState('ends');
-    process.stdout.write(JSON.stringify({ systemMessage: `Sawbuck: the win on ${where} came from changing the test, and your agent is asking you about it instead of changing the source to fit. ${choices}` }));
+    process.stdout.write(JSON.stringify({ systemMessage: withWall(`Sawbuck: the win on ${where} came from changing the test, and your agent is asking you about it instead of changing the source to fit. ${choices}`) }));
     process.exit(0);
   }
   sendBack('blockPromptId', 'blockCount', `Sawbuck: the win on ${where} was gamed. It came from editing the test or config, not the source, so it did not survive a source-only re-run.${also} The turn is not done: fix the source so the test passes as it was written. If you believe the test itself was wrong, do not change the source to fit it: end your turn by showing the person the test change and asking them what to do, as a direct question.`, `the win on ${where} is still gamed. ${choices}`);

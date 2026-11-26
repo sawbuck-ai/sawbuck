@@ -8,9 +8,11 @@ What was found and fixed in each version, newest first. For versions before 0.1.
   was sent back three times on every prompt, in a new session too, for as long as the change stood, and a person's own
   edit read as the agent's could not be ended by a reason. Now one change, a file and what was done to it, is sent back
   once (`enforce.maxBlocks` in sawbuck.config.json sets how many times, counted across prompts, once in each session);
-  after that the end of each turn tells you while it stands. A further change to the file is sent back once more. Measured
-  first, in our own sessions: every agent sent back for its own protected edit undid it after the first send-back,
-  and no repeat ever changed what an agent did.
+  after that the end of each turn tells you while it stands. A further change to the file is sent back once more, up
+  to three send-backs in one turn. Measured first, in our own sessions: every agent sent back for its own protected
+  edit undid it after the first send-back, and no repeat ever changed what an agent did.
+- **In Cursor, once at each prompt.** Cursor's end of a turn has no line for the person, so a standing change is sent
+  back there once at each prompt instead.
 - **The send-back says what to do in each case.** If the agent made the change, it undoes it, and the person makes
   it themselves in their editor or another terminal between turns, never with a `!` line. If it did not, it undoes
   nothing and tells the person that a reason does not end it; a revert does.
@@ -19,7 +21,7 @@ What was found and fixed in each version, newest first. For versions before 0.1.
 - **The hold reads a command by its parts.** A command made only of reads that names `.sawbuck`, such as `cat` and
   `ls` joined with `;` or `&&` with errors sent to /dev/null, was asked about; it is not now. And a read followed by a
   second command on a new line was taken for a read and not asked (0.2.8 and earlier); it is asked now. Anything else
-  that names the record is asked, as before.
+  that names the record is asked, as before. A command that runs Sawbuck's own end-of-turn check by hand is asked too.
 
 ## 0.2.8 (2026-11-24): a failed pull-request check says why in its own log, a note on a test rewritten after the source changed, and the hooks say when they start an older sawbuck
 

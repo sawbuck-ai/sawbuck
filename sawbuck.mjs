@@ -677,7 +677,7 @@ switch (cmd) {
     if (ev === 'beforeSubmitPrompt') { call(['turn', '--hook', r], { hook_event_name: 'UserPromptSubmit', prompt: String(h.prompt || ''), session_id: session, cwd: r }); out(JSON.stringify({ continue: true })); break; }
     if (ev === 'stop') {
       if ((h.loop_count || 0) >= 3) { out('{}'); break; }   // the same budget as Claude Code: three send-backs, then the turn ends
-      const o = call(['__hook', '--repo', r, '--by', 'cursor', '--stop'], { hook_event_name: 'Stop', session_id: session, cwd: r }).trim();
+      const o = call(['__hook', '--repo', r, '--by', 'cursor', '--stop'], { hook_event_name: 'Stop', session_id: session, cwd: r, loop_count: Number(h.loop_count) || 0 }).trim();
       let j = null; try { j = JSON.parse(o); } catch {}
       out(JSON.stringify(j && j.decision === 'block' ? { followup_message: j.reason } : {})); break;
     }
