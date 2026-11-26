@@ -322,6 +322,29 @@ test('claim: --purge never deletes a committed LOGBOOK.md', () => { const d = si
 
 // ------------------------------------------------------------ the wall, through the hooks attach writes
 test('claim: a commit the person makes between turns is theirs, not scored; the agent\'s own commit in a turn still is', () => { const d = signed(true); const w = wired(d); w.prompt(); w.stop(); put(d, 'test/red.test.js', "const t=require('node:test'),a=require('node:assert');t.test('red',()=>a.equal(1,2))\n"); save(d, 'a red test first, by the person'); w.prompt(); assert.ok(!blocked(w.stop())); const rec = () => { try { return JSON.parse(readFileSync(join(d, '.sawbuck', 'results.json'), 'utf8')); } catch { return { regressions: 0, gamed: 0 }; } }; assert.equal(rec().regressions || 0, 0, 'the red test the person committed between turns is not the agent\'s regression'); assert.equal(rec().gamed || 0, 0); w.prompt(); edit(d, 'test/red.test.js', (s) => s.replace('a.equal(1,2)', 'a.equal(1,1)')); save(d, 'make it pass'); w.stop(); assert.equal(rec().gamed, 1, 'the agent\'s own commit in the turn, a test edited to pass, still reads gamed'); });
+// Q70 (2026-11-26): a setting is read as the turn's start has sawbuck.config.json, so an agent's change to it, which the
+// wall sends back, does not take effect; a person's own, made between turns, counts from their next prompt
+test('claim: an agent that writes enforce.maxBlocks 0 into sawbuck.config.json does not disarm the wall', () => {
+  const thr = (v) => (s) => { const c = JSON.parse(s); c.gamingThreshold = v; return JSON.stringify(c, null, 2) + '\n'; };
+  const d = signed(true); const w = wired(d); w.prompt('look'); w.stop();
+  w.prompt('quiet the wall'); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n');
+  assert.ok(blocked(w.stop()), 'the edit to the contract is sent back once'); w.stop();   // the agent leaves it
+  w.prompt('next'); edit(d, 'promptwheel.config.json', thr(0.9));
+  assert.ok(blocked(w.stop()), 'a new protected change is still sent back: the 0 the agent wrote is not the setting');
+  const e = signed(true); const x = wired(e); x.prompt('look'); x.stop();
+  put(e, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); save(e, 'ask me first');   // the person, between turns
+  x.prompt('loosen'); edit(e, 'promptwheel.config.json', thr(0.9)); const o = x.stop();
+  assert.ok(!blocked(o) && /promptwheel\.config\.json/.test(o), `the person's own 0 is the setting: a line at once: ${o.slice(0, 120)}`);
+});
+test('claim: an agent that turns the hold off in sawbuck.config.json is still asked before a publish, in that turn and the next', () => {
+  const d = signed(true); const w = wired(d); const ask = /"permissionDecision":"ask"/;
+  w.prompt('ship it'); put(d, 'sawbuck.config.json', JSON.stringify({ holds: { off: true } }) + '\n');
+  assert.match(w.pre('npm publish'), ask, 'in the same turn');
+  w.stop(); w.stop(); w.prompt('next'); assert.match(w.pre('npm publish'), ask, 'and at the next prompt, the change left standing');
+  const e = signed(true); const x = wired(e); x.prompt('look'); x.stop();
+  put(e, 'sawbuck.config.json', JSON.stringify({ holds: { off: true } }) + '\n'); save(e, 'my repo, no holds');   // the person, between turns
+  x.prompt('next'); assert.equal(x.pre('npm publish').trim(), '', 'the person\'s own switch, from their next prompt');
+});
 test('claim: an outward command asks a person first; a test run does not; the hold can be turned off for a repo', () => { const d = signed(true); const w = wired(d); assert.match(w.pre('npm publish'), /"permissionDecision":"ask"/); assert.match(w.pre('gh pr merge 12 --squash'), /"ask"/); assert.match(w.pre('git push --force origin main'), /"ask"/); assert.match(w.pre('gh issue comment 3 --body hi'), /"ask"/); assert.equal(w.pre('npm test').trim(), ''); assert.equal(w.pre('git push origin main').trim(), '', 'a plain push is not held by default'); assert.equal(w.pre('git commit -m x').trim(), ''); put(d, 'sawbuck.config.json', JSON.stringify({ holds: { off: true } })); assert.equal(w.pre('npm publish').trim(), ''); put(d, 'sawbuck.config.json', JSON.stringify({ holds: { outward: ['\\bgit\\s+push\\b'] } })); assert.match(w.pre('git push origin main'), /"ask"/, 'a repo can add its own'); });
 test('claim: on a clean account a signed repo does not block a clean turn', () => { const d = signed(true); const w = wired(d); for (let i = 0; i < 3; i++) { w.prompt(); assert.ok(!blocked(w.stop()), `turn ${i}`); } assert.equal(git(d, 'status', '--porcelain'), ''); assert.equal(check(d).code, 0); });
 test('claim: saying yes to the offer does not block its own turn: signing and attaching mid-turn on a clean account', () => { const d = repo(true); git(d, 'remote', 'add', 'origin', 'https://github.com/a/b.git'); assert.equal(sb(d, 'contract').code, 0); const w = wired(d); assert.ok(!blocked(w.stop()), 'the signing turn ends'); save(d, 'sign'); w.prompt(); assert.ok(!blocked(w.stop()), 'the next clean turn'); w.prompt(); put(d, '.npmrc', 'x\n'); assert.ok(blocked(w.stop()), 'and the wall still works'); });

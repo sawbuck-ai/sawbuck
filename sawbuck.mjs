@@ -553,7 +553,13 @@ switch (cmd) {
             const stillInHead = moved && Object.entries(flagged).some(([f, h]) => { const b = blobAt(repo, sha, f); return h === 'deleted' ? b === '' : (!!h && b === h); });
             const pin = !!(st.lastViolation && st.lastViolation.sha);
             if (moved && !stillInHead && st.lastViolation) delete st.lastViolation.sha;
-            st.turnBaseline = { at: now, sha: ((!moved || stillInHead) && pin && st.lastViolation.sha) || sha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: maxBlocksIn(repo), remindTurns: remindTurnsIn(repo) };
+            const startSha = ((!moved || stillInHead) && pin && st.lastViolation.sha) || sha;
+            // Q70 (0.2.10): the settings as the turn's start has sawbuck.config.json, not as the working tree has it now. A
+            // change of the agent's that the wall flagged is held out of the start above, so a setting it wrote does not
+            // take effect (an agent's maxBlocks 0 disarmed the wall from the next prompt; its holds.off took the ask before a
+            // publish away in the same turn); a person's own change between turns counts from this prompt.
+            const startCfg = configAtStart(repo, files, startSha);
+            st.turnBaseline = { at: now, sha: startSha, files, lock: lockState(repo), rules: mandatesInForce(repo), refs: refTips(repo), maxBlocks: settingOf(startCfg, 'maxBlocks'), remindTurns: settingOf(startCfg, 'remindTurns'), holds: (startCfg.holds && typeof startCfg.holds === 'object' && !Array.isArray(startCfg.holds)) ? startCfg.holds : null };
             // a new turn: a catch the last turn was still being sent back for is an open item like any other from here
             // on (0.2.0: no turn is sent back for what an earlier turn did). An interrupted turn the person typed over is one.
             { const g0 = readGuard(repo); const was = Array.isArray(g0.open) ? g0.open : []; const patch = { baseline: st.turnBaseline }; if (was.some((o) => o && o.live)) patch.open = was.map((o) => { const c = { ...o }; delete c.live; return c; }); writeGuard(repo, patch); }   // the baseline's second copy in the git folder: the record folder is out of git status, so its loss during a turn must not lose the turn's starting point (guard.mjs)
@@ -1249,6 +1255,20 @@ function verifyClean(repo) {
 function maxBlocksIn(repo) { try { const e = JSON.parse(readFileSync(join(repo, 'sawbuck.config.json'), 'utf8')).enforce; return (e && e.maxBlocks !== undefined) ? e.maxBlocks : null; } catch { return null; } }
 // an undo as a finding for the notes on this machine (handed on only where the repo is attached with --words)
 function undoFinding(e) { return { kind: 'undone', title: `${e.kind === 'part' ? 'partly undone' : 'undone'}: ${e.first || e.file} in ${e.file}`, text: e.why || `An edit to ${e.file} was undone at the person's request.`, files: [e.file] }; }
+// sawbuck.config.json as a turn's start has it (Q70, 0.2.10), where the contract protects the file: the start's own copy
+// where it is dirty there, else the commit the start stands on. Where nothing protects it (no contract, or a rule taken
+// away), nothing tells an agent's change from a person's, and the file is read as it is now, as before. {} where there is
+// none or it does not parse.
+function configAtStart(repo, files, sha) {
+  const f = 'sawbuck.config.json'; let text = null;
+  try {
+    if (Object.prototype.hasOwnProperty.call(files, f)) text = files[f] === 'deleted' ? '' : execFileSync('git', ['cat-file', 'blob', files[f]], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    else if (protectedAmong(repo, [f]).length) text = sha ? execFileSync('git', ['show', `${sha}:${f}`], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) : '';
+  } catch { text = ''; }
+  if (text === null) { try { text = readFileSync(join(repo, f), 'utf8'); } catch { text = ''; } }
+  try { const c = JSON.parse(text); return (c && typeof c === 'object' && !Array.isArray(c)) ? c : {}; } catch { return {}; }
+}
+function settingOf(c, k) { return (c && c.enforce && typeof c.enforce === 'object' && c.enforce[k] !== undefined) ? c.enforce[k] : null; }
 // enforce.remindTurns the same way (0.2.0): for how many later turns a person is told about a test change left open
 function remindTurnsIn(repo) { try { const e = JSON.parse(readFileSync(join(repo, 'sawbuck.config.json'), 'utf8')).enforce; return (e && e.remindTurns !== undefined) ? e.remindTurns : null; } catch { return null; } }
 // every ref tip at the start of a turn, so a rebase inside the turn can tell the agent's own commits from upstream's

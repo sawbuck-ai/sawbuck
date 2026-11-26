@@ -6,7 +6,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep } from 'node:path';
 import { homedir } from 'node:os';
-import { guardPath } from './guard.mjs';
+import { guardPath, readGuard } from './guard.mjs';
 import { beganDir } from './began.mjs';
 import { realPath } from './repo-state.mjs';
 
@@ -72,18 +72,26 @@ export const OUTWARD = [
   ['vercel --prod', /\b(npx\s+)?vercel\b[^|;&]*--prod\b/], ['cargo publish', /\bcargo\s+publish\b/], ['twine upload', /\btwine\s+upload\b/], ['gem push', /\bgem\s+push\b/],
 ];
 
+// the repo's holds as the turn's start had sawbuck.config.json (Q70, 0.2.10), from the second copy of the baseline a prompt
+// took: an agent that wrote holds.off was not asked before a publish in that same turn. Before any prompt (a baseline attach
+// wrote, or none), the file as it is now.
+function startHolds(repo) {
+  try { const b = readGuard(repo).baseline; if (b && typeof b === 'object' && b.by !== 'attach' && Object.prototype.hasOwnProperty.call(b, 'holds')) return (b.holds && typeof b.holds === 'object' && !Array.isArray(b.holds)) ? b.holds : {}; } catch {}
+  return undefined;
+}
 // the repo's holds (sawbuck.config.json) and the person's own, for every repo and none (~/.sawbuck/config.json):
 // patterns add up; either one saying off turns the hold off where it says it
-export function holdConfig(repo, home = process.env.HOME || homedir()) {
+export function holdConfig(repo, home = process.env.HOME || homedir(), { atStart = false } = {}) {
   const read = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')).holds || {}; } catch { return {}; } };
-  const mine = read(join(home, '.sawbuck', 'config.json')), here = repo ? read(join(repo, 'sawbuck.config.json')) : {};
+  const fromStart = atStart && repo ? startHolds(repo) : undefined;
+  const mine = read(join(home, '.sawbuck', 'config.json')), here = fromStart !== undefined ? fromStart : (repo ? read(join(repo, 'sawbuck.config.json')) : {});
   return { off: !!(here.off || mine.off), outward: [...(Array.isArray(mine.outward) ? mine.outward : []), ...(Array.isArray(here.outward) ? here.outward : [])] };
 }
 
 // the hold a command trips, or null
 export function outwardHold(command, repo) {
   const c = String(command || '');
-  const cfg = holdConfig(repo);
+  const cfg = holdConfig(repo, undefined, { atStart: true });
   if (cfg.off) return null;
   const extra = (Array.isArray(cfg.outward) ? cfg.outward : []).map((p) => { try { return [String(p), new RegExp(p)]; } catch { return null; } }).filter(Boolean);
   for (const [name, re] of [...OUTWARD, ...extra]) if (re.test(c)) return name;
