@@ -36,6 +36,22 @@ export function onlyReads(command) {
   const parts = String(command || '').split(/\n|;|&&|\|\|/).map((p) => p.replace(TO_NULL, '').trim()).filter(Boolean);
   return parts.length > 0 && parts.every((p) => PLAIN_READ.test(p));
 }
+// the person's own holds named at their path in the home folder (~, $HOME, ${HOME}, a quoted $HOME, or the folder
+// itself): a folder elsewhere whose name ends in .sawbuck, or the repo's own record, is not this file (the 0.2.10 read)
+export function namesHomeHolds(command, home = process.env.HOME || homedir()) {
+  const c = String(command || ''); const re = /\.sawbuck\/config\.json(?![\w.-])/g; let m;
+  const heads = ['~/', '$HOME/', '${HOME}/', '"$HOME"/', "'$HOME'/", '"${HOME}"/', home ? `${home}/` : ''].filter(Boolean);
+  while ((m = re.exec(c))) { const before = c.slice(0, m.index); if (heads.some((h) => before.endsWith(h))) return true; }
+  return false;
+}
+// reads of the person's holds pass (his word of 2026-11-27): the plain reads, and grep, jq, test, [ and diff, joined by
+// pipes, with $HOME naming the folder. Only this question reads them so; the record's own question keeps onlyReads.
+const HOLDS_READ = /^\s*(?:cat|ls|head|tail|wc|stat|file|less|more|grep|egrep|fgrep|jq|test|\[|diff)(?:\s[^;&|<>`$\n()]*)?$/;
+export function holdsReadsOnly(command) {
+  const c = String(command || '').replace(/(["']?)\$\{?HOME\}?\1/g, '~');
+  const parts = c.split(/\n|;|&&|\|\||\|/).map((x) => x.replace(TO_NULL, '').trim()).filter(Boolean);
+  return parts.length > 0 && parts.every((x) => HOLDS_READ.test(x));
+}
 export function namesRepoRecord(command, home = process.env.HOME || homedir()) {
   const c = String(command || '');
   if (/\.git\/sawbuck(?![\w-])/.test(c)) return true;
@@ -90,9 +106,18 @@ function startHolds(repo, key = 'holds') {
 // patterns add up; either one saying off turns the hold off where it says it
 export function holdConfig(repo, home = process.env.HOME || homedir(), { atStart = false } = {}) {
   const read = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')).holds || {}; } catch { return {}; } };
-  const fromStart = atStart && repo ? startHolds(repo) : undefined, mineAtStart = atStart && repo ? startHolds(repo, 'homeHolds') : undefined;
-  // the person's own holds too, as the turn's start had them (Q75): a write made in the turn counts from the next prompt
-  const mine = mineAtStart !== undefined ? mineAtStart : read(join(home, '.sawbuck', 'config.json')), here = fromStart !== undefined ? fromStart : (repo ? read(join(repo, 'sawbuck.config.json')) : {});
+  // the stricter of the turn's start and now (his word of 2026-11-27, after the 0.2.10 read), for the repo's holds and the
+  // person's own alike: off counts only when both say off, so an agent's write to the file does not turn the hold off in
+  // its turn, and neither does a start copy written alone in .git/sawbuck; a pattern counts as soon as either has it, so
+  // a hold added during a turn counts at once. Before any prompt (no start), the file as it is now.
+  const strict = (now, start) => {
+    const n = (now && typeof now === 'object' && !Array.isArray(now)) ? now : {};
+    if (!start || typeof start !== 'object' || Array.isArray(start)) return n;
+    const list = (x) => (Array.isArray(x.outward) ? x.outward : []);
+    return { off: !!(n.off && start.off), outward: [...new Set([...list(start), ...list(n)])] };
+  };
+  const here = strict(repo ? read(join(repo, 'sawbuck.config.json')) : {}, atStart && repo ? startHolds(repo) : undefined);
+  const mine = strict(read(join(home, '.sawbuck', 'config.json')), atStart && repo ? startHolds(repo, 'homeHolds') : undefined);
   return { off: !!(here.off || mine.off), outward: [...(Array.isArray(mine.outward) ? mine.outward : []), ...(Array.isArray(here.outward) ? here.outward : [])] };
 }
 
@@ -149,7 +174,7 @@ export function holdDecision(hookJson, repo) {
   const cmd = withoutCommitMessages(h.tool_input && typeof h.tool_input.command === 'string' ? h.tool_input.command : '');
   // --allow records a person's decision to accept what the check could not prove; the agent typing it is not that.
   // Always asked, holds off or not: it is how a gamed verdict is cleared.
-  if (HOME_HOLDS.test(cmd) && !onlyReads(cmd)) return askHolds();
+  if (namesHomeHolds(cmd) && !holdsReadsOnly(cmd)) return askHolds();
   if (DETACH.test(cmd) || RUNS_HOOK.test(cmd) || (namesRepoRecord(cmd) && !onlyReads(cmd))) return askOwn();
   // a commit made by a background task lands after the end of the turn, where a commit is read as the person's own
   // (unless the task reports back first: then the prompt hook keeps the turn's baseline). Asked like the two above.

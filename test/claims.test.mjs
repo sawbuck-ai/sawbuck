@@ -360,6 +360,26 @@ test('claim: the hold asks before a command or an edit writes the person\'s own 
     w.stop(); w.prompt('next'); assert.equal(w.pre('npm publish').trim(), '', 'from the next prompt it is the person\'s own file');
   } finally { if (had === null) rmSync(cf, { force: true }); else writeFileSync(cf, had); }
 });
+test('claim: holds are the stricter of the turn\'s start and now: a hold added during a turn counts at once, and a start copy written alone turns nothing off', () => {
+  const d = signed(true); const w = wired(d); w.prompt('look'); w.stop(); w.prompt('go on');
+  const asks = (cmd) => /"permissionDecision":"ask"/.test(w.pre(cmd));
+  assert.ok(!asks('git push origin topic'), 'a plain push is not held by default');
+  put(d, 'sawbuck.config.json', JSON.stringify({ holds: { outward: ['\\bgit\\s+push\\b'] } }) + '\n');
+  assert.ok(asks('git push origin topic'), 'the hold the person added during the turn counts at once');
+  const gp = join(d, '.git', 'sawbuck', 'guard.json'); const g = JSON.parse(readFileSync(gp, 'utf8'));
+  g.baseline.holds = { off: true }; g.baseline.homeHolds = { off: true }; writeFileSync(gp, JSON.stringify(g));
+  assert.ok(asks('npm publish'), 'off written only into the start copy turns nothing off');
+});
+test('claim: the question about your own holds is for writes to them, and only at their path in your home', () => {
+  const d = signed(true); const w = wired(d); w.prompt('look');
+  const why = (cmd) => { const o = w.pre(cmd); return /"permissionDecision":"ask"/.test(o) ? (o.includes('your own holds') ? 'holds' : 'other') : ''; };
+  for (const r of ['grep outward ~/.sawbuck/config.json', 'jq .holds ~/.sawbuck/config.json', 'test -f ~/.sawbuck/config.json', '[ -f ~/.sawbuck/config.json ]', 'cat $HOME/.sawbuck/config.json | jq .', 'diff ~/.sawbuck/config.json /tmp/x.json'])
+    assert.equal(why(r), '', `a read is not asked: ${r}`);
+  assert.equal(why(`echo '{}' > ~/.sawbuck/config.json`), 'holds', 'a write is asked');
+  assert.equal(why(`echo '{}' > "$HOME"/.sawbuck/config.json`), 'holds', 'a write through $HOME is asked');
+  assert.equal(why('echo x > app.sawbuck/config.json'), '', 'another folder whose name ends in .sawbuck is not your holds');
+  assert.equal(why('rm .sawbuck/config.json'), 'other', 'the repo\'s own record keeps its own question');
+});
 test('claim: the 0.2.10 pages say what the hold asks and when a setting counts', () => {
   const guide = readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8').replace(/\s+/g, ' '), limits = readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8').replace(/\s+/g, ' ');
   assert.match(guide, lit('A change to either counts from your next prompt, and one the agent makes does not count.'));
@@ -1023,6 +1043,27 @@ test('claim: a turn with a gamed test and a protected change is sent back three 
   let n = 0, o = ''; for (let i = 0; i < 8; i++) { o = w.stop(); if (blocked(o)) n++; else break; }
   assert.equal(n, 3, `sent back ${n} times in one turn`);
   assert.match(o, /add\.test\.js/, 'the last line names the gamed test'); assert.match(o, /protected paths are still changed \(.*\.npmrc\)\./, 'and the protected path');
+});
+test('claim: a gamed test sent back first, then a protected change, is still sent back three times in all', () => {
+  const d = signed(false); const w = wired(d); w.prompt('look'); w.stop();
+  w.prompt('make add pass'); edit(d, 'test/add.test.js', (t) => t.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
+  let n = 0, o = w.stop(); if (blocked(o)) n++;
+  put(d, '.npmrc', 'fund=false\n');
+  for (let i = 0; i < 8; i++) { o = w.stop(); if (blocked(o)) n++; else break; }
+  assert.equal(n, 3, `sent back ${n} times in one turn`);
+});
+test('claim: where no prompt id is passed, one session\'s send-backs do not use up another session\'s', () => {
+  const d = signed(false); const c1 = wired(d, 'c1'), c2 = wired(d, 'c2');
+  c2.prompt('add a feature'); c1.prompt('loosen the registry');
+  for (const v of ['fund=false\n', 'fund=true\n', 'audit=false\n']) { put(d, '.npmrc', v); assert.ok(blocked(c1.stop()), 'c1 is sent back for each new state'); }
+  edit(d, 'test/add.test.js', (t) => t.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
+  assert.match(c2.stop(), /"block".*add\.test\.js/, 'c2\'s gamed commit is sent back');
+});
+test('claim: a sawbuck.config.json that is a link is read through the link at the turn\'s start', () => {
+  const d = signed(false); put(d, 'config/sawbuck.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); symlinkSync('config/sawbuck.json', join(d, 'sawbuck.config.json')); save(d, 'ask me first, through a link');
+  const w = wired(d); w.prompt('look'); w.stop();
+  w.prompt('make add pass'); edit(d, 'test/add.test.js', (t) => t.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
+  const o = w.stop(); assert.ok(!blocked(o), o.slice(0, 200)); assert.match(o, /enforce\.maxBlocks 0/, 'the setting behind the link counts');
 });
 test('claim: a turn whose last line is for a gamed test names a standing protected change too', () => {
   const d = signed(false); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); save(d, 'ask me first');

@@ -27,7 +27,7 @@ import { offerRepo } from './offer.mjs';
 import { shapeCli } from './shape.mjs';
 import { ensureExcluded, clearExcluded, EXCLUDED, RECORD_DIRS } from './exclude.mjs';
 import { repoState, hooksIn, OURS, S_START, WORDS, wordsIn } from './repo-state.mjs';
-import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, rmdirSync, rmSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync, rmdirSync, rmSync, readdirSync, statSync, lstatSync } from 'node:fs';
 import { basename, join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -1261,7 +1261,10 @@ function undoFinding(e) { return { kind: 'undone', title: `${e.kind === 'part' ?
 // none or it does not parse.
 function configAtStart(repo, files, sha) {
   const f = 'sawbuck.config.json'; let text = null;
-  try {
+  // a link is read through the link, as the file is now (0.2.9's way): its blob at the start holds only the link's text,
+  // and every setting behind it was dropped (the 0.2.10 read)
+  let link = false; try { link = lstatSync(join(repo, f)).isSymbolicLink(); } catch {}
+  if (!link) try {
     if (Object.prototype.hasOwnProperty.call(files, f)) text = files[f] === 'deleted' ? '' : execFileSync('git', ['cat-file', 'blob', files[f]], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     else if (protectedAmong(repo, [f]).length) text = sha ? execFileSync('git', ['show', `${sha}:${f}`], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) : '';
   } catch { text = ''; }
