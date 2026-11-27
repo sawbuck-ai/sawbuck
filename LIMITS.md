@@ -36,6 +36,12 @@ Each limit here is held by a test in [`test/claims.test.mjs`](test/claims.test.m
   is taken as yours, the agent's change in it included.
 - **Cursor, after the first send-back.** Cursor's end of a turn has no line for the person, so after the agent is
   sent back once for a change, Cursor may show nothing more about it while it stands.
+- **Your own setting, while the agent's change stands.** While a change the agent made to a protected file is still
+  in the last commit (it committed it, or your own commit swept it in), or after a turn that never reached its end, a
+  setting you commit in sawbuck.config.json counts only once that change is gone; until then the one from before
+  holds. A setting changed with a `!` line during a turn counts from your next prompt (a hold you add, at once).
+- **A sawbuck.config.json that is a link.** Its `enforce.maxBlocks`, `enforce.remindTurns` and `off` are not read,
+  so the defaults hold; a hold it adds still counts.
 - **Before a repository's first commit, only the contract is read by name.** A workflow or another protected file
   that a turn stages, puts in the first commit, or deletes or hides while it is untracked is not seen at the end of
   the turn. Reading every file there by content sent back ordinary work (a staged file's edit put back, a pull into a

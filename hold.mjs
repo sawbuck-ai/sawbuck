@@ -46,7 +46,7 @@ export function namesHomeHolds(command, home = process.env.HOME || homedir()) {
 }
 // reads of the person's holds pass (his word of 2026-11-27): the plain reads, and grep, jq, test, [ and diff, joined by
 // pipes, with $HOME naming the folder. Only this question reads them so; the record's own question keeps onlyReads.
-const HOLDS_READ = /^\s*(?:cat|ls|head|tail|wc|stat|file|less|more|grep|egrep|fgrep|jq|test|\[|diff)(?:\s[^;&|<>`$\n()]*)?$/;
+const HOLDS_READ = /^\s*(?:cat|ls|head|tail|wc|stat|file|grep|egrep|fgrep|jq|test|\[|diff)(?:\s[^;&|<>`$\n()]*)?$/;   // not less or more: less -o writes a file
 export function holdsReadsOnly(command) {
   const c = String(command || '').replace(/(["']?)\$\{?HOME\}?\1/g, '~');
   const parts = c.split(/\n|;|&&|\|\||\|/).map((x) => x.replace(TO_NULL, '').trim()).filter(Boolean);
@@ -174,7 +174,9 @@ export function holdDecision(hookJson, repo) {
   const cmd = withoutCommitMessages(h.tool_input && typeof h.tool_input.command === 'string' ? h.tool_input.command : '');
   // --allow records a person's decision to accept what the check could not prove; the agent typing it is not that.
   // Always asked, holds off or not: it is how a gamed verdict is cleared.
-  if (namesHomeHolds(cmd) && !holdsReadsOnly(cmd)) return askHolds();
+  // only the part of a command that writes the person's holds is asked about them: a read joined to a publish gets the
+  // publish's question below, not this one (the second read of 0.2.10)
+  if (namesHomeHolds(cmd) && String(cmd).split(/\n|;|&&|\|\||\|/).some((x) => namesHomeHolds(x) && !holdsReadsOnly(x))) return askHolds();
   if (DETACH.test(cmd) || RUNS_HOOK.test(cmd) || (namesRepoRecord(cmd) && !onlyReads(cmd))) return askOwn();
   // a commit made by a background task lands after the end of the turn, where a commit is read as the person's own
   // (unless the task reports back first: then the prompt hook keeps the turn's baseline). Asked like the two above.

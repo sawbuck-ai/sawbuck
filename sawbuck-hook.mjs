@@ -282,6 +282,17 @@ const saveState = (how) => {
 // the budget is per prompt: prompt_id when the harness sends one, else the prompt's own timestamp (written by
 // `sawbuck turn --hook`), never a constant that would spend it for good
 const promptId = hookInput.prompt_id || st.lastPromptAt || 'none';
+// ONE BUDGET FOR A TURN, PER SESSION AND PROMPT (Q71; the two reads of 0.2.10). The wall's send-backs and the gamed test's
+// in this session and prompt, three in all (or enforce.maxBlocks for the gamed test), kept per key: where no prompt id is
+// passed the prompt key is the last prompt's time, shared by every session in the repo, and one pair of counters let one
+// session spend another's budget, or two sessions taking turns reset each other's.
+const budgetKey = `${sessionOf}@${promptId}`.slice(0, 160);
+const budgetOf = () => { const b = (st.budget && typeof st.budget === 'object' && !Array.isArray(st.budget)) ? st.budget : {}; const e = b[budgetKey]; return { wall: Number(e && e.wall) || 0, gamed: Number(e && e.gamed) || 0 }; };
+const spend = (kind) => {
+  const b = (st.budget && typeof st.budget === 'object' && !Array.isArray(st.budget)) ? { ...st.budget } : {};
+  const e = budgetOf(); e[kind] += 1; delete b[budgetKey]; b[budgetKey] = e;
+  st.budget = Object.fromEntries(Object.keys(b).slice(-20).map((x) => [x, b[x]]));
+};
 // Send the turn back, at most enforce.maxBlocks times per prompt, then let it end with a warning: it can never
 // loop, because the harness's own block cap resets on every tool call.
 // the agent's last words this turn: Claude Code passes them, or they are read from the end of the transcript
@@ -313,14 +324,11 @@ const sendBack = (idKey, countKey, reason, stillOpen) => {
   const tbl = (st.turnBaseline && typeof st.turnBaseline === 'object') ? st.turnBaseline : null;
   const raw = (tbl && Object.prototype.hasOwnProperty.call(tbl, 'maxBlocks')) ? tbl.maxBlocks : (cfg.enforce ? cfg.enforce.maxBlocks : undefined);
   const max = (raw === undefined || raw === null || raw === '' || !Number.isFinite(+raw)) ? 3 : Math.max(0, Math.floor(+raw));
-  if (st[idKey] !== promptId) { st[idKey] = promptId; st[countKey] = 0; }
-  // one budget for the turn (Q71, 0.2.10): the wall's send-backs in this prompt count toward the gamed test's, so a turn with
-  // both is sent back three times in all, as in 0.2.8 (0.2.9 kept the two apart: up to six)
-  // the sharing is within one session: where no prompt id is passed, the prompt key is the last prompt's time, shared by
-  // every session in the repo, and one session's send-backs used up another's (the 0.2.10 read)
-  const wallSpent = (idKey === 'blockPromptId' && st.mandatePromptId === promptId && st.mandateSession === sessionOf) ? (Number(st.mandateBlocks) || 0) : 0;
-  const spent = ((st[countKey] || 0) + wallSpent) >= max;
-  if (!spent) { st[countKey] = (st[countKey] || 0) + 1; if (idKey === 'blockPromptId') st.blockSession = sessionOf; }
+  // one budget for the turn, per session and prompt (Q71, 0.2.10; see ONE BUDGET above): the wall's send-backs count
+  // toward the gamed test's, so a turn with both is sent back three times in all, as in 0.2.8 (0.2.9 kept them apart: up
+  // to six). idKey and countKey name 0.2.9's counters, no longer kept.
+  const used = budgetOf(); const spent = (used.gamed + used.wall) >= max;
+  if (!spent) spend('gamed');
   saveState(spent ? 'ends' : 'back');
   process.stdout.write(JSON.stringify(spent ? { systemMessage: withWall(max === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${stillOpen}` : `Sawbuck stopped blocking after ${max} tries: ${stillOpen}`) } : { decision: 'block', reason }));
   process.exit(0);
@@ -442,13 +450,12 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // never more than three send-backs from the wall in one turn (0.2.8's number; his words of 2026-11-25 16:07): an agent
     // that keeps changing a protected file is sent back for each new state only until then, and the turn ends with
     // 0.2.8's own line. A state the cap left unsent is sent back at the next prompt.
-    const ownWall = st.mandatePromptId === promptId ? (Number(st.mandateBlocks) || 0) : 0;
-    const spentInTurn = ownWall + (st.blockPromptId === promptId && st.blockSession === sessionOf ? (Number(st.blockCount) || 0) : 0);   // with the gamed test's in this session, one budget for the turn (Q71)
+    const used = budgetOf(); const spentInTurn = used.wall + used.gamed;   // with the gamed test's, one budget for the turn, per session and prompt (Q71)
     const capped = fresh && spentInTurn >= 3;
     if (capped) fresh = false;
     if (fresh) {
       for (const f of Object.keys(toldNow)) { const n = Number(toldNow[f].by[countKey]) || 0; if (n < wallMax) toldNow[f].by[countKey] = n + 1; }
-      st.mandatePromptId = promptId; st.mandateBlocks = ownWall + 1; st.mandateSession = sessionOf;   // its own count: the gamed test's is added where it is read
+      spend('wall');
     }
     st.wallTold = toldNow;
     // one catch for one change (0.2.9; it was one a prompt), counted whether it is sent back or told: with
