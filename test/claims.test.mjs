@@ -392,12 +392,12 @@ test('claim: the 0.2.10 pages say what the hold asks and when a setting counts',
   const guide = readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8').replace(/\s+/g, ' '), limits = readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8').replace(/\s+/g, ' ');
   assert.match(guide, lit('A hold you add to either counts at once. Turning holds off counts from your next prompt, and the agent turning them off does not count.'));
   assert.match(limits, lit('Your own setting, while the agent\'s change stands.')); assert.match(limits, lit('A sawbuck.config.json that is a link.'));
-  assert.match(limits, lit('Where the contract protects it, its `enforce.maxBlocks`, `enforce.remindTurns` and `off` are not read, so the defaults hold. A hold in it counts as the file is now, so a change to what it points to counts at once.'));
+  assert.match(limits, lit('Where the contract protects it, its `enforce.maxBlocks`, `enforce.remindTurns` and `off` are not read, so the defaults hold, and a hold in it counts as the file is now: a change to what it points to counts at once.'));
   assert.match(guide, lit('Six things ask you whether the holds are on or off'));
   assert.match(guide, lit('a command that runs Sawbuck\'s own end-of-turn check by hand, and a write to your own holds (`~/.sawbuck/config.json`).'));
   assert.match(limits, lit('or your own holds (`~/.sawbuck/config.json`), and a command that reaches them without naming them is not seen.'));
   const d = signed(true); const w = wired(d); w.prompt('look');
-  assert.match(w.pre(`echo '{}' > ~/.sawbuck/config.json`), lit('Sawbuck: this writes your own holds (~/.sawbuck/config.json), which say which commands ask you first, in every repo. Approve only if you asked for it, not the agent.'));
+  assert.match(w.pre(`echo '{}' > ~/.sawbuck/config.json`), lit('Sawbuck: this may write your own holds (~/.sawbuck/config.json), which say which commands ask you first, in every repo. Approve only if you asked for it, not the agent.'));
 });
 test('claim: an outward command asks a person first; a test run does not; the hold can be turned off for a repo', () => { const d = signed(true); const w = wired(d); assert.match(w.pre('npm publish'), /"permissionDecision":"ask"/); assert.match(w.pre('gh pr merge 12 --squash'), /"ask"/); assert.match(w.pre('git push --force origin main'), /"ask"/); assert.match(w.pre('gh issue comment 3 --body hi'), /"ask"/); assert.equal(w.pre('npm test').trim(), ''); assert.equal(w.pre('git push origin main').trim(), '', 'a plain push is not held by default'); assert.equal(w.pre('git commit -m x').trim(), ''); put(d, 'sawbuck.config.json', JSON.stringify({ holds: { off: true } })); assert.equal(w.pre('npm publish').trim(), ''); put(d, 'sawbuck.config.json', JSON.stringify({ holds: { outward: ['\\bgit\\s+push\\b'] } })); assert.match(w.pre('git push origin main'), /"ask"/, 'a repo can add its own'); });
 test('claim: on a clean account a signed repo does not block a clean turn', () => { const d = signed(true); const w = wired(d); for (let i = 0; i < 3; i++) { w.prompt(); assert.ok(!blocked(w.stop()), `turn ${i}`); } assert.equal(git(d, 'status', '--porcelain'), ''); assert.equal(check(d).code, 0); });
@@ -1047,7 +1047,7 @@ test('claim: a told record in the state file is not believed when the second cop
   edit(d, 'promptwheel.config.json', wallThr(0.9));
   assert.ok(blocked(w.stop()), 'sent back');
 });
-test('claim: where no prompt id is passed, one session\'s send-backs do not use up another session\'s', () => {
+test('claim: where no prompt id is passed, one session\'s protected-path send-backs do not use up another session\'s gamed-test send-backs', () => {
   const d = signed(false); const c1 = wired(d, 'c1'), c2 = wired(d, 'c2');
   c2.prompt('add a feature'); c1.prompt('loosen the registry');
   for (const v of ['fund=false\n', 'fund=true\n', 'audit=false\n']) { put(d, '.npmrc', v); assert.ok(blocked(c1.stop()), 'c1 is sent back for each new state'); }

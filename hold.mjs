@@ -69,7 +69,7 @@ const askOwn = () => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permi
 // the person's own holds, for every repo (Q75, 0.2.10): an agent that wrote holds.off there was asked nothing, and it counted
 // at once. A command that names the file and is not only reads, or an edit tool pointed at it, is asked first.
 export const HOME_HOLDS = /\.sawbuck\/config\.json(?![\w.-])/;
-const HOLDS_WHY = 'Sawbuck: this writes your own holds (~/.sawbuck/config.json), which say which commands ask you first, in every repo. Approve only if you asked for it, not the agent.';
+const HOLDS_WHY = 'Sawbuck: this may write your own holds (~/.sawbuck/config.json), which say which commands ask you first, in every repo. Approve only if you asked for it, not the agent.';
 const askHolds = () => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: HOLDS_WHY } });
 // the edit tools (Edit, Write and the like): a file under either folder
 export function ownRecordEdit(hookJson, repo) {

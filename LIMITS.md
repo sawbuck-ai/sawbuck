@@ -41,7 +41,7 @@ Each limit here is held by a test in [`test/claims.test.mjs`](test/claims.test.m
   setting you commit in sawbuck.config.json counts only once that change is gone; until then the one from before
   holds. A setting changed with a `!` line during a turn counts from your next prompt (a hold you add, at once).
 - **A sawbuck.config.json that is a link.** Where the contract protects it, its `enforce.maxBlocks`,
-  `enforce.remindTurns` and `off` are not read, so the defaults hold. A hold in it counts as the file is now, so a
+  `enforce.remindTurns` and `off` are not read, so the defaults hold, and a hold in it counts as the file is now: a
   change to what it points to counts at once.
 - **Before a repository's first commit, only the contract is read by name.** A workflow or another protected file
   that a turn stages, puts in the first commit, or deletes or hides while it is untracked is not seen at the end of
