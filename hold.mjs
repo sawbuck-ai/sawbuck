@@ -174,9 +174,9 @@ export function holdDecision(hookJson, repo) {
   const cmd = withoutCommitMessages(h.tool_input && typeof h.tool_input.command === 'string' ? h.tool_input.command : '');
   // --allow records a person's decision to accept what the check could not prove; the agent typing it is not that.
   // Always asked, holds off or not: it is how a gamed verdict is cleared.
-  // only the part of a command that writes the person's holds is asked about them: a read joined to a publish gets the
-  // publish's question below, not this one (the second read of 0.2.10)
-  if (namesHomeHolds(cmd) && String(cmd).split(/\n|;|&&|\|\||\|/).some((x) => namesHomeHolds(x) && !holdsReadsOnly(x))) return askHolds();
+  // the whole command is judged (the third read of 0.2.10: judged part by part, a write that named the file only in a
+  // reading part, as in `ls F | xargs sed -i`, went through); a read joined to another command is asked here
+  if (namesHomeHolds(cmd) && !holdsReadsOnly(cmd)) return askHolds();
   if (DETACH.test(cmd) || RUNS_HOOK.test(cmd) || (namesRepoRecord(cmd) && !onlyReads(cmd))) return askOwn();
   // a commit made by a background task lands after the end of the turn, where a commit is read as the person's own
   // (unless the task reports back first: then the prompt hook keeps the turn's baseline). Asked like the two above.

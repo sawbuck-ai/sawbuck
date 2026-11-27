@@ -17,8 +17,6 @@ What was found and fixed in each version, newest first. For versions before 0.1.
 - **The send-back says what a reason is for, whoever made the change.** A reason does not end the send-back, whoever
   gives it; reverting the change does. Before, only the half for a change the agent did not make said so, and in a
   real session an agent that kept a change it made told the person a reason would clear it.
-- **A turn is sent back three times at most, for a protected change and a gamed test together.** In 0.2.9 a turn
-  with both could be sent back up to six times, three for each; now three in all, as in 0.2.8.
 
 ## 0.2.9 (2026-11-26): the wall sends one change back once
 

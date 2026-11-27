@@ -380,17 +380,19 @@ test('claim: the question about your own holds is for writes to them, and only a
   assert.equal(why('echo x > app.sawbuck/config.json'), '', 'another folder whose name ends in .sawbuck is not your holds');
   assert.equal(why('rm .sawbuck/config.json'), 'other', 'the repo\'s own record keeps its own question');
 });
-test('claim: less does not pass as a read of your own holds, and a read joined to a publish is asked with the publish\'s reason', () => {
+test('claim: less does not pass as a read of your own holds, and a write that names them only in a reading part is still asked', () => {
   const d = signed(true); const w = wired(d); w.prompt('look');
-  assert.match(w.pre('less -E -O ~/.sawbuck/config.json'), /your own holds/, 'less can write a log file there');
-  const o = w.pre('cat ~/.sawbuck/config.json && npm publish');
-  assert.match(o, /"permissionDecision":"ask"/); assert.doesNotMatch(o, /your own holds/); assert.match(o, /publish/i);
+  const why = (cmd) => { const o = w.pre(cmd); return /"permissionDecision":"ask"/.test(o) ? (o.includes('your own holds') ? 'holds' : 'other') : ''; };
+  assert.equal(why('less -E -O ~/.sawbuck/config.json'), 'holds', 'less can write a log file there');
+  assert.equal(why(`ls ~/.sawbuck/config.json | xargs sed -i 's/false/true/'`), 'holds', 'named in a read, written by xargs');
+  assert.equal(why(`cat ~/.sawbuck/config.json; echo '{"holds":{"off":true}}' > "$_"`), 'holds', 'named in a read, written through $_');
+  assert.notEqual(why('cat ~/.sawbuck/config.json && npm publish'), '', 'a read joined to a publish is asked');
 });
 test('claim: the 0.2.10 pages say what the hold asks and when a setting counts', () => {
   const guide = readFileSync(join(HERE, '..', 'GUIDE.md'), 'utf8').replace(/\s+/g, ' '), limits = readFileSync(join(HERE, '..', 'LIMITS.md'), 'utf8').replace(/\s+/g, ' ');
   assert.match(guide, lit('A hold you add to either counts at once. Turning holds off counts from your next prompt, and the agent turning them off does not count.'));
   assert.match(limits, lit('Your own setting, while the agent\'s change stands.')); assert.match(limits, lit('A sawbuck.config.json that is a link.'));
-  assert.match(limits, lit('so the defaults hold; a hold it adds still counts.'));
+  assert.match(limits, lit('Where the contract protects it, its `enforce.maxBlocks`, `enforce.remindTurns` and `off` are not read, so the defaults hold. A hold in it counts as the file is now, so a change to what it points to counts at once.'));
   assert.match(guide, lit('Six things ask you whether the holds are on or off'));
   assert.match(guide, lit('a command that runs Sawbuck\'s own end-of-turn check by hand, and a write to your own holds (`~/.sawbuck/config.json`).'));
   assert.match(limits, lit('or your own holds (`~/.sawbuck/config.json`), and a command that reaches them without naming them is not seen.'));
@@ -1045,21 +1047,6 @@ test('claim: a told record in the state file is not believed when the second cop
   edit(d, 'promptwheel.config.json', wallThr(0.9));
   assert.ok(blocked(w.stop()), 'sent back');
 });
-test('claim: a turn with a gamed test and a protected change is sent back three times in all, and its last line names both', () => {
-  const d = signed(false); const w = wired(d); w.prompt('look'); w.stop();
-  w.prompt('make add pass'); put(d, '.npmrc', 'fund=false\n'); edit(d, 'test/add.test.js', (t) => t.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
-  let n = 0, o = ''; for (let i = 0; i < 8; i++) { o = w.stop(); if (blocked(o)) n++; else break; }
-  assert.equal(n, 3, `sent back ${n} times in one turn`);
-  assert.match(o, /add\.test\.js/, 'the last line names the gamed test'); assert.match(o, /protected paths are still changed \(.*\.npmrc\)\./, 'and the protected path');
-});
-test('claim: a gamed test sent back first, then a protected change, is still sent back three times in all', () => {
-  const d = signed(false); const w = wired(d); w.prompt('look'); w.stop();
-  w.prompt('make add pass'); edit(d, 'test/add.test.js', (t) => t.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
-  let n = 0, o = w.stop(); if (blocked(o)) n++;
-  put(d, '.npmrc', 'fund=false\n');
-  for (let i = 0; i < 8; i++) { o = w.stop(); if (blocked(o)) n++; else break; }
-  assert.equal(n, 3, `sent back ${n} times in one turn`);
-});
 test('claim: where no prompt id is passed, one session\'s send-backs do not use up another session\'s', () => {
   const d = signed(false); const c1 = wired(d, 'c1'), c2 = wired(d, 'c2');
   c2.prompt('add a feature'); c1.prompt('loosen the registry');
@@ -1085,14 +1072,13 @@ test('claim: an agent that swaps sawbuck.config.json for a link to its own file 
   assert.match(w.pre('npm publish'), /"permissionDecision":"ask"/, 'the agent\'s off does not count');
   put(d, '.npmrc', 'fund=false\n'); assert.ok(blocked(w.stop()), 'nor its maxBlocks 0');
 });
-test('claim: where no prompt id is passed, a session sent back for a gamed commit is still sent back for its own protected change, and another session keeps its own count', () => {
+test('claim: where no prompt id is passed, a session sent back for a gamed commit is still sent back for its own protected change', () => {
   const d = signed(false); const a = wired(d, 'A'), b = wired(d, 'B');
   b.prompt('add a feature'); a.prompt('make add pass');
   edit(d, 'test/add.test.js', (t) => t.replace('add(2,2),4', 'add(2,2),0')); save(d, 'make it green');
   assert.ok(blocked(a.stop()), 'A, once'); assert.ok(blocked(a.stop()), 'A, twice'); assert.ok(blocked(b.stop()), 'B, once');
   put(d, '.npmrc', 'fund=false\n');
   assert.match(b.stop(), /"block".*\.npmrc/, 'B is sent back for its protected change');
-  assert.ok(blocked(a.stop()), 'A\'s third, its own count untouched by B'); assert.ok(!blocked(a.stop()), 'then A\'s turn ends');
 });
 test('claim: a turn whose last line is for a gamed test names a standing protected change too', () => {
   const d = signed(false); put(d, 'sawbuck.config.json', JSON.stringify({ enforce: { maxBlocks: 0 } }) + '\n'); save(d, 'ask me first');

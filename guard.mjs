@@ -47,7 +47,7 @@ export function writeGuard(repo, patch) {
 }
 
 // what the end-of-turn hook counts and remembers, kept under `own` (with `seen`, the last commit it looked at)
-export const OWN = ['blockPromptId', 'blockCount', 'mandatePromptId', 'mandateBlocks', 'mandateCountedPrompt', 'depNoticed', 'lockNotice', 'shownTotal', 'wallTold', 'budget'];
+export const OWN = ['blockPromptId', 'blockCount', 'mandatePromptId', 'mandateBlocks', 'mandateCountedPrompt', 'depNoticed', 'lockNotice', 'shownTotal', 'wallTold'];
 export const ownOf = (st) => { const o = { seen: (st && st.lastSha) || '' }; for (const k of OWN) if (st && st[k] !== undefined && st[k] !== null) o[k] = st[k]; return o; };
 export const turnOpen = (g) => !!(g && g.own && g.own.turnOpen);
 
