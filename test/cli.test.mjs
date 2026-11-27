@@ -681,7 +681,7 @@ const wallRepo = (files) => {
   const state = () => JSON.parse(readFileSync(join(d, '.sawbuck', 'state.json'), 'utf8'));
   return { d, g, hook, turn, state };
 };
-const named = (raw) => { let t = ''; try { t = JSON.parse(raw).reason || ''; } catch { t = raw; } const m = /changed in this turn: (.*?)\.(?: You are sent back for it once\.)? If you made this change/.exec(t); return m ? m[1] : ''; };
+const named = (raw) => { let t = ''; try { t = JSON.parse(raw).reason || ''; } catch { t = raw; } const m = /changed in this turn: (.*?)\.(?: You are sent back for it once\.)?(?: A reason does not end this, whoever gives it; reverting the change does \(for a commit, git revert\)\.)? If you made this change/.exec(t); return m ? m[1] : ''; };
 
 test('a violation remembers only the turn\'s own protected changes: the person\'s spared file is never flagged or named', () => {
   const { d, g, hook, turn, state } = wallRepo(['src/auth/old.js', 'src/auth/login.js']);

@@ -314,7 +314,10 @@ const sendBack = (idKey, countKey, reason, stillOpen) => {
   const raw = (tbl && Object.prototype.hasOwnProperty.call(tbl, 'maxBlocks')) ? tbl.maxBlocks : (cfg.enforce ? cfg.enforce.maxBlocks : undefined);
   const max = (raw === undefined || raw === null || raw === '' || !Number.isFinite(+raw)) ? 3 : Math.max(0, Math.floor(+raw));
   if (st[idKey] !== promptId) { st[idKey] = promptId; st[countKey] = 0; }
-  const spent = (st[countKey] || 0) >= max;
+  // one budget for the turn (Q71, 0.2.10): the wall's send-backs in this prompt count toward the gamed test's, so a turn with
+  // both is sent back three times in all, as in 0.2.8 (0.2.9 kept the two apart: up to six)
+  const wallSpent = (idKey === 'blockPromptId' && st.mandatePromptId === promptId) ? (Number(st.mandateBlocks) || 0) : 0;
+  const spent = ((st[countKey] || 0) + wallSpent) >= max;
   if (!spent) st[countKey] = (st[countKey] || 0) + 1;
   saveState(spent ? 'ends' : 'back');
   process.stdout.write(JSON.stringify(spent ? { systemMessage: withWall(max === 0 ? `Sawbuck (set to ask you first, enforce.maxBlocks 0): ${stillOpen}` : `Sawbuck stopped blocking after ${max} tries: ${stillOpen}`) } : { decision: 'block', reason }));
@@ -396,7 +399,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // contract or revert the path", and a real agent then told its person to grant --allow and ask again, which is
     // sent back again (proof-bench/live/after-0.1.70). So say who can make the change, and what to tell them.
     const reasoned = hits.filter((h) => h.allowable).map((h) => `"${h.name}"`);
-    const person = reasoned.length ? ` Their reason goes with the commit: ${cli('check --allow "<their reason>"')}. Running --allow yourself does not keep your edit.` : '';
+    const person = reasoned.length ? ` Their reason goes with the commit, for the check there: ${cli('check --allow "<their reason>"')}. Running --allow yourself does not keep your edit.` : '';
     const accept = (committedHit && hits.some((h) => !h.allowable)) ? ' To accept this change on purpose, change the rule in the contract or revert the path.' : '';
     const upgrade = base ? '' : ' (No prompt baseline is recorded in this repo, so edits a person made before the prompt cannot be told apart from yours: ask them to run sawbuck attach again, which upgrades the hooks.)';
     // the same commit can hold a gamed test too. Say it now, so undoing the protected path is not taken for the end of it.
@@ -437,7 +440,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     // never more than three send-backs from the wall in one turn (0.2.8's number; his words of 2026-11-25 16:07): an agent
     // that keeps changing a protected file is sent back for each new state only until then, and the turn ends with
     // 0.2.8's own line. A state the cap left unsent is sent back at the next prompt.
-    const spentInTurn = st.mandatePromptId === promptId ? (Number(st.mandateBlocks) || 0) : 0;
+    const spentInTurn = (st.mandatePromptId === promptId ? (Number(st.mandateBlocks) || 0) : 0) + (st.blockPromptId === promptId ? (Number(st.blockCount) || 0) : 0);   // with the gamed test's, one budget for the turn (Q71)
     const capped = fresh && spentInTurn >= 3;
     if (capped) fresh = false;
     if (fresh) {
@@ -467,7 +470,7 @@ if (stop && !process.env.SAWBUCK_NO_ENFORCE) {
     if (fresh) {
     wallLine = '';
     saveState('back');
-    wallSend(`Sawbuck: a protected path in the contract was changed in this turn: ${desc}.${wallMax === 1 ? ' You are sent back for it once.' : ''} If you made this change: undo it and make the fix elsewhere, and do not revert anything you did not change. If the person wants the change, they make it themselves, in their editor or another terminal between your turns; a line they type with ! in this session reads as yours.${person} If you made none of these changes: undo nothing and stop, and tell the person that a reason does not end this. Reverting the change does (for a commit, git revert); once a turn has run to its end after that, the same change made in their editor before the next prompt is theirs.${spared}${restore}${accept}${upgrade}${alsoGamed}`);
+    wallSend(`Sawbuck: a protected path in the contract was changed in this turn: ${desc}.${wallMax === 1 ? ' You are sent back for it once.' : ''} A reason does not end this, whoever gives it; reverting the change does (for a commit, git revert). If you made this change: undo it and make the fix elsewhere, and do not revert anything you did not change. If the person wants the change, they make it themselves, in their editor or another terminal between your turns; a line they type with ! in this session reads as yours.${person} If you made none of these changes: undo nothing and stop, and tell the person so; once a turn has run to its end after the revert, the same change made in their editor before the next prompt is theirs.${spared}${restore}${accept}${upgrade}${alsoGamed}`);
     }
     saveState();   // told, and a gamed test of this turn goes on to its own send-back below, its last line naming this one too
   }

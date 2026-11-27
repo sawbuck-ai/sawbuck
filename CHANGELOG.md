@@ -2,6 +2,22 @@
 
 What was found and fixed in each version, newest first. For versions before 0.1.73 see the release notes at [github.com/sawbuck-ai/sawbuck/releases](https://github.com/sawbuck-ai/sawbuck/releases). 0.1.72 was never published.
 
+## 0.2.10 (2026-11-26): a setting the agent writes does not take effect
+
+- **A setting the agent writes does not take effect.** `enforce.maxBlocks`, `enforce.remindTurns` and `holds` in
+  sawbuck.config.json are read as the turn's start has the file. A change the agent makes to it is sent back like any
+  change to the contract and does not count; your own change between turns counts from your next prompt. Before, an
+  agent that wrote `maxBlocks` 0 and left it turned the wall off from the next prompt, and `holds.off` took the
+  question before a publish away in the same turn.
+- **Your own holds are asked about before they are written.** A command or an edit that writes
+  `~/.sawbuck/config.json` is asked first, and a change made to it during a turn counts from your next prompt.
+  Before, an agent could turn your holds off for every repo without being asked.
+- **The send-back says what a reason is for, whoever made the change.** A reason does not end the send-back, whoever
+  gives it; reverting the change does. Before, only the half for a change the agent did not make said so, and in a
+  real session an agent that kept a change it made told the person a reason would clear it.
+- **A turn is sent back three times at most, for a protected change and a gamed test together.** In 0.2.9 a turn
+  with both could be sent back up to six times, three for each; now three in all, as in 0.2.8.
+
 ## 0.2.9 (2026-11-26): the wall sends one change back once
 
 - **A protected change is sent back once, not three times a prompt.** In 0.2.8 a protected file changed in a session
